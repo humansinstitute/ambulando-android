@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public NIP-19 specification vector, only in its test fixture"
+condition = "AND"
+paths = ['''^core/src/test/kotlin/studio/otherstuff/ambulando/core/support/TestSupport\.kt$''']
+regexTarget = "secret"
+regexes = ['''^67dea2ed018072d675f5415ecfaed7d2597555e202d85b3d65ea4e58d2d92ffa$''']

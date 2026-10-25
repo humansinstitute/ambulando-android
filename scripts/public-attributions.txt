@@ -1,0 +1,27 @@
+# Public upstream license attribution addresses, extracted from locked editor dependencies.
+# These are not development author identities or runtime contacts. Review additions against the upstream license.
+0x142857@gmail.com
+aaron.heckmann+github@gmail.com
+beneb.info@gmail.com
+chalkerx@gmail.com
+doug@somethingdoug.com
+einaros@gmail.com
+git@github.com
+hello@moxy.studio
+ifaaan@gmail.com
+james@talmage.io
+jcrugzz@gmail.com
+jridgewell@google.com
+kevinmartensson@gmail.com
+luke.edwards05@gmail.com
+mail@substack.net
+marijnh@gmail.com
+mark.john.dalgleish@gmail.com
+me@jongleberry.com
+michael.ciniawsky@gmail.com
+nathan@tootallnate.net
+olalonde@gmail.com
+pooya@pi0.io
+sindresorhus@gmail.com
+tituswormer@gmail.com
+troygoode@gmail.com

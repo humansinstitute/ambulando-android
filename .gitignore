@@ -1,0 +1,64 @@
+# --- Operational and private records (never public) ---
+tmp/
+docs/handoffs/
+*.handoff.md
+evidence/
+.claude/
+.codex/
+AGENTS.local.md
+CLAUDE.local.md
+
+# --- Secrets and signing material ---
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.der
+keystore.properties
+signing.properties
+release-signing.properties
+*.nsec
+.env
+.env.*
+!.env.example
+zapstore.local.yaml
+google-services.json
+
+# --- Local machine configuration ---
+local.properties
+.gradle/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+.idea/
+.vscode/
+.DS_Store
+.navigation/
+
+# --- Build output ---
+build/
+out/
+release/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.idsig
+output-metadata.json
+mapping.txt
+
+# --- Web editor bundle build ---
+web-editors/node_modules/
+web-editors/dist/
+app/src/main/assets/editors/
+
+# --- Logs and device artefacts ---
+*.log
+*.hprof
+logcat*.txt
+screenshots/
+*.trace
