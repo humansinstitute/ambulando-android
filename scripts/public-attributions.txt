@@ -25,3 +25,8 @@ pooya@pi0.io
 sindresorhus@gmail.com
 tituswormer@gmail.com
 troygoode@gmail.com
+
+# Excalidraw bundled font conversion library copyright headers
+kekee000@gmail.com
+junmer@foxmail.com
+ebrahim@gnu.org
