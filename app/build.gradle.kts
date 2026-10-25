@@ -15,8 +15,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
         ndk { abiFilters += "arm64-v8a" }
@@ -41,6 +41,8 @@ android {
 
     buildTypes {
         release {
+            // Public export history is separate from private development history.
+            vcsInfo { include = false }
             if (releaseStore != null) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true

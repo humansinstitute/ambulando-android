@@ -1,3 +1,7 @@
+# 0.1.1 — Android build 3
+
+Exclude private development revision metadata from the packaged APK. Application behavior is unchanged from build 2.
+
 # 0.1.0 — Android build 2
 
 Initial native Kotlin Android release. Adds identity/PIN/Keystore storage, native shared navigation, chat and durable

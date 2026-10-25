@@ -40,3 +40,6 @@ and needs its own signer authority.
 Publication is complete only after the relay accepts the signed events, the release can be retrieved, asset URLs work,
 and the application listing resolves. A signed local APK or local event file is not publication. Keep validation and
 publication evidence separate from product source.
+
+Release builds exclude Android generated VCS metadata so private development revisions stay local.
+The APK signing certificate SHA-256 is `95ae1a491e106931a25296797a6e99a9efe95a9e935609e98403afb8e91b816d`.
