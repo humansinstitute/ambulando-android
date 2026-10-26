@@ -239,14 +239,14 @@ suspend fun WorkspaceSync.catchUpEventsAndWait(
     val feed = live.feed(workspace.id)
     val slot = feed.expectPoll()
     feed.requestPoll(maxOf(1, pages))
-    scheduleEvents(connection, workspace, priority, force = true)
+    scheduleEvents(connection, workspace, priority, force = false)
     return feed.waitForPoll(slot, timeoutMillis)
 }
 
 internal suspend fun WorkspaceSync.scheduleEvents(
     connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority, force: Boolean = false, delayMillis: Long? = null,
 ) {
-    engine.enqueue(WorkspaceSync.eventsKey(workspace.id), priority, force, delayMillis) { runEvents(connection, workspace) }
+    engine.enqueueRead(WorkspaceSync.eventsKey(workspace.id), priority, force, delayMillis) { runEvents(connection, workspace) }
 }
 
 /**
@@ -490,7 +490,10 @@ private suspend fun WorkspaceSync.materialize(
             val list = api.reactions(w, app, "message", refresh.messageId)
             store.writer.replaceReactions(w, listOf(refresh.messageId), list)
         }
-        EventPlan.Refresh.Inbox -> store.writer.upsertViewStates(w, api.viewStates(w, app), complete = true)
+        EventPlan.Refresh.Inbox -> {
+            store.writer.upsertViewStates(w, api.viewStates(w, app), complete = true)
+            engine.recovered(WorkspaceSync.inboxKey(w))
+        }
         // Scopes/channels are re-listed as their own coalescing job (also run on every foreground resume).
         EventPlan.Refresh.Structure -> refreshWorkspace(connection, workspace, SyncPriority.BACKGROUND)
         EventPlan.Refresh.Directory -> refreshDirectory(connection, workspace, SyncPriority.BACKGROUND)

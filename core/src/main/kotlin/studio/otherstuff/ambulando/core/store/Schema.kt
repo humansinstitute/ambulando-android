@@ -17,7 +17,7 @@ object Schema {
     /** One schema step. `statements` run in order inside the migration transaction. */
     class Migration(val version: Int, val statements: List<String>)
 
-    val migrations: List<Migration> = listOf(Migration(1, v1()))
+    val migrations: List<Migration> = listOf(Migration(1, v1()), Migration(2, listOf("ALTER TABLE drafts ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")))
 
     val VERSION: Int get() = migrations.maxOf { it.version }
 

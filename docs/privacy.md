@@ -49,3 +49,24 @@ requests remain durable.
 
 The public source/release excludes private operations, development history, signing stores, identity keys, live-record
 snapshots and device evidence. Public upstream copyright attribution remains in the bundled license notices.
+
+## Connection diagnostics
+
+Settings shows Connected, Reconnecting or Connection lost, with an always-available Retry action. Read refresh jobs
+retry transient timeouts, dropped connections and gateway failures at most three times per job/outage, signing each
+attempt afresh. Authorization, validation and certificate failures do not enter this automatic read retry path.
+Foreground resume and a debounced return of a validated default network refresh cached views, including Inbox.
+The durable write queues retain their existing retry and idempotency rules.
+
+The newest 300 diagnostic entries are retained in an app-private, no-backup file across process restarts. Entries
+contain UTC time, a known route template, duration, HTTP status, a fixed error category and retry outcome. Only UUID
+request/correlation IDs or constrained Cloudflare ray IDs are retained from response headers. Host names, dynamic
+path segments, query values, unknown query names, request headers, keys, tokens, bodies and user identifiers are
+excluded. Unknown routes become `/unknown`; a known word in a record-id slot is still redacted.
+
+Failures and recovery decisions are saved immediately; successful traffic is saved at most every five seconds.
+Older entries are replaced at capacity. Clear diagnostics empties the persistent log and removes the app's exported
+copy. Uninstall/clear app storage also removes it. No diagnostic upload occurs automatically. Export diagnostics
+creates a text file with the installed version/build, Android API level and UTC export time and opens Android's
+share chooser. Its cache copy is replaced on the next export and removed on the next interactive app session or Clear
+diagnostics; Android may evict it earlier. A chosen receiving app controls any copy it saves or shares onward.

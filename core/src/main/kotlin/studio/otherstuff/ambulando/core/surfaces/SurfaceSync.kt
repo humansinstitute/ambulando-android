@@ -58,9 +58,9 @@ private suspend fun WorkspaceSync.scopeRemoved(workspaceId: String, scopeId: Str
 suspend fun WorkspaceSync.refreshContextTree(
     connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.contextTreeKey(workspace.id, scopeId), priority, force) {
+    engine.enqueueRead(WorkspaceSync.contextTreeKey(workspace.id, scopeId), priority, force) {
         identity.requireReader(connection.signerNpub)
-        if (scopeRemoved(workspace.id, scopeId)) return@enqueue
+        if (scopeRemoved(workspace.id, scopeId)) return@enqueueRead
         val api = api(connection)
         try {
             val components = api.contextComponents(workspace.id, workspace.appNpub, scopeId)
@@ -79,9 +79,9 @@ suspend fun WorkspaceSync.refreshContextReferences(
     connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String, componentId: String,
     priority: SyncPriority = SyncPriority.USER, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.contextReferencesKey(workspace.id, componentId), priority, force) {
+    engine.enqueueRead(WorkspaceSync.contextReferencesKey(workspace.id, componentId), priority, force) {
         identity.requireReader(connection.signerNpub)
-        if (workspace.accessRemoved || scopeRemoved(workspace.id, scopeId) || store.reader.isAccessRemoved(workspace.id, FlaggedTable.CONTEXT_COMPONENTS, componentId)) return@enqueue
+        if (workspace.accessRemoved || scopeRemoved(workspace.id, scopeId) || store.reader.isAccessRemoved(workspace.id, FlaggedTable.CONTEXT_COMPONENTS, componentId)) return@enqueueRead
         val api = api(connection)
         try {
             val references = api.contextReferences(workspace.id, workspace.appNpub, scopeId, componentId)
@@ -98,7 +98,7 @@ suspend fun WorkspaceSync.refreshContextReferences(
 // MARK: Canvas
 
 suspend fun WorkspaceSync.refreshCanvases(connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
-    engine.enqueue(WorkspaceSync.canvasesKey(workspace.id), priority, force) {
+    engine.enqueueRead(WorkspaceSync.canvasesKey(workspace.id), priority, force) {
         identity.requireReader(connection.signerNpub)
         val canvases = api(connection).canvases(workspace.id, workspace.appNpub)
         checkCancelled()
@@ -110,15 +110,15 @@ suspend fun WorkspaceSync.refreshCanvases(connection: ConnectionRecord, workspac
 suspend fun WorkspaceSync.refreshCanvas(
     connection: ConnectionRecord, workspace: WorkspaceRecord, canvasId: String, priority: SyncPriority = SyncPriority.USER, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.canvasKey(workspace.id, canvasId), priority, force) {
-        if (workspace.accessRemoved || store.reader.isAccessRemoved(workspace.id, FlaggedTable.CANVASES, canvasId)) return@enqueue
+    engine.enqueueRead(WorkspaceSync.canvasKey(workspace.id, canvasId), priority, force) {
+        if (workspace.accessRemoved || store.reader.isAccessRemoved(workspace.id, FlaggedTable.CANVASES, canvasId)) return@enqueueRead
         identity.requireReader(connection.signerNpub)
         val fetched = try {
             api(connection).canvasSnapshot(workspace.id, workspace.appNpub, canvasId)
         } catch (e: TowerError.Http) {
             if (!WorkspaceSync.lost(e)) throw e
             store.writer.removeCanvas(workspace.id, canvasId)
-            return@enqueue
+            return@enqueueRead
         }
         checkCancelled()
         val (canvas, snapshot) = fetched
@@ -129,9 +129,9 @@ suspend fun WorkspaceSync.refreshCanvas(
 
 /** One board version's scene bytes (skipped when that version is already stored). */
 suspend fun WorkspaceSync.refreshBoard(connection: ConnectionRecord, workspace: WorkspaceRecord, board: BoardReference, priority: SyncPriority = SyncPriority.USER) {
-    engine.enqueue(WorkspaceSync.boardKey(workspace.id, board.fileId), priority) {
+    engine.enqueueRead(WorkspaceSync.boardKey(workspace.id, board.fileId), priority) {
         val stored = store.reader.boardScene(workspace.id, board.fileId)
-        if (stored != null && stored.versionId == board.versionId && stored.sha256 == board.sha256) return@enqueue
+        if (stored != null && stored.versionId == board.versionId && stored.sha256 == board.sha256) return@enqueueRead
         identity.requireReader(connection.signerNpub)
         val scene = api(connection).boardScene(workspace.id, workspace.appNpub, board.fileId, board.versionId, board.sha256, board.sizeBytes.toLong())
         checkCancelled()
@@ -145,7 +145,7 @@ suspend fun WorkspaceSync.refreshBoard(connection: ConnectionRecord, workspace: 
 suspend fun WorkspaceSync.refreshAgents(
     connection: ConnectionRecord, workspace: WorkspaceRecord, channelIds: List<String>, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.agentsKey(workspace.id), priority, force) {
+    engine.enqueueRead(WorkspaceSync.agentsKey(workspace.id), priority, force) {
         identity.requireReader(connection.signerNpub)
         val agents = api(connection).workspaceAgents(workspace.id, workspace.appNpub)
         checkCancelled()
@@ -159,9 +159,9 @@ suspend fun WorkspaceSync.refreshAgents(
 suspend fun WorkspaceSync.refreshAgentActivity(
     connection: ConnectionRecord, workspace: WorkspaceRecord, channelId: String, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.agentActivityKey(workspace.id, channelId), priority, force) {
+    engine.enqueueRead(WorkspaceSync.agentActivityKey(workspace.id, channelId), priority, force) {
         identity.requireReader(connection.signerNpub)
-        if (store.reader.isChannelAccessRemoved(workspace.id, channelId)) return@enqueue
+        if (store.reader.isChannelAccessRemoved(workspace.id, channelId)) return@enqueueRead
         val api = api(connection)
         try {
             val activity = api.agentActivities(workspace.id, workspace.appNpub, channelId)
@@ -179,7 +179,7 @@ suspend fun WorkspaceSync.refreshAgentActivity(
 // MARK: Toolbox
 
 suspend fun WorkspaceSync.refreshToolbox(connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
-    engine.enqueue(WorkspaceSync.toolboxKey(workspace.id), priority, force) {
+    engine.enqueueRead(WorkspaceSync.toolboxKey(workspace.id), priority, force) {
         identity.requireReader(connection.signerNpub)
         val page = api(connection).personalWapps(workspace.id, workspace.appNpub)
         checkCancelled()
@@ -209,7 +209,7 @@ suspend fun WorkspaceSync.napletHTML(connection: ConnectionRecord, workspace: Wo
  * channel this phone does not know, leaves nothing stored and is reported on the job key.
  */
 suspend fun WorkspaceSync.ensureThread(connection: ConnectionRecord, workspace: WorkspaceRecord, threadId: String, priority: SyncPriority = SyncPriority.USER) {
-    engine.enqueue(WorkspaceSync.threadRecordKey(workspace.id, threadId), priority) {
+    engine.enqueueRead(WorkspaceSync.threadRecordKey(workspace.id, threadId), priority) {
         identity.requireReader(connection.signerNpub)
         val thread = api(connection).thread(workspace.id, workspace.appNpub, threadId)
         if (thread.workspaceId != workspace.id || thread.id != threadId.lowercase()) throw TowerError.Malformed("thread")
@@ -229,7 +229,7 @@ suspend fun WorkspaceSync.ensureThread(connection: ConnectionRecord, workspace: 
  * overlaid by the screens, so a refresh never visually flips a pin the user just changed.
  */
 suspend fun WorkspaceSync.refreshPins(connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
-    engine.enqueue(WorkspaceSync.pinsKey(workspace.id), priority, force) {
+    engine.enqueueRead(WorkspaceSync.pinsKey(workspace.id), priority, force) {
         identity.requireReader(connection.signerNpub)
         val result = api(connection).personalPins(workspace.id, workspace.appNpub)
         checkCancelled()

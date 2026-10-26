@@ -61,7 +61,7 @@ suspend fun WorkspaceSync.refreshTasks(
 ) {
     val channels = runCatching { channelIds(workspace, scopeId) }.getOrNull() ?: return
     for (channel in channels) {
-        engine.enqueue(WorkspaceSync.tasksKey(workspace.id, channel), priority, force) {
+        engine.enqueueRead(WorkspaceSync.tasksKey(workspace.id, channel), priority, force) {
             identity.requireReader(connection.signerNpub)
             val tasks = api(connection).channelTasks(workspace.id, workspace.appNpub, channel)
             checkCancelled()
@@ -75,9 +75,9 @@ suspend fun WorkspaceSync.refreshTasks(
 suspend fun WorkspaceSync.refreshTask(
     connection: ConnectionRecord, workspace: WorkspaceRecord, taskId: String, priority: SyncPriority = SyncPriority.USER, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.taskKey(workspace.id, taskId), priority, force) {
+    engine.enqueueRead(WorkspaceSync.taskKey(workspace.id, taskId), priority, force) {
         val cached = store.reader.task(workspace.id, taskId)
-        if (workspace.accessRemoved || cached?.accessRemoved == true || cached?.channelId?.let { store.reader.isChannelAccessRemoved(workspace.id, it) } == true) return@enqueue
+        if (workspace.accessRemoved || cached?.accessRemoved == true || cached?.channelId?.let { store.reader.isChannelAccessRemoved(workspace.id, it) } == true) return@enqueueRead
         identity.requireReader(connection.signerNpub)
         val api = api(connection)
         val task = api.task(workspace.id, workspace.appNpub, taskId)
@@ -95,7 +95,7 @@ suspend fun WorkspaceSync.refreshDocs(
 ) {
     val channels = runCatching { channelIds(workspace, scopeId) }.getOrNull() ?: return
     for (channel in channels) {
-        engine.enqueue(WorkspaceSync.docsKey(workspace.id, channel), priority, force) {
+        engine.enqueueRead(WorkspaceSync.docsKey(workspace.id, channel), priority, force) {
             identity.requireReader(connection.signerNpub)
             val page = api(connection).channelDocs(workspace.id, workspace.appNpub, channel)
             checkCancelled()
@@ -110,9 +110,9 @@ suspend fun WorkspaceSync.refreshDocs(
 suspend fun WorkspaceSync.refreshDoc(
     connection: ConnectionRecord, workspace: WorkspaceRecord, docId: String, priority: SyncPriority = SyncPriority.USER, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.docKey(workspace.id, docId), priority, force) {
+    engine.enqueueRead(WorkspaceSync.docKey(workspace.id, docId), priority, force) {
         val cached = store.reader.doc(workspace.id, docId)
-        if (workspace.accessRemoved || cached?.accessRemoved == true || cached?.channelId?.let { store.reader.isChannelAccessRemoved(workspace.id, it) } == true) return@enqueue
+        if (workspace.accessRemoved || cached?.accessRemoved == true || cached?.channelId?.let { store.reader.isChannelAccessRemoved(workspace.id, it) } == true) return@enqueueRead
         identity.requireReader(connection.signerNpub)
         val api = api(connection)
         val (doc, body) = api.docBody(workspace.id, workspace.appNpub, docId)
@@ -131,7 +131,7 @@ suspend fun WorkspaceSync.refreshFiles(
 ) {
     val channels = runCatching { channelIds(workspace, scopeId) }.getOrNull() ?: return
     for (channel in channels) {
-        engine.enqueue(WorkspaceSync.filesKey(workspace.id, channel), priority, force) {
+        engine.enqueueRead(WorkspaceSync.filesKey(workspace.id, channel), priority, force) {
             identity.requireReader(connection.signerNpub)
             val api = api(connection)
             val files = api.channelFiles(workspace.id, workspace.appNpub, channel)
@@ -151,7 +151,7 @@ suspend fun WorkspaceSync.refreshFiles(
 suspend fun WorkspaceSync.refreshInbox(
     connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.inboxKey(workspace.id), priority, force) {
+    engine.enqueueRead(WorkspaceSync.inboxKey(workspace.id), priority, force) {
         identity.requireReader(connection.signerNpub)
         val api = api(connection)
         val w = workspace.id
@@ -191,7 +191,7 @@ suspend fun WorkspaceSync.refreshReactions(
 ) {
     val targets = messageIds.takeLast(WorkspaceSync.REACTION_TARGET_LIMIT)
     if (targets.isEmpty()) return
-    engine.enqueue(WorkspaceSync.reactionsKey(workspace.id, scope), priority) {
+    engine.enqueueRead(WorkspaceSync.reactionsKey(workspace.id, scope), priority) {
         identity.requireReader(connection.signerNpub)
         val api = api(connection)
         val all = ArrayList<ReactionRecord>()
@@ -268,9 +268,9 @@ class FileCache(val root: File) {
  * used.)
  */
 suspend fun WorkspaceSync.download(connection: ConnectionRecord, workspace: WorkspaceRecord, file: FileRecord, cache: FileCache) {
-    engine.enqueue(WorkspaceSync.downloadKey(workspace.id, file.id), SyncPriority.USER, force = true) {
+    engine.enqueueRead(WorkspaceSync.downloadKey(workspace.id, file.id), SyncPriority.USER, force = true) {
         identity.requireReader(connection.signerNpub)
-        if (workspace.accessRemoved || file.accessRemoved || store.reader.isChannelAccessRemoved(workspace.id, file.channelId)) return@enqueue
+        if (workspace.accessRemoved || file.accessRemoved || store.reader.isChannelAccessRemoved(workspace.id, file.channelId)) return@enqueueRead
         val obj = api(connection).fileObject(workspace.id, workspace.appNpub, file.id)
         checkCancelled()
         if (file.sha256 != null && obj.sha256 != file.sha256) throw studio.otherstuff.ambulando.core.transport.FileTransferError.Integrity
@@ -281,9 +281,9 @@ suspend fun WorkspaceSync.download(connection: ConnectionRecord, workspace: Work
 
 /** Chat attachment bytes (signed `GET /api/v4/storage/:id/content` on the pinned origin), cached by object id. */
 suspend fun WorkspaceSync.downloadAttachment(connection: ConnectionRecord, workspace: WorkspaceRecord, objectId: String, cache: FileCache) {
-    engine.enqueue(WorkspaceSync.attachmentKey(workspace.id, objectId), SyncPriority.VISIBLE) {
+    engine.enqueueRead(WorkspaceSync.attachmentKey(workspace.id, objectId), SyncPriority.VISIBLE) {
         val target = cache.attachmentFile(workspace.id, objectId)
-        if (target.exists()) return@enqueue
+        if (target.exists()) return@enqueueRead
         identity.requireSigner(connection.signerNpub)
         val bytes = api(connection).storageContent(objectId)
         checkCancelled()

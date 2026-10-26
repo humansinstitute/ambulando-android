@@ -42,6 +42,7 @@ data class SyncSnapshot(
     /** Waiting for a scheduled retry time; not shown as active syncing. */
     val scheduled: Set<String> = emptySet(),
     val errors: Map<String, String> = emptyMap(),
+    val connectionFailures: Set<String> = emptySet(),
 ) {
     val isIdle: Boolean get() = running.isEmpty() && queued.isEmpty()
 }
@@ -67,8 +68,10 @@ class SyncEngine(
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     private val stateDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
     private val jobDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    /** Called when a job fails; the returned text is shown as the key's error. */
-    private val describe: (Throwable) -> String = { it.message ?: it::class.simpleName ?: "Error" },
+    /** Retry delay injection for deterministic recovery tests. */
+    private val retryDelay: (Int) -> Long = { SyncBackoff.delayMillis(it, random()) },
+    private val retryEvent: (String) -> Unit = {},
+    private val describe: (Throwable) -> String = { studio.otherstuff.ambulando.core.transport.ConnectionFailure.userMessage(it) ?: "Connection lost" },
 ) {
     fun interface Work { suspend fun run() }
 
@@ -79,6 +82,8 @@ class SyncEngine(
         val sequence: Long,
         /** Called when the job is removed without running (cancelled, or replaced by a newer job of its key). */
         var dropped: (() -> Unit)? = null,
+        var retryRead: Boolean = false,
+        var automaticRetry: Boolean = false,
     )
 
     val maxConcurrent: Int = max(1, maxConcurrent)
@@ -92,6 +97,7 @@ class SyncEngine(
     private val failures = HashMap<String, Int>()
     private val notBefore = HashMap<String, Long>()      // failure backoff
     private val delayedUntil = HashMap<String, Long>()   // requested delay (scheduled retry)
+    private val connectionFailures = HashSet<String>()
     private val errors = HashMap<String, String>()
     private var sequence = 0L
     private var generation = 0L
@@ -109,7 +115,7 @@ class SyncEngine(
     private fun computeSnapshot(): SyncSnapshot {
         val now = nowMillis()
         val waiting = queue.map { it.key }.filter { k -> readyAt(k)?.let { it > now } ?: false }.toSet()
-        return SyncSnapshot(running.keys.toSet(), queue.map { it.key }.toSet() - waiting, waiting, errors.toMap())
+        return SyncSnapshot(running.keys.toSet(), queue.map { it.key }.toSet() - waiting, waiting, errors.toMap(), connectionFailures.toSet())
     }
 
     private fun publish() { _status.value = computeSnapshot() }
@@ -121,15 +127,27 @@ class SyncEngine(
     suspend fun enqueue(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: Work) =
         confined { enqueueLocked(key, priority, force, delayMillis, work, null) }
 
+    /** Only idempotent read jobs opt in. Three total attempts per key/outage, reset by success or explicit force. */
+    suspend fun enqueueRead(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: Work) =
+        confined { enqueueLocked(key, priority, force, delayMillis, work, null, retryRead = true) }
+
+    /** A successful alternate refresh (for example the event path) resolves stale warnings for this key. */
+    suspend fun recovered(key: String) = confined {
+        failures.remove(key); notBefore.remove(key); errors.remove(key)
+        if (connectionFailures.remove(key)) retryEvent("recovered")
+        queue.removeAll { it.key == key && it.automaticRetry }
+        pump(); publish(); resumeIdleWaitersIfIdle()
+    }
+
     /** Fire-and-forget [enqueue] for callers that are not suspending (posts in order on the state dispatcher). */
     fun post(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: Work) {
         scope.launch { enqueueLocked(key, priority, force, delayMillis, work, null) }
     }
 
-    private fun enqueueLocked(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: Work, dropped: (() -> Unit)?) {
+    private fun enqueueLocked(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: Work, dropped: (() -> Unit)?, retryRead: Boolean = false) {
         sequence++
-        val job = QueuedJob(key, priority, work, sequence, dropped)
-        if (force) notBefore.remove(key)
+        val job = QueuedJob(key, priority, work, sequence, dropped, retryRead)
+        if (force) { notBefore.remove(key); if (retryRead) failures.remove(key) }
         val pendingImmediately = (reruns.containsKey(key) || queue.any { it.key == key }) && !delayedUntil.containsKey(key)
         if (delayMillis != null && !force) {
             if (!pendingImmediately) {
@@ -146,6 +164,8 @@ class SyncEngine(
             val existing = queue.firstOrNull { it.key == key }
             if (existing != null) {
                 existing.dropped?.invoke()
+                existing.retryRead = retryRead
+                existing.automaticRetry = false
                 existing.work = work
                 existing.dropped = dropped
                 existing.priority = maxOf(existing.priority, priority)
@@ -170,6 +190,7 @@ class SyncEngine(
     suspend fun cancel(key: String) = confined { cancelLocked(key) }
 
     private fun cancelLocked(key: String) {
+        failures.remove(key); notBefore.remove(key); errors.remove(key); connectionFailures.remove(key)
         queue.filter { it.key == key }.forEach { it.dropped?.invoke() }
         queue.removeAll { it.key == key }
         reruns.remove(key)?.dropped?.invoke()
@@ -188,6 +209,7 @@ class SyncEngine(
     /** Cancels everything (identity locked, workspace removed, background work expiring). */
     suspend fun cancelAll() = confined {
         generation++
+        failures.clear(); notBefore.clear(); errors.clear(); connectionFailures.clear()
         queue.forEach { it.dropped?.invoke() }
         reruns.values.forEach { it.dropped?.invoke() }
         queue.clear()
@@ -271,22 +293,33 @@ class SyncEngine(
             // A transport error raised because the job was cancelled is a cancellation, not a failure to back off.
             if (failure != null && !isActive) failure = CancellationException("cancelled", failure)
             val outcome = failure
-            withContext(NonCancellable + stateDispatcher) { finish(key, outcome, started) }
+            withContext(NonCancellable + stateDispatcher) { finish(job, outcome, started) }
         }
     }
 
-    private fun finish(key: String, error: Throwable?, started: Long) {
-        running.remove(key)
+    private fun finish(job: QueuedJob, error: Throwable?, started: Long) {
+        val key = job.key
+        val cancelled = running.remove(key)?.isCancelled == true || started != generation
         runningPriority.remove(key)
-        if (error != null && error !is CancellationException) {
+        if (cancelled) {
+            // A cancelled transport may ignore cancellation and return a late success/failure. Neither is current.
+        } else if (error != null && error !is CancellationException) {
             val count = (failures[key] ?: 0) + 1
             failures[key] = count
-            notBefore[key] = nowMillis() + SyncBackoff.delayMillis(count, random())
-            errors[key] = describe(error)
+            notBefore[key] = nowMillis() + retryDelay(count)
+            if (studio.otherstuff.ambulando.core.transport.ConnectionFailure.isTransient(error)) {
+                connectionFailures.add(key); errors.remove(key)
+                if (job.retryRead && count < 3 && started == generation && !reruns.containsKey(key)) {
+                    job.automaticRetry = true; queue.add(job); retryEvent("retry")
+                } else if (job.retryRead) retryEvent("gave-up")
+            } else {
+                connectionFailures.remove(key); errors[key] = describe(error)
+            }
         } else if (error == null) {
             failures.remove(key)
             notBefore.remove(key)
             errors.remove(key)
+            if (connectionFailures.remove(key)) retryEvent("recovered")
         }
         reruns.remove(key)?.let { rerun -> if (started == generation) queue.add(rerun) else rerun.dropped?.invoke() }
         pump()

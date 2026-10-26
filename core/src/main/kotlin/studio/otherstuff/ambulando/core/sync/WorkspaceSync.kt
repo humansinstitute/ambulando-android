@@ -84,7 +84,7 @@ class WorkspaceSync(
      * longer listed is flagged (kept readable, left out of sync) by the store.
      */
     suspend fun discover(connection: ConnectionRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
-        engine.enqueue(discoverKey(connection.id), priority, force) {
+        engine.enqueueRead(discoverKey(connection.id), priority, force) {
             identity.requireReader(connection.signerNpub)
             val origin = TowerOrigin(connection.origin)
             val workspaces = api(origin).workspaces()
@@ -98,7 +98,7 @@ class WorkspaceSync(
 
     /** Scopes job for one workspace; on success schedules one channel job per scope. */
     suspend fun refreshWorkspace(connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
-        engine.enqueue(scopesKey(workspace.id), priority, force) {
+        engine.enqueueRead(scopesKey(workspace.id), priority, force) {
             identity.requireReader(connection.signerNpub)
             val api = api(connection)
             val scopes = api.scopes(workspace.id, workspace.appNpub)
@@ -106,7 +106,7 @@ class WorkspaceSync(
             store.writer.upsertScopes(workspace.id, scopes, complete = true)
             refreshDirectory(connection, workspace, SyncPriority.BACKGROUND)
             for (scope in scopes) {
-                engine.enqueue(channelsKey(workspace.id, scope.id), priority) {
+                engine.enqueueRead(channelsKey(workspace.id, scope.id), priority) {
                     identity.requireReader(connection.signerNpub)
                     val channels = api.channels(workspace.id, scope.id, workspace.appNpub)
                     checkCancelled()

@@ -340,6 +340,8 @@ class SampleSurfaceTower(
         val parts = path.removePrefix(base).split('/').filter { it.isNotEmpty() }
         val method = request.method.uppercase()
         if (!owns(parts)) return null
+        // File version bytes belong here only for the canvas artefact versions seeded here; other files fall through.
+        if (parts[0] == "files" && synchronized(lock) { state.row("board_versions", "${parts[1]}/${parts[3]}") == null && parts[1] !in state.list("denied_records") }) return null
         when (val result = auth.verify(request)) {
             is SampleAuth.Result.Invalid -> return SampleAuth.unauthorized(result.reason)
             is SampleAuth.Result.Valid -> Unit

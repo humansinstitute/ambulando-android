@@ -32,6 +32,7 @@ sealed class FileTransferError(message: String) : Exception(message, null, false
     data object UnsafeUploadURL : FileTransferError("Tower offered an upload address this app does not trust; nothing was uploaded.")
     data object FallbackTooLarge : FileTransferError("This Tower only accepts uploads through its API, limited to 8 MB.")
     data object NotAttachable : FileTransferError("Tower did not confirm the uploaded file.")
+    data object TextTooLarge : FileTransferError("This text is larger than the 8 MB limit for text attachments.")
 }
 
 /** Typed file content from `GET /files/:f/object`, verified against Tower's hash. */

@@ -358,14 +358,22 @@ data class MessageAttachment(
     val filename: String,
     val mimeType: String? = null,
     val sizeBytes: Long? = null,
+    /** Text attachment contract v1: `content_type`, `sha256_hex` and the `text_attachment` marker (counts only). */
+    val sha256: String? = null,
+    val textAttachment: studio.otherstuff.ambulando.core.chat.TextAttachmentInfo? = null,
 ) {
     val requestObject: JsonObject
         get() {
             val pairs = mutableListOf<Pair<String, Any?>>("kind" to kind, "storage_object_id" to storageObjectId, "filename" to filename)
-            if (mimeType != null) pairs.add("mime_type" to mimeType)
+            // The web writes text attachments with `content_type`; other attachments keep `mime_type`.
+            if (mimeType != null) pairs.add((if (textAttachment != null) "content_type" else "mime_type") to mimeType)
             if (sizeBytes != null) pairs.add("size_bytes" to sizeBytes)
+            if (sha256 != null) pairs.add("sha256_hex" to sha256)
+            if (textAttachment != null) pairs.add("text_attachment" to textAttachment.requestObject)
             return jsonObjectOf(*pairs.toTypedArray())
         }
+
+    val isText: Boolean get() = studio.otherstuff.ambulando.core.chat.TextAttachments.isText(kind, mimeType, textAttachment)
 
     companion object {
         /** Attachments of a message's canonical JSON (only well-formed storage references). */
@@ -375,7 +383,8 @@ data class MessageAttachment(
                 val id = lowerUUID(a.string("storage_object_id")) ?: return@mapNotNull null
                 MessageAttachment(
                     kind = a.string("kind") ?: "file", storageObjectId = id, filename = a.string("filename") ?: "Attachment",
-                    mimeType = a.string("mime_type"), sizeBytes = flexibleLong(a["size_bytes"]),
+                    mimeType = a.string("mime_type") ?: a.string("content_type"), sizeBytes = flexibleLong(a["size_bytes"]),
+                    sha256 = a.string("sha256_hex")?.lowercase(), textAttachment = studio.otherstuff.ambulando.core.chat.TextAttachmentInfo.from(a),
                 )
             }
         }

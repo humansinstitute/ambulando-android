@@ -48,6 +48,38 @@ class ConnectedWorkflowTest {
         } finally { engine.cancelAll(); engine.close(); store.close() }
     }
 
+    @Test fun acceptedWriteWithLostResponseUsesDurableReplayAndCreatesOneMessage() = runBlocking {
+        val identity = makeIdentity()
+        val tower = SampleTower(tempDir()).also { it.prepare(TestKeys.NPUB) }
+        val engine = SyncEngine()
+        val store = LocalStore(tempDir())
+        var sends = 0
+        val bodies = mutableListOf<ByteArray>()
+        val observed = studio.otherstuff.ambulando.core.transport.ObservedTransport(object : studio.otherstuff.ambulando.core.transport.HttpTransport {
+            override suspend fun send(request: studio.otherstuff.ambulando.core.transport.HttpRequest): studio.otherstuff.ambulando.core.transport.HttpResponse {
+                val response = tower.send(request)
+                if (request.method == "POST" && request.url.substringBefore('?').endsWith("/messages")) {
+                    sends++; bodies.add(request.body!!.copyOf())
+                    if (sends == 1) throw java.net.SocketTimeoutException("lost response after acceptance")
+                }
+                return response
+            }
+        }, studio.otherstuff.ambulando.core.transport.DiagnosticsLog())
+        try {
+            val sync = WorkspaceSync(store, engine, identity, observed)
+            val connection = sync.connect(tower.origin)
+            sync.discover(connection); withTimeout(15_000) { engine.waitUntilIdle() }
+            val workspace = store.reader.workspaces(connection.id).first { it.id == SampleIds.STUDIO }
+            val sender = OutboxSender(store, engine, identity, observed)
+            sender.send("Lost-response replay", emptyList(), ChatTarget(connection.id, workspace.id, SampleIds.GENERAL), connection, workspace)
+            withTimeout(15_000) { engine.waitUntilIdle() }
+            assertEquals(2, sends)
+            assertArrayEquals(bodies[0], bodies[1])
+            assertTrue(store.reader.outbox(connection.id, connection.signerNpub).isEmpty())
+            assertEquals(1, store.reader.latestMessages(workspace.id, SampleIds.GENERAL, 500).count { it.body == "Lost-response replay" })
+        } finally { engine.cancelAll(); engine.close(); store.close() }
+    }
+
     @Test fun accessRemovedDocumentNeverSchedulesAnotherBodyRead() = runBlocking {
         val identity = makeIdentity()
         val tower = SampleTower(tempDir()).also { it.prepare(TestKeys.NPUB) }

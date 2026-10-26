@@ -40,9 +40,9 @@ import studio.otherstuff.ambulando.core.transport.WorkspaceRecord
 suspend fun WorkspaceSync.catchUpChannel(
     connection: ConnectionRecord, workspace: WorkspaceRecord, channelId: String, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.messagesKey(workspace.id, channelId), priority, force) {
+    engine.enqueueRead(WorkspaceSync.messagesKey(workspace.id, channelId), priority, force) {
         identity.requireReader(connection.signerNpub)
-        if (store.reader.isChannelAccessRemoved(workspace.id, channelId)) return@enqueue
+        if (store.reader.isChannelAccessRemoved(workspace.id, channelId)) return@enqueueRead
         runChannelCatchUp(connection, workspace, channelId, fromStart = force)
     }
 }
@@ -88,10 +88,10 @@ suspend fun WorkspaceSync.refreshThread(
     connection: ConnectionRecord, workspace: WorkspaceRecord, channelId: String, threadId: String,
     priority: SyncPriority = SyncPriority.USER, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.threadKey(workspace.id, threadId), priority, force) {
-        if (workspace.accessRemoved || store.reader.isAccessRemoved(workspace.id, FlaggedTable.THREADS, threadId)) return@enqueue
+    engine.enqueueRead(WorkspaceSync.threadKey(workspace.id, threadId), priority, force) {
+        if (workspace.accessRemoved || store.reader.isAccessRemoved(workspace.id, FlaggedTable.THREADS, threadId)) return@enqueueRead
         identity.requireReader(connection.signerNpub)
-        if (store.reader.isChannelAccessRemoved(workspace.id, channelId)) return@enqueue
+        if (store.reader.isChannelAccessRemoved(workspace.id, channelId)) return@enqueueRead
         val api = api(connection)
         var cursor: String? = null
         val keep = HashSet<String>()
@@ -117,7 +117,7 @@ suspend fun WorkspaceSync.refreshThread(
 suspend fun WorkspaceSync.refreshDirectory(
     connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false,
 ) {
-    engine.enqueue(WorkspaceSync.directoryKey(workspace.id), priority, force) {
+    engine.enqueueRead(WorkspaceSync.directoryKey(workspace.id), priority, force) {
         identity.requireReader(connection.signerNpub)
         val api = api(connection)
         val members = api.members(workspace.id, workspace.appNpub)

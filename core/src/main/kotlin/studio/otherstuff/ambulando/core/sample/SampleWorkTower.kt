@@ -50,7 +50,7 @@ class SampleWorkTower(
     companion object {
         val COLLECTIONS = listOf(
             "tasks", "task_comments", "docs", "doc_comments", "objects", "files", "folders", "view_states", "reactions", "leases", "requests",
-            "recoveries",
+            "recoveries", "file_versions",
         )
 
         /** Whether a route under `/workspaces/:w/` belongs to this stand-in. */
@@ -235,6 +235,29 @@ class SampleWorkTower(
         val id = newUUID()
         state.put("files", id, fileRow(id, channel, scope, objectId, name, folder, now()))
         id
+    }
+
+    private fun fileVersionRows(fileId: String): List<Row> =
+        state.rows("file_versions").filter { it["file_id"] == fileId }.sortedBy { it["version_number"].asInt() ?: 0 }
+
+    private fun versionRow(fileId: String, number: Int, objectId: String, base: String?): Row {
+        val meta = state.row("objects", objectId) ?: LinkedHashMap()
+        return linkedMapOf(
+            "id" to newUUID(), "workspace_id" to workspaceId, "file_id" to fileId, "version_number" to number.toLong(), "storage_object_id" to objectId,
+            "size_bytes" to meta["size_bytes"].asString()?.toLongOrNull(), "content_type" to meta["content_type"], "sha256_hex" to meta["sha256_hex"],
+            "base_version_id" to base, "operation" to if (number == 1) "create" else "replace", "created_at" to now(), "created_by_actor_npub" to actor,
+        )
+    }
+
+    /** Someone else saves a new version of a lineage file (conflict testing); [objectId] must be a completed object. */
+    fun externalFileVersion(fileId: String, objectId: String): Boolean = mutate {
+        val file = state.row("files", fileId) ?: return@mutate false
+        val versions = fileVersionRows(fileId)
+        val version = versionRow(fileId, versions.size + 1, objectId, versions.lastOrNull()?.get("id") as String?)
+        state.put("file_versions", version["id"] as String, version)
+        file["current_version_id"] = version["id"]
+        state.put("files", fileId, file)
+        true
     }
 
     private fun fileRow(id: String, channel: String, scope: String?, objectId: String, name: String, folder: String?, stamp: String): Row {
@@ -519,12 +542,63 @@ class SampleWorkTower(
                 val objectId = o["storage_object_id"].asString()
                 val obj = objectId?.let { state.row("objects", it) }
                 if (objectId == null || obj == null || obj["completed_at"] !is String) return errorReply(400, "validation_error")
+                // Text attachment lineage (shared contract v1): one canonical file per (origin message, origin object).
+                val lineage = o["metadata"].asMap()?.get("text_attachment_lineage").asMap()
+                if (lineage != null) {
+                    val existing = state.rows("files").firstOrNull {
+                        it["channel_id"] == p[1] && it["deleted_at"] == null && it["metadata"].asMap()?.get("text_attachment_lineage").asMap()?.let { l ->
+                            l["origin_message_id"] == lineage["origin_message_id"] && l["origin_storage_object_id"] == lineage["origin_storage_object_id"]
+                        } == true
+                    }
+                    if (existing != null) {
+                        val versions = fileVersionRows(existing["id"] as String)
+                        val body = linkedMapOf<String, Any?>("file" to existing, "current_version" to versions.lastOrNull(), "lineage" to lineage)
+                        return if (versions.any { it["storage_object_id"] == objectId }) 200 to (body + ("idempotent_replay" to true))
+                        else errorReply(409, "lineage_file_exists", body)
+                    }
+                }
                 if (state.rows("files").any { it["storage_object_id"] == objectId }) return errorReply(409, "file_storage_object_conflict")
                 val id = newUUID()
                 val row = fileRow(id, p[1], null, objectId, o["display_name"].asString() ?: "file", o["folder_id"].asString(), now())
+                if (lineage != null) {
+                    row["metadata"] = linkedMapOf("text_attachment_lineage" to lineage)
+                    val version = versionRow(id, 1, objectId, null)
+                    state.put("file_versions", version["id"] as String, version)
+                    row["current_version_id"] = version["id"]
+                }
                 state.put("files", id, row)
                 emit(SampleChange("file", id, "created", p[1], null, 1))
                 201 to mapOf("file" to row)
+            }
+            method == "GET" && n == 3 && head == "files" && p[2] == "versions" && state.row("files", p[1]) != null -> {
+                val rows = fileVersionRows(p[1])
+                200 to linkedMapOf("file_id" to p[1], "current_version_id" to state.row("files", p[1])?.get("current_version_id"), "versions" to rows, "next_cursor" to null)
+            }
+            method == "GET" && n == 5 && head == "files" && p[2] == "versions" && p[4] == "object" && state.row("files", p[1]) != null -> {
+                val version = fileVersionRows(p[1]).firstOrNull { it["id"] == p[3] } ?: return errorReply(404, "file_version_object_not_found")
+                val bytes = state.row("objects", version["storage_object_id"] as String)?.get("bytes").asString()?.let { Base64.getDecoder().decode(it) }
+                    ?: return errorReply(404, "file_version_object_not_found")
+                200 to bytes
+            }
+            method == "POST" && n == 3 && head == "files" && p[2] == "versions" && state.row("files", p[1]) != null -> {
+                val file = state.row("files", p[1])!!
+                val versions = fileVersionRows(p[1])
+                val baseId = o["base_version_id"].asString()
+                val objectId = o["storage_object_id"].asString()
+                if (baseId == null || objectId == null) return validationError("base_version_id and storage_object_id are required")
+                if (state.row("objects", objectId)?.get("completed_at") !is String) return errorReply(400, "validation_error")
+                if (versions.lastOrNull()?.get("id") != baseId) {
+                    return errorReply(409, "stale_base_version", linkedMapOf("file" to file, "current_version" to versions.lastOrNull()))
+                }
+                if (versions.any { it["storage_object_id"] == objectId }) return errorReply(409, "file_storage_object_conflict")
+                val version = versionRow(p[1], versions.size + 1, objectId, baseId)
+                state.put("file_versions", version["id"] as String, version)
+                file["current_version_id"] = version["id"]
+                file["row_version"] = ((file["row_version"].asInt() ?: 1) + 1).toLong()
+                file["updated_at"] = now()
+                state.put("files", p[1], file)
+                emit(SampleChange("file", p[1], "updated", file["channel_id"].asString(), null, file["row_version"].asInt()?.toLong()))
+                201 to linkedMapOf("file" to file, "version" to version)
             }
             method == "GET" && n == 3 && head == "files" && p[2] == "object" -> {
                 val f = state.row("files", p[1])

@@ -24,6 +24,7 @@ import kotlin.coroutines.resumeWithException
  */
 class OkHttpTransport(timeoutSeconds: Long = 45, base: OkHttpClient = OkHttpClient()) : HttpTransport {
     val client: OkHttpClient = base.newBuilder()
+        .retryOnConnectionFailure(false)
         .followRedirects(false)
         .followSslRedirects(false)
         .cookieJar(CookieJar.NO_COOKIES)

@@ -14,6 +14,7 @@ import studio.otherstuff.ambulando.core.chat.MentionCodec
 import studio.otherstuff.ambulando.core.chat.MentionType
 import studio.otherstuff.ambulando.core.context.ThreadSummary
 import studio.otherstuff.ambulando.core.transport.MemberRecord
+import studio.otherstuff.ambulando.core.chat.TextAttachmentInfo
 import studio.otherstuff.ambulando.core.transport.MessageAttachment
 import studio.otherstuff.ambulando.core.transport.MessageRecord
 import studio.otherstuff.ambulando.core.transport.ThreadRecord
@@ -37,7 +38,7 @@ data class ChatTarget(val connectionId: String, val workspaceId: String, val cha
  * Composer state for one target. `updatedAt` is when the stored draft was last written (millisecond precision), so a
  * composer can tell a draft written after its own send (an Edit restore) from one read before it.
  */
-data class Draft(val text: String, val mentions: List<Mention>, val updatedAt: Instant? = null)
+data class Draft(val text: String, val mentions: List<Mention>, val updatedAt: Instant? = null, val attachments: List<PendingAttachment> = emptyList())
 
 /** Outbox lifecycle. A row is deleted when Tower acknowledges it (or a synced copy with its `client_request_id` arrives). */
 enum class OutboxState(val wire: String) {
@@ -72,8 +73,15 @@ data class PendingAttachment(
     val objectId: String? = null,
     val uploadURL: String? = null,
     val complete: Boolean = false,
+    /** `image` for privacy-stripped photos, `file` for text attachments. */
+    val kind: String = "image",
+    /** Set for a pasted or edited text attachment (shared contract v1 marker). */
+    val text: TextAttachmentInfo? = null,
 ) {
-    val wire: MessageAttachment? get() = objectId?.let { MessageAttachment("image", it, filename, mimeType, sizeBytes) }
+    val wire: MessageAttachment? get() = objectId?.let {
+        MessageAttachment(kind, it, filename, mimeType, sizeBytes, sha256.takeIf { _ -> text != null }, text)
+    }
+    val isText: Boolean get() = text != null
 }
 
 class OutboxItem(
@@ -153,11 +161,14 @@ internal object JsonText {
 
 /** Saves (or clears, when empty) the composer state for one target. */
 suspend fun StoreWriter.saveDraft(target: ChatTarget, draft: Draft) = write {
-    if (draft.text.isBlank() && draft.mentions.isEmpty()) {
+    val empty = draft.text.isBlank() && draft.mentions.isEmpty()
+    // Attachments are owned by setDraftAttachments; a text save never touches them.
+    val keptAttachments = db.textValue("SELECT attachments FROM drafts WHERE key = ?", target.draftKey)?.let { it != "[]" } == true
+    if (empty && !keptAttachments) {
         db.run("DELETE FROM drafts WHERE key = ?", target.draftKey)
     } else {
         db.run(
-            """INSERT INTO drafts(key, connection_id, workspace_id, channel_id, thread_id, text, mentions, updated_at) VALUES(?,?,?,?,?,?,?,?)
+            """INSERT INTO drafts(key, connection_id, workspace_id, channel_id, thread_id, text, mentions, updated_at, attachments) VALUES(?,?,?,?,?,?,?,?,'[]')
                ON CONFLICT(key) DO UPDATE SET text = excluded.text, mentions = excluded.mentions, updated_at = excluded.updated_at""",
             target.draftKey, target.connectionId, target.workspaceId, target.channelId, target.threadId, draft.text,
             JsonText.mentions(draft.mentions), StoreTime.precise(),
@@ -165,6 +176,33 @@ suspend fun StoreWriter.saveDraft(target: ChatTarget, draft: Draft) = write {
     }
     emit(StoreTable.DRAFTS, target.workspaceId)
 }
+
+/**
+ * Changes one target's staged composer attachments (pasted text files) in a single writer step: [transform] sees the
+ * list as stored and returns the new one, so quick successive pastes never overwrite each other. The list is durable
+ * with the draft (refresh, relaunch and context changes keep it); an empty list with no text removes the draft row.
+ * Returns the stored list.
+ */
+suspend fun StoreWriter.editDraftAttachments(
+    target: ChatTarget, transform: (List<PendingAttachment>) -> List<PendingAttachment>,
+): List<PendingAttachment> = write {
+    val current = db.textValue("SELECT attachments FROM drafts WHERE key = ?", target.draftKey)?.let { JsonText.attachments(it) } ?: emptyList()
+    val next = transform(current)
+    if (next.isEmpty()) {
+        db.run("UPDATE drafts SET attachments = '[]', updated_at = ? WHERE key = ?", StoreTime.precise(), target.draftKey)
+        db.run("DELETE FROM drafts WHERE key = ? AND trim(text) = '' AND mentions = '[]'", target.draftKey)
+    } else {
+        db.run(
+            """INSERT INTO drafts(key, connection_id, workspace_id, channel_id, thread_id, text, mentions, updated_at, attachments) VALUES(?,?,?,?,?,'','[]',?,?)
+               ON CONFLICT(key) DO UPDATE SET attachments = excluded.attachments, updated_at = excluded.updated_at""",
+            target.draftKey, target.connectionId, target.workspaceId, target.channelId, target.threadId, StoreTime.precise(), JsonText.attachments(next),
+        )
+    }
+    emit(StoreTable.DRAFTS, target.workspaceId)
+    next
+}
+
+suspend fun StoreWriter.setDraftAttachments(target: ChatTarget, attachments: List<PendingAttachment>) { editDraftAttachments(target) { attachments } }
 
 /**
  * Replaces the first `token` in one target's stored draft (read and written in this writer step, so no other draft can
@@ -257,11 +295,14 @@ suspend fun StoreWriter.discardOutbox(id: String, restoreDraft: Boolean) = write
     if (item.state == OutboxState.SENDING) return@write
     if (restoreDraft) {
         val decoded = MentionCodec.decode(item.body)
+        // Text attachments return to the composer (merged after any attachments already there); images do not.
+        val restored = item.attachments.filter { it.isText }.map { it.copy(objectId = null, uploadURL = null, complete = false) }
+        val existing = db.textValue("SELECT attachments FROM drafts WHERE key = ?", item.target.draftKey)?.let { JsonText.attachments(it) } ?: emptyList()
         db.run(
-            """INSERT INTO drafts(key, connection_id, workspace_id, channel_id, thread_id, text, mentions, updated_at) VALUES(?,?,?,?,?,?,?,?)
-               ON CONFLICT(key) DO NOTHING""",
+            """INSERT INTO drafts(key, connection_id, workspace_id, channel_id, thread_id, text, mentions, updated_at, attachments) VALUES(?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(key) DO UPDATE SET attachments = excluded.attachments""",
             item.target.draftKey, item.connectionId, item.workspaceId, item.channelId, item.threadId, decoded.text,
-            JsonText.mentions(decoded.mentions), StoreTime.precise(),
+            JsonText.mentions(decoded.mentions), StoreTime.precise(), JsonText.attachments(existing + restored),
         )
     }
     db.run("DELETE FROM outbox WHERE id = ?", id)
@@ -428,9 +469,14 @@ suspend fun StoreReader.outboxCount(connectionId: String): Int = read {
 }
 
 suspend fun StoreReader.draft(target: ChatTarget): Draft? = read {
-    first("SELECT text, mentions, updated_at FROM drafts WHERE key = ?", target.draftKey) {
-        Draft(it.text(0) ?: "", JsonText.mentions(it.text(1)), StoreTime.parse(it.text(2)))
+    first("SELECT text, mentions, updated_at, attachments FROM drafts WHERE key = ?", target.draftKey) {
+        Draft(it.text(0) ?: "", JsonText.mentions(it.text(1)), StoreTime.parse(it.text(2)), JsonText.attachments(it.text(3)))
     }
+}
+
+/** Every staged composer attachment of one connection (to delete their bytes with the connection). */
+suspend fun StoreReader.draftAttachments(connectionId: String): List<PendingAttachment> = read {
+    query("SELECT attachments FROM drafts WHERE connection_id = ?", connectionId) { JsonText.attachments(it.text(0)) }.flatten()
 }
 
 internal fun SqlConnection.memberRows(workspaceId: String): List<MemberRecord> = query(

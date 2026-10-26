@@ -12,7 +12,8 @@ Updates signed with the same release certificate retain the identity, connection
 
 - One workspace → scope → channel selection across chat, tasks, documents and files; independent section navigation.
 - Chat conversations, replies, mentions, reactions, signed edits/deletes, privacy-stripped image and file uploads,
-  per-conversation drafts and a durable retrying outbox.
+  per-conversation drafts and a durable retrying outbox. Large pasted text becomes a `.txt` attachment with a paged
+  editor, offline recovery and sent-file version history.
 - Task lists/boards, creation, state/priority/assignee changes, comments and conflict handling.
 - Native rich-document reading, bundled lossless editing with edit leases and durable drafts, comments and recovery.
 - Files and folders, uploads, hash-verified downloads, local previews and Android sharing.

@@ -25,6 +25,8 @@ import studio.otherstuff.ambulando.core.store.OutboxState
 import studio.otherstuff.ambulando.core.store.PendingAttachment
 import studio.otherstuff.ambulando.core.store.acknowledgeSend
 import studio.otherstuff.ambulando.core.store.discardOutbox
+import studio.otherstuff.ambulando.core.store.draft
+import studio.otherstuff.ambulando.core.store.editDraftAttachments
 import studio.otherstuff.ambulando.core.store.enqueueSend
 import studio.otherstuff.ambulando.core.store.freezeOutbox
 import studio.otherstuff.ambulando.core.store.markOutbox
@@ -171,6 +173,78 @@ class OutboxSender(
         return named
     }
 
+    /**
+     * Stages a text attachment (pasted or edited) as its exact UTF-8 bytes in the staging directory. The file is
+     * written and flushed before the caller records it in the draft, so a stored draft never names missing bytes.
+     */
+    fun stageText(text: String, filename: String, source: String): PendingAttachment {
+        val directory = staging ?: throw FileTransferError.NotAttachable
+        val bytes = TextAttachments.bytes(text)
+        if (bytes.size > TextAttachments.MAX_BYTES) throw FileTransferError.TextTooLarge
+        directory.mkdirs()
+        val base = PendingAttachment(
+            filename = TextAttachments.normalizeName(filename), mimeType = TextAttachments.CONTENT_TYPE, sizeBytes = bytes.size.toLong(),
+            sha256 = Sha256Hex.of(bytes), staged = "", kind = "file", text = TextAttachmentInfo.of(text, source),
+        )
+        val named = base.copy(staged = "attachment-${base.id}")
+        val target = File(directory, named.staged)
+        val temp = File(directory, named.staged + ".tmp")
+        temp.outputStream().use { it.write(bytes); it.fd.sync() }
+        if (!temp.renameTo(target)) { temp.delete(); throw FileTransferError.NotAttachable }
+        return named
+    }
+
+    /** The staged text of an attachment (bounded by [TextAttachments.MAX_BYTES]); null when its bytes are gone. */
+    fun readStagedText(attachment: PendingAttachment): String? {
+        val directory = staging ?: return null
+        val file = File(directory, attachment.staged)
+        if (!file.isFile || file.length() > TextAttachments.MAX_BYTES) return null
+        val bytes = file.readBytes()
+        if (Sha256Hex.of(bytes) != attachment.sha256) return null
+        return TextAttachments.text(bytes)
+    }
+
+    /**
+     * Adds pasted text to one composer's durable attachments. The bytes are staged first, then the draft row is updated in
+     * a single writer step that also picks the next free `Pasted text N.txt` name. Returns the stored attachment.
+     */
+    suspend fun addDraftText(target: ChatTarget, text: String, source: String = TextAttachmentInfo.SOURCE_PASTE): PendingAttachment {
+        val staged = stageText(text, "${PastedTextPolicy.BASE_NAME}.${PastedTextPolicy.EXTENSION}", source)
+        var stored = staged
+        try {
+            store.writer.editDraftAttachments(target) { list ->
+                stored = staged.copy(filename = PastedTextPolicy.nextName(list.map { it.filename }))
+                list + stored
+            }
+        } catch (e: Throwable) { removeStaged(listOf(staged)); throw e }
+        return stored
+    }
+
+    /** Removes one staged attachment from the composer and deletes its bytes. */
+    suspend fun removeDraftText(target: ChatTarget, id: String) {
+        var removed: PendingAttachment? = null
+        store.writer.editDraftAttachments(target) { list -> list.filter { if (it.id == id) { removed = it; false } else true } }
+        removed?.let { removeStaged(listOf(it)) }
+    }
+
+    /** Saves an edited composer attachment: new exact bytes (and name) replace the old ones in place. */
+    suspend fun replaceDraftText(target: ChatTarget, id: String, text: String, filename: String): PendingAttachment? {
+        val old = store.reader.draft(target)?.attachments?.firstOrNull { it.id == id } ?: return null
+        val fresh = stageText(text, filename, old.text?.source ?: TextAttachmentInfo.SOURCE_PASTE)
+        var replaced: PendingAttachment? = null
+        try {
+            store.writer.editDraftAttachments(target) { list ->
+                list.map { if (it.id == id) fresh.copy(id = id).also { n -> replaced = n } else it }
+            }
+        } catch (e: Throwable) { removeStaged(listOf(fresh)); throw e }
+        if (replaced == null) { removeStaged(listOf(fresh)); return null }
+        removeStaged(listOf(old))
+        return replaced
+    }
+
+    /** Deletes the staged bytes of attachments the composer dropped (never those of a queued message). */
+    fun dropStaged(attachments: List<PendingAttachment>) = removeStaged(attachments)
+
     /** Composes a message into the outbox (clearing that draft) and starts sending if unlocked. */
     suspend fun send(
         text: String, mentions: List<Mention>, target: ChatTarget, connection: ConnectionRecord, workspace: WorkspaceRecord,
@@ -180,6 +254,8 @@ class OutboxSender(
         val encoded = MentionCodec.encode(text, mentions)
         val body = OutboxRequest.normalizedBody(encoded.body)
         if (body.isEmpty() && attachments.isEmpty()) return null
+        // Staged bytes must still be on the device before the message is accepted into the outbox.
+        if (attachments.any { it.staged.isEmpty() || !File(staging ?: throw FileTransferError.NotAttachable, it.staged).isFile }) throw FileTransferError.NotAttachable
         // A pasted item still uploading would otherwise be sent as its placeholder text.
         if (UploadToken.containsAny(body)) throw ComposerUploadException(ComposerUploadError.UNRESOLVED)
         val item = store.writer.enqueueSend(target, connection.origin, connection.signerNpub, workspace.appNpub, body, encoded.mentions, attachments)
@@ -191,7 +267,8 @@ class OutboxSender(
     suspend fun discard(id: String, restoreDraft: Boolean) {
         val item = store.reader.outboxItem(id)
         store.writer.discardOutbox(id, restoreDraft)
-        if (store.reader.outboxItem(id) == null) removeStaged(item?.attachments ?: emptyList())
+        // Text attachments of a restored draft keep their staged bytes; everything else is removed with the row.
+        if (store.reader.outboxItem(id) == null) removeStaged(item?.attachments?.filter { !(restoreDraft && it.isText) } ?: emptyList())
     }
 
     private fun removeStaged(attachments: List<PendingAttachment>) {
@@ -268,7 +345,7 @@ class OutboxSender(
                     val permanent = e is FileTransferError
                     store.writer.markOutbox(
                         item.id, if (permanent) OutboxState.FAILED else OutboxState.RETRYING,
-                        error = "Image upload: " + networkMessage(e), countAttempt = true,
+                        error = "Attachment upload: " + networkMessage(e), countAttempt = true,
                     )
                     blocked.add(conversation)
                     if (!permanent) scheduleRetry(item.attempts + 1)

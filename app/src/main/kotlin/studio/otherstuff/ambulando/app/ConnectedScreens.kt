@@ -39,13 +39,20 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     }
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
     val services = LocalAppServices.current
+    val scopedTextAttachments = remember(c.id, c.origin, c.signerNpub, w.id) { model.textAttachments(c, w.id) }
     var threads by remember(target) { mutableStateOf(false) }
     val conversations by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.channelThreads(w.id, channel) } }.collectAsState(emptyList())
     val messages by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
         if (threadId == null) model.store.reader.channelFeed(w.id, channel, 300).map { it.message } else model.store.reader.threadMessages(w.id, threadId, 300)
     } }.collectAsState(emptyList())
     val pending by remember(target) { model.store.liveQuery({ it.table == StoreTable.OUTBOX }) { model.store.reader.outbox(target) } }.collectAsState(emptyList())
-    var text by remember(target) { mutableStateOf("") }
+    val field = remember(target) { ComposerField() }
+    var text by field::text
+    val draftAttachments by remember(target) { model.store.liveQuery({ it.table == StoreTable.DRAFTS }) { model.store.reader.draft(target)?.attachments ?: emptyList() } }.collectAsState(emptyList())
+    var openDraft by remember(target) { mutableStateOf<PendingAttachment?>(null) }
+    var justAdded by remember(target) { mutableStateOf<PendingAttachment?>(null) }
+    var openSent by remember(target) { mutableStateOf<Pair<String, MessageAttachment>?>(null) }
+    LaunchedEffect(justAdded) { if (justAdded != null) { kotlinx.coroutines.delay(8000); justAdded = null } }
     var ready by remember(target) { mutableStateOf(false) }
     val draftScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -101,13 +108,31 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                 }) {
                     Text(message.createdAt.take(10), style = MaterialTheme.typography.labelSmall)
                     Text(message.senderLabel ?: message.senderNpub?.take(18) ?: "Member", style = MaterialTheme.typography.labelSmall)
-                    if (message.deleted) Text("Message deleted") else RichBlocks(DocumentRender.markdownBlocks(message.body), actions = richActions)
+                    if (message.deleted) Text("Message deleted") else {
+                        if (message.body.isNotBlank()) RichBlocks(DocumentRender.markdownBlocks(message.body), actions = richActions)
+                        MessageAttachment.from(message.raw).filter { it.isText }.forEach { attachment ->
+                            val preview by produceState<String?>(null, c.id, c.origin, w.id, attachment.storageObjectId) {
+                                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    scopedTextAttachments.cache.peek(attachment.storageObjectId, 8192)?.let { TextAttachments.firstLinePreview(String(it, Charsets.UTF_8)) }
+                                }
+                            }
+                            TextAttachmentCard(
+                                attachment.filename, attachment.sizeBytes, attachment.textAttachment?.lines,
+                                preview, null, "chat.attachment.${attachment.storageObjectId}",
+                                onOpen = { openSent = message.id to attachment },
+                            )
+                        }
+                    }
                     ChatMessageActions(model, message, !removed)
                     message.threadId?.let { RecordPin(model, studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.THREAD, it, !removed) }
                 }
             }
             items(pending, key = { it.id }) { item ->
-                Text(item.body); Text(item.lastError ?: item.state.wire, style = MaterialTheme.typography.labelSmall)
+                if (item.body.isNotBlank()) Text(item.body)
+                item.attachments.filter { it.isText }.forEach { a ->
+                    TextAttachmentCard(a.filename, a.sizeBytes, a.text?.lines, null, if (a.complete) "Uploaded" else "Waiting to upload", "chat.pending.attachment.${a.id}", onOpen = null)
+                }
+                Text(item.lastError ?: item.state.wire, style = MaterialTheme.typography.labelSmall)
                 if (item.state == OutboxState.FAILED || item.state == OutboxState.RETRYING) {
                     TextButton(onClick = { model.act { model.outbox.retry(item.id, c) } }) { Text("Retry") }
                     TextButton(onClick = { model.act { model.outbox.discard(item.id, true); text = model.store.reader.draft(target)?.text ?: text } }) { Text("Edit draft") }
@@ -133,16 +158,44 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
             val mention = Mention(MentionType.PERSON, member.npub, member.label)
             mentions = mentions + mention; text = MentionCodec.complete(text, mention); model.saveDraft(target, text, mentions); choosingMention = false
         }) { Text(member.label) } } } }, confirmButton = { TextButton(onClick = { choosingMention = false }) { Text("Close") } })
+        draftAttachments.filter { it.isText }.forEach { a ->
+            val preview = rememberStagedPreview(model, a)
+            TextAttachmentCard(
+                a.filename, a.sizeBytes, a.text?.lines, preview, if (a.complete) "Uploaded" else "Saved on this device", "chat.draft.attachment.${a.id}",
+                onOpen = { openDraft = a }, onRemove = { model.removeDraftAttachment(target, a.id); if (justAdded?.id == a.id) justAdded = null },
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+        justAdded?.let { added -> Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("${added.filename} added from your paste", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).testTag("chat.paste.notice"))
+            TextButton(onClick = { model.removeDraftAttachment(target, added.id); justAdded = null }, modifier = Modifier.testTag("chat.paste.undo")) { Text("Undo") }
+        } }
         Row(Modifier.imePadding().padding(8.dp)) {
-            OutlinedTextField(text, { value ->
-                text = value
-                if (ready) model.saveDraft(target, value, mentions)
-            }, enabled = ready && !removed, maxLines = 5, label = { Text(if (threadId == null) "New conversation" else "Reply") }, modifier = Modifier.weight(1f).testTag("chat.composer").contentReceiver(receiver))
-            TextButton(enabled = ready && text.isNotBlank() && !removed && !UploadToken.containsAny(text), onClick = {
+            OutlinedTextField(field.value, { value ->
+                if (value.text == field.value.text) { field.value = value; return@OutlinedTextField }
+                var decision = ComposerPaste.decide(field.value.text, value.text, selectionStart = field.value.selection.start, selectionEnd = field.value.selection.end)
+                // A short paste that would pass the cap looks like typing; the clipboard tells them apart (read only then).
+                if (decision == ComposerPaste.Decision.Reject) {
+                    val clip = context.getSystemService(android.content.ClipboardManager::class.java).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+                    decision = ComposerPaste.decide(field.value.text, value.text, clip, field.value.selection.start, field.value.selection.end)
+                }
+                when (decision) {
+                    ComposerPaste.Decision.Accept -> { field.value = value; if (ready) model.saveDraft(target, value.text, mentions) }
+                    // Typing at the cap: the field keeps what it had (the counter shows why).
+                    ComposerPaste.Decision.Reject -> Unit
+                    // A big paste: the field keeps its text and selection; the pasted text becomes a staged file.
+                    is ComposerPaste.Decision.Attach -> if (ready) model.addPastedText(target, decision.text) { justAdded = it }
+                }
+            }, enabled = ready && !removed, maxLines = 5, label = { Text(if (threadId == null) "New conversation" else "Reply") },
+                supportingText = if (PastedTextPolicy.showsCounter(text)) ({ Text("${PastedTextPolicy.remaining(text)} characters left", modifier = Modifier.testTag("chat.counter")) }) else null,
+                modifier = Modifier.weight(1f).testTag("chat.composer").contentReceiver(receiver))
+            TextButton(enabled = ready && (text.isNotBlank() || draftAttachments.any { it.isText }) && !removed && !UploadToken.containsAny(text), onClick = {
                 val body = text
                 model.send(target, body, c, w, mentions) { if (text == body) text = "" }
-            }) { Text("Send") }
+            }, modifier = Modifier.testTag("chat.send")) { Text("Send") }
         }
+        openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
+        openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed) { openSent = null } }
     }
 }
 
@@ -194,4 +247,13 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
             }
         }) { Column { Text(row.title); Text(row.subtitle, style = MaterialTheme.typography.bodySmall) } }
     } }
+}
+
+/** The composer's text value, kept whole (text, selection and IME composition) so a keyboard is never disturbed. */
+@Stable internal class ComposerField {
+    var value by mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(""))
+    /** Replaces the text from the app (a draft restore, a mention); the caret goes to the end. */
+    var text: String
+        get() = value.text
+        set(next) { value = androidx.compose.ui.text.input.TextFieldValue(next, androidx.compose.ui.text.TextRange(next.length)) }
 }

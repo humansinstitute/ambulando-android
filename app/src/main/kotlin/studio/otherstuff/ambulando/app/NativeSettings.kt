@@ -14,6 +14,8 @@ import studio.otherstuff.ambulando.core.store.*
 
 @Composable internal fun NativeSettings(model: AppModel, done: () -> Unit) {
     val context = LocalContext.current
+    val syncStatus by model.engine.status.collectAsState()
+    val failing by model.transport.failing.collectAsState()
     var background by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     var remove by remember { mutableStateOf(false) }
@@ -25,6 +27,11 @@ import studio.otherstuff.ambulando.core.store.*
         Text(model.identityState?.npub ?: "No identity")
         Text("${BuildConfig.VERSION_NAME} · build ${BuildConfig.VERSION_CODE}")
         Text(model.connection?.origin ?: "No connection")
+        Text("Status: " + studio.otherstuff.ambulando.core.sync.connectionStatus(failing, syncStatus))
+        TextButton(onClick = { model.retryConnection() }) { Text("Retry") }
+        TextButton(onClick = { model.exportDiagnostics() }) { Text("Export diagnostics") }
+        TextButton(onClick = { model.clearDiagnostics() }) { Text("Clear diagnostics") }
+        Text("Diagnostics stay on this device until you choose to share. The newest 300 entries are kept in private app storage until replaced or cleared. No keys, tokens, message text or user identifiers are included.", style = MaterialTheme.typography.bodySmall)
         Row { Text("Show Agents", Modifier.weight(1f)); Switch(model.showAgents, { model.showAgents = it; model.act { model.store.writer.setState("settings.agents", it.toString()) } }) }
         Row { Text("Show Context", Modifier.weight(1f)); Switch(model.showContext, { model.showContext = it; model.act { model.store.writer.setState("settings.context", it.toString()) } }) }
         AppearancePreference.entries.forEach { value -> TextButton(onClick = { model.appearance = value; model.act { model.store.writer.setState("settings.appearance", value.name) } }) { Text(value.name) } }
