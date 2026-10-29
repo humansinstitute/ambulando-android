@@ -48,6 +48,7 @@ data class PinsSnapshot(
     /** Latest pin write per resource (`type:id`). */
     val pending: Map<String, WriteItem> = emptyMap(),
     val loaded: Boolean = false,
+    val orderWrite: WriteItem? = null,
 ) {
     private val stored: Set<String> by lazy { items.mapTo(HashSet()) { key(it.pin.resourceType, it.pin.resourceId) } }
 
@@ -100,13 +101,14 @@ class PinsState(private val store: LocalStore, private val connectionId: String,
         query.start(store, matches = { (it.workspaceId == w && it.table == StoreTable.PINS) || it.table == StoreTable.WRITES || matchesRecordTitles(it, w) }) {
             val items = store.reader.pinnedItems(c, w)
             val pending = LinkedHashMap<String, WriteItem>()
-            for (write in store.reader.workspaceWrites(c, w)) {
+            val writes = store.reader.workspaceWrites(c, w)
+            for (write in writes) {
                 if (write.kind != WriteKind.PIN_SET) continue
                 val type = PinRecord.ResourceType.from(write.string("resource_type")) ?: continue
                 val id = write.targetId ?: continue
                 pending[PinsSnapshot.key(type, id)] = write // oldest first: the latest write per record wins
             }
-            PinsSnapshot(items, pending, loaded = true)
+            PinsSnapshot(items, pending, loaded = true, orderWrite = writes.lastOrNull { it.kind == WriteKind.PIN_ORDER })
         }
     }
 

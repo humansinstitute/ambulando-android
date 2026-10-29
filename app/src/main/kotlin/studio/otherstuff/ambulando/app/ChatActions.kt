@@ -7,6 +7,7 @@ import kotlinx.serialization.json.*
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.transport.MessageRecord
 import studio.otherstuff.ambulando.core.surfaces.PinRecord
+import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
 
 @Composable internal fun ChatMessageActions(model: AppModel, message: MessageRecord, enabled: Boolean) {
     val w = model.workspace ?: return; val c = model.connection ?: return
@@ -16,6 +17,9 @@ import studio.otherstuff.ambulando.core.surfaces.PinRecord
     val reactions by remember(message.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.reactions(w.id, listOf(message.id)) } }.collectAsState(emptyList())
     fun payload(block: JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
     Row {
+        MessageMenu(model, message, message.threadSourceId ?: message.takeIf { it.isThreadRoot }?.id,
+            "@[Chat message](mention:chat:${message.channelId}#${message.id})", message.takeIf { AutopilotSessionLink.sessionId(it.raw) != null },
+            enabled, "message.${message.id}", "Message actions")
         listOf("👍", "❤️", "✅").forEach { emoji ->
             val existing = reactions.firstOrNull { it.emoji == emoji && it.reactorNpub == c.signerNpub && !it.deleted }
             TextButton(enabled = enabled, onClick = {

@@ -233,3 +233,9 @@ suspend fun TowerAPI.personalPins(workspaceId: String, appNpub: String, maxPages
     }
     throw TowerError.ListLimitReached("personal pins")
 }
+
+/** Capability is advertised by the main record-sync envelope, not its priority feed. */
+suspend fun TowerAPI.supportsPinOrdering(workspaceId: String, appNpub: String): Boolean {
+    val page = obj(client.request(path = TowerAPI.base(workspaceId) + "/record-sync", query = listOf("protocol_version" to "1", "limit" to "1"), appNpub = appNpub), "record sync capabilities")
+    return (page["personal_pin_order_version"] as? JsonPrimitive)?.content == "1"
+}

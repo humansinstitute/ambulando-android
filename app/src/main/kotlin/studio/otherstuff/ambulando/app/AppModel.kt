@@ -79,6 +79,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var section by mutableStateOf(AppSection.DECK)
     var notice by mutableStateOf<String?>(null); private set
     val canvasViewports = mutableStateMapOf<String, studio.otherstuff.ambulando.core.surfaces.CanvasViewport>()
+    /** Where each conversation was left (by draft key) while the app runs, so returning to it keeps the reading position. */
+    val chatPositions = HashMap<String, ChatPosition>()
     var editorBoard by mutableStateOf<Pair<studio.otherstuff.ambulando.core.surfaces.BoardReference, String>?>(null)
     var editorDoc by mutableStateOf<String?>(null)
     var showAgents by mutableStateOf(false)
@@ -141,6 +143,47 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         restore()
         if (sample != null && connection == null) connect(sample.origin.url)
     } }
+
+    /** Feedback about a notification action that did not apply as tapped (shown in the inbox until dismissed). */
+    var notificationMessage by mutableStateOf<String?>(null); private set
+    fun dismissNotificationMessage() { notificationMessage = null }
+    fun showNotificationMessage(text: String) { notificationMessage = text }
+    init {
+        viewModelScope.launch {
+            writes.notificationNotices.collect { n ->
+                if (n.connectionId != connection?.id) return@collect
+                notificationMessage = when (n.kind) {
+                    NotificationNotice.Kind.CHANGED_ELSEWHERE -> "That notification had new activity, so your change was not applied. It is unread again."
+                    NotificationNotice.Kind.REJECTED -> "Tower rejected that change and the notifications were reloaded."
+                }
+                val c = connection ?: return@collect; val w = workspaces.firstOrNull { it.id == n.workspaceId } ?: return@collect
+                if (identityState is IdentityState.Unlocked) act { sync.refreshNotifications(c, w, SyncPriority.USER, force = true) }
+            }
+        }
+    }
+    /** Reloads the inbox now (the refresh button, or opening it). */
+    fun refreshNotifications(force: Boolean = true) {
+        val c = connection ?: return; val w = workspace ?: return
+        if (identityState !is IdentityState.Unlocked || w.accessRemoved) return
+        act { sync.refreshNotifications(c, w, SyncPriority.USER, force) }
+    }
+    /** Queues a read / dismiss / archive change for one notification, checked against the version the user saw. Needs the identity unlocked (signed write). */
+    fun changeNotification(id: String, patch: studio.otherstuff.ambulando.core.transport.NotificationPatch, observed: ObservedNotification): Boolean {
+        val c = connection ?: return false; val w = workspace ?: return false
+        if (identityState !is IdentityState.Unlocked || w.accessRemoved) return false
+        act { writes.submitNotificationState(c, w, id, patch, observed) }; return true
+    }
+    /** Applies one bulk change to what the user has seen (up to the observed sequence); newer arrivals are untouched. */
+    fun bulkNotifications(op: studio.otherstuff.ambulando.core.transport.NotificationBulkOp, upToSeq: Long, category: String? = null): Boolean {
+        val c = connection ?: return false; val w = workspace ?: return false
+        if (identityState !is IdentityState.Unlocked || w.accessRemoved) return false
+        act { writes.submitNotificationBulk(c, w, op, upToSeq, category) }; return true
+    }
+    fun loadArchivedNotifications() {
+        val c = connection ?: return; val w = workspace ?: return
+        if (identityState !is IdentityState.Unlocked || w.accessRemoved) return
+        act { sync.loadArchivedNotifications(c, w) }
+    }
 
     fun clearNotice() { notice = null }
     fun act(block: suspend () -> Unit) = viewModelScope.launch {
@@ -235,6 +278,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             context.channelId?.let { sync.catchUpChannel(c, w, it, force = force) }
             sync.refreshTasks(c, w, context.scopeId, force = force); sync.refreshDocs(c, w, context.scopeId, force = force)
             sync.refreshFiles(c, w, context.scopeId, force = force); sync.refreshInbox(c, w, force = force)
+            sync.refreshNotifications(c, w, force = force)
             if (!environment.isSample) profileSync.refresh(c, w.id)
             outbox.kick(c); writes.kick(c)
             runCatching { resumeTextEdits(c) }.onFailure { if (it is CancellationException) throw it }

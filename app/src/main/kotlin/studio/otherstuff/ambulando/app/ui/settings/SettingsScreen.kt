@@ -173,7 +173,7 @@ fun SettingsScreen(state: SettingsState, actions: SettingsActions) {
                 Labeled("Build", state.versionCode, "settings.build")
                 Labeled("Platform", "Android", "settings.platform")
                 if (state.sample) Labeled("Data", "Sample data on this device (nothing is sent to a Tower)", "settings.sample")
-                Text("Push notifications and FIPS transport are not part of this build. Tower provides Web Push only; this app uses HTTPS only.",
+                Text("Push notifications and FIPS transport are not part of this Android build. Android alerts need a supported provider and device-registration contract; this app uses HTTPS only.",
                     style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground, modifier = Modifier.padding(12.dp))
             }
             Spacer(Modifier.heightIn(min = 24.dp))

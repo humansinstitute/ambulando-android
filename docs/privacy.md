@@ -21,6 +21,16 @@ never treated as a missing account. Explicit disconnect/removal is different fro
 local history and drafts. Records whose membership access was removed remain read-only; real deletion tombstones
 remove records. The server remains authoritative for all future access.
 
+## Notifications
+
+The notification inbox is a per-person list kept by your Tower. This app stores the inbox items it receives (titles and
+short text Tower composed for you) in the same private app storage as other workspace data, bound to the connection and
+removed with it. If Tower reports that you can no longer read a workspace's notifications, or an item is no longer
+available, the stored text is removed or replaced by "Item no longer available". Reading or archiving a notification does
+not mark the underlying record read, and the reverse is decided by Tower from what you actually viewed. This build
+registers no push token and sends nothing to Google or Apple; notifications arrive while the app is open and when
+Android runs a background refresh.
+
 ## Requests beyond Tower
 
 Public Nostr profiles use credential-free requests to relay.primal.net, nos.lol and purplepag.es. Verified profile

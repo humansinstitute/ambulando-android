@@ -95,6 +95,11 @@ data class CanvasElement(
     val points: List<List<Double>>,
     /** A frame used only to group items (`data.role == "group"`) has no visible outline. */
     val isGroup: Boolean,
+    /** Tower's version of the element, checked by every edit (`expected_row_version`). */
+    val rowVersion: Int = 0,
+    /** The saved layout and data objects as Tower sent them: an edit patches them, keeping keys this build does not draw. */
+    val savedLayout: JsonObject = JsonObject(emptyMap()),
+    val savedData: JsonObject = JsonObject(emptyMap()),
 ) {
     enum class Kind(val wire: String) {
         TEXT("text"), RECTANGLE("rectangle"), DIAMOND("diamond"), ELLIPSE("ellipse"), ARROW("arrow"), LINE("line"), DRAW("draw"), FRAME("frame");
@@ -303,7 +308,8 @@ data class CanvasScene(
                 pair(d["start"]) ?: listOf(0.0, layout.height), pair(d["end"]) ?: listOf(layout.width, 0.0), pair(d["curve"]),
                 string(d["lineStyle"]) ?: "solid", string(d["startArrowhead"]) ?: "none",
                 string(d["endArrowhead"]) ?: if (kind == CanvasElement.Kind.ARROW) "triangle" else "none",
-                points, kind == CanvasElement.Kind.FRAME && string(d["role"]) == "group")
+                points, kind == CanvasElement.Kind.FRAME && string(d["role"]) == "group",
+                JsonFields.flexibleInt(row["row_version"]) ?: 0, row["layout"] as? JsonObject ?: JsonObject(emptyMap()), d)
         }
 
         private val newline = Regex("[\n\r\u000B\u000C\u0085  ]")

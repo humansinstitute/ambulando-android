@@ -70,6 +70,7 @@ class SampleWorkTower(
             if (m != null) {
                 m["parent_task_id"].asString()?.let { metadata["parent_task_id"] = it.lowercase() }
                 m["predecessor_task_ids"].asStrings()?.let { list -> metadata["predecessor_task_ids"] = list.map { it.lowercase() } }
+                m["source_links"]?.let { metadata["source_links"] = it }
             }
             return metadata
         }
@@ -766,7 +767,7 @@ class SampleWorkTower(
         val stamp = now()
         val assignee = o["assigned_to_npub"].asString()
         val row: Row = linkedMapOf(
-            "id" to id, "workspace_id" to workspaceId, "scope_id" to null, "channel_id" to channel, "thread_id" to null, "title" to title,
+            "id" to id, "workspace_id" to workspaceId, "scope_id" to null, "channel_id" to channel, "thread_id" to o["thread_id"], "title" to title,
             "description" to o["description"], "state" to (o["state"] ?: "new"), "priority" to (o["priority"] ?: "sand"),
             "metadata" to taskMetadata(o, assignee), "assigned_to_npub" to assignee, "row_version" to 1L, "activity_version" to 1L,
             "created_by_actor_npub" to actor, "sender_npub" to actor, "assignments" to emptyList<Any>(), "created_at" to stamp, "updated_at" to stamp,

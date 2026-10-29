@@ -17,7 +17,33 @@ object Schema {
     /** One schema step. `statements` run in order inside the migration transaction. */
     class Migration(val version: Int, val statements: List<String>)
 
-    val migrations: List<Migration> = listOf(Migration(1, v1()), Migration(2, listOf("ALTER TABLE drafts ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")))
+    val migrations: List<Migration> = listOf(
+        Migration(1, v1()),
+        Migration(2, listOf("ALTER TABLE drafts ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")),
+        Migration(3, notificationTables()),
+        Migration(4, listOf(
+            // Resumable snapshots: a cold start (or archive load) larger than one job's page budget continues from a stored
+            // cursor under a generation number; rows written by it carry that generation so completion can drop the unlisted.
+            "ALTER TABLE notification_items ADD COLUMN snapshot_gen INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE notification_sync ADD COLUMN snapshot_gen INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE notification_sync ADD COLUMN snapshot_seq INTEGER",
+            "ALTER TABLE notification_sync ADD COLUMN snapshot_cursor TEXT",
+            "ALTER TABLE notification_sync ADD COLUMN archive_gen INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE notification_sync ADD COLUMN archive_cursor TEXT",
+        )),
+        Migration(5, listOf(
+            // Wire v1.1: the inbox is filtered per app and Tower versions the person's rules. `rules_revision` is the value
+            // the stored snapshot was taken under (sent with `changes`); `snapshot_rules_revision` is the in-flight snapshot's.
+            "ALTER TABLE notification_sync ADD COLUMN rules_revision INTEGER",
+            "ALTER TABLE notification_sync ADD COLUMN snapshot_rules_revision INTEGER",
+            // A copy taken before filtering existed may hold items hidden from this app and has no revision: start over once.
+            "DELETE FROM notification_items WHERE partition = 'archived'",
+            """UPDATE notification_sync SET state = 'unsynced', local_seq = 0, archived_loaded = 0, snapshot_cursor = NULL, snapshot_seq = NULL,
+                 archive_cursor = NULL WHERE state = 'ready'""",
+        )),
+        // The composer's `@` lookahead: a trigram index of document and task titles (built from what is already stored).
+        Migration(6, MentionIndex.statements),
+    )
 
     val VERSION: Int get() = migrations.maxOf { it.version }
 
@@ -44,6 +70,33 @@ object Schema {
     internal val flaggedTables = setOf(
         "workspaces", "scopes", "channels", "messages", "threads", "tasks", "comments", "docs", "files", "folders",
         "context_components", "context_references", "canvases", "agent_activities",
+    )
+
+    /**
+     * The per-recipient notification inbox (Tower `org.wingman.notification.item`). Private to the connection (origin +
+     * signer) like pins, so it goes with the connection through `ON DELETE CASCADE` and a different identity never reads
+     * it. `partition` is what this device hydrates for the item: `inbox`, or `archived` once the user asked for it.
+     * `pending_*` is the optimistic overlay of a queued state write; it never replaces the server flags and is cleared when
+     * Tower acknowledges the write, reports a newer `row_version`, or rejects it. `notification_sync` holds the replay
+     * cursor (`local_seq`, the last change sequence actually applied) and the honest availability of the backend.
+     */
+    private fun notificationTables(): List<String> = listOf(
+        """CREATE TABLE notification_items(
+          connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL, id TEXT NOT NULL,
+          change_seq INTEGER NOT NULL, row_version INTEGER NOT NULL, partition TEXT NOT NULL DEFAULT 'inbox',
+          category TEXT NOT NULL, source_app TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL,
+          title TEXT NOT NULL, body TEXT NOT NULL, occurred_at TEXT NOT NULL,
+          is_read INTEGER NOT NULL, dismissed INTEGER NOT NULL, archived INTEGER NOT NULL, accessible INTEGER NOT NULL DEFAULT 1,
+          pending_read INTEGER, pending_dismissed INTEGER, pending_archived INTEGER, pending_base_version INTEGER,
+          raw TEXT NOT NULL,
+          PRIMARY KEY(connection_id, workspace_id, id))""",
+        "CREATE INDEX notification_items_order ON notification_items(connection_id, workspace_id, occurred_at DESC, id DESC)",
+        """CREATE TABLE notification_sync(
+          connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL, state TEXT NOT NULL, local_seq INTEGER NOT NULL DEFAULT 0, head_seq INTEGER,
+          archived_loaded INTEGER NOT NULL DEFAULT 0, inbox_started_at TEXT, synced_at TEXT, last_error TEXT,
+          PRIMARY KEY(connection_id, workspace_id))""",
     )
 
     private fun v1(): List<String> = listOf(

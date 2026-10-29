@@ -30,9 +30,9 @@ class ConnectedAppTest {
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
             compose.runOnIdle { val channel = model.channels.first { it.id == SampleIds.GENERAL }; model.selectContext(channel.scopeId, channel.id); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT }
-            compose.waitUntil(20_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("chat.composer").performTextReplacement("Synthetic durable Android workflow")
-            compose.onNodeWithText("Send").performClick()
+            compose.onNodeWithTag("chat.send").performClick()
             compose.waitUntil(20_000) { runBlocking { model.store.reader.latestMessages(SampleIds.STUDIO, SampleIds.GENERAL, 500).any { it.body == "Synthetic durable Android workflow" } } }
             assertTrue(runBlocking { model.store.reader.outbox(model.connection!!.id, model.connection!!.signerNpub).isEmpty() })
             scenario.recreate()

@@ -17,6 +17,9 @@ enum class StoreTable {
     TASKS, COMMENTS, DOCS, DOC_BODIES, DOC_DRAFTS, FILES, FOLDERS, VIEW_STATES, REACTIONS, WRITES,
     CONTEXT_TREE, CANVASES, BOARDS, AGENTS, TOOLBOX, PINS,
 
+    /** The notification inbox and its sync state (connection-private, keyed by workspace). */
+    NOTIFICATIONS,
+
     /** Public Nostr profiles; connection-scoped, so their change key has no workspace. */
     PROFILES,
 

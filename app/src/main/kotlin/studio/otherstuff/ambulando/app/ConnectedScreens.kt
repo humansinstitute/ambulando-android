@@ -2,6 +2,7 @@
 
 package studio.otherstuff.ambulando.app
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.content.*
 import androidx.compose.foundation.layout.*
@@ -12,6 +13,7 @@ import androidx.compose.runtime.*
 import studio.otherstuff.ambulando.app.media.readBounded
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import studio.otherstuff.ambulando.app.ui.nav.*
@@ -40,11 +42,12 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
     val services = LocalAppServices.current
     val scopedTextAttachments = remember(c.id, c.origin, c.signerNpub, w.id) { model.textAttachments(c, w.id) }
-    var threads by remember(target) { mutableStateOf(false) }
-    val conversations by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.channelThreads(w.id, channel) } }.collectAsState(emptyList())
-    val messages by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
-        if (threadId == null) model.store.reader.channelFeed(w.id, channel, 300).map { it.message } else model.store.reader.threadMessages(w.id, threadId, 300)
-    } }.collectAsState(emptyList())
+    // One Messages list (no separate Threads view): channel posts carry their thread's reply count and open the thread.
+    val feed by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
+        if (threadId == null) model.store.reader.channelFeed(w.id, channel, 300) else model.store.reader.threadMessages(w.id, threadId, 300).map { FeedPost(it, 0, null) }
+    } }.collectAsState(null)
+    val posts = feed ?: emptyList()
+    val messages = posts.map { it.message }
     val pending by remember(target) { model.store.liveQuery({ it.table == StoreTable.OUTBOX }) { model.store.reader.outbox(target) } }.collectAsState(emptyList())
     val field = remember(target) { ComposerField() }
     var text by field::text
@@ -54,18 +57,28 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     var openSent by remember(target) { mutableStateOf<Pair<String, MessageAttachment>?>(null) }
     LaunchedEffect(justAdded) { if (justAdded != null) { kotlinx.coroutines.delay(8000); justAdded = null } }
     var ready by remember(target) { mutableStateOf(false) }
+    var sent by remember(target) { mutableLongStateOf(0L) }
     val draftScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     var mentions by remember(target) { mutableStateOf(emptyList<Mention>()) }
-    var choosingMention by remember(target) { mutableStateOf(false) }
-    val members by remember(w.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.members(w.id) } }.collectAsState(emptyList())
+    // The `@` lookahead: the query at the caret, answered from the local store as it is typed.
+    // A query that is just a chosen mention's own text (right after picking it) is not a new search.
+    val activeMention = field.value.selection.takeIf { it.collapsed }?.let { MentionCodec.activeQuery(field.value.text, it.end) }
+        ?.takeIf { active -> mentions.none { field.value.text.startsWith(it.visible, active.start) } }
+    val mentionResults by produceState<List<studio.otherstuff.ambulando.core.store.MentionCandidate>?>(null, w.id, activeMention?.query) {
+        value = activeMention?.let { model.store.reader.mentionCandidates(w.id, it.query) }
+    }
     val uploadRows by model.uploads.items.collectAsState()
     val uploadHost = remember(target) { object : studio.otherstuff.ambulando.core.chat.UploadTokenHost {
         override val uploadTarget = target
         override val uploadText get() = text
         override fun replaceUploadToken(token: String, replacement: String): Boolean {
-            if (!text.contains(token)) return false
-            text = text.replaceFirst(token, replacement); model.saveDraft(target, text, mentions); return true
+            // The finished upload's Markdown takes the placeholder's place; the caret stays where the person is typing.
+            val current = field.value
+            val selection = studio.otherstuff.ambulando.core.docs.TextRange(current.selection.min, current.selection.length)
+            val edit = ComposerText.replacing(token, replacement, current.text, selection) ?: return false
+            field.value = current.copy(text = edit.text, selection = edit.selection?.let { androidx.compose.ui.text.TextRange(it.location, it.end) } ?: current.selection)
+            model.saveDraft(target, text, mentions); return true
         }
     } }
     LaunchedEffect(ready, uploadHost) { if (ready) model.uploads.attach(uploadHost) }
@@ -81,7 +94,8 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                 if (image) studio.otherstuff.ambulando.app.media.ImagePrivacy.strippedPng(bytes) else bytes
             })
             val tokens = model.uploads.paste(listOf(item), target, w.appNpub, "message")
-            text += "\n" + tokens.joinToString("\n"); model.saveDraft(target, text, mentions)
+            // Placeholders go where the caret is, so the image is positioned in the message and its Markdown stays editable.
+            field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.placeholders(field.value, tokens); model.saveDraft(target, text, mentions)
         }
     }
     val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::pasteUri) }
@@ -98,12 +112,19 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     val removed = threadRemoved || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true
     val richActions = storedRichActions(model, !removed)
     Column(Modifier.fillMaxSize()) {
-        if (threadId == null) Row { TextButton(onClick = { threads = false }) { Text("Messages") }; TextButton(onClick = { threads = true }) { Text("Threads") } }
-        if (threads && threadId == null) LazyColumn(Modifier.weight(1f)) { items(conversations, key = { it.id }) { conversation ->
-            TextButton(onClick = { services.open(WorkRoute.Thread(w.id, channel, conversation.id)) }) { Column { Text(conversation.title ?: conversation.rootBody.take(100)); Text("${conversation.replyCount} replies · ${conversation.latestBody.take(120)}") } }
-        } } else LazyColumn(Modifier.weight(1f).testTag("chat.messages"), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(messages, key = { it.id }) { message ->
-                Column(Modifier.fillMaxWidth().clickable(enabled = threadId == null && message.threadId != null) {
+        if (threadId != null) ThreadHeader(model, threadId, !removed)
+        val listState = remember(target) { androidx.compose.foundation.lazy.LazyListState() }
+        ChatFollowsNewest(listState, target, feed != null, posts.map { it.id } + pending.map { it.id }, model.chatPositions[target.draftKey], sent) {
+            model.chatPositions[target.draftKey] = it
+        }
+        if (feed == null) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            Text("Loading conversation…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.loading"))
+        } else if (posts.isEmpty() && pending.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            Text(if (threadId == null) "No messages yet" else "No replies yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.empty"))
+        } else LazyColumn(Modifier.weight(1f).testTag("chat.messages"), state = listState, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(posts, key = { it.id }) { post ->
+                val message = post.message
+                Column(Modifier.fillMaxWidth().testTag("chat.message.${message.id}").clickable(enabled = threadId == null && message.threadId != null) {
                     message.threadId?.let { services.open(WorkRoute.Thread(w.id, channel, it)); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT }
                 }) {
                     Text(message.createdAt.take(10), style = MaterialTheme.typography.labelSmall)
@@ -122,6 +143,16 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                                 onOpen = { openSent = message.id to attachment },
                             )
                         }
+                        // Attachments not already placed in the body (as on the web, an inline image is never shown twice).
+                        StorageMarkdown.standalone(MessageAttachment.from(message.raw), message.body).filter { !it.isText }.forEach { attachment ->
+                            if (attachment.kind == "image" || attachment.mimeType?.startsWith("image/") == true) {
+                                StoredImage(model, attachment.storageObjectId, attachment.filename, !removed)
+                            } else TextButton(onClick = { services.openUrl("storage://${attachment.storageObjectId}") }, enabled = !removed,
+                                modifier = Modifier.testTag("chat.file.${attachment.storageObjectId}")) { Text(attachment.filename) }
+                        }
+                    }
+                    if (threadId == null && message.threadId != null) ThreadSummaryRow(post) {
+                        services.open(WorkRoute.Thread(w.id, channel, message.threadId!!)); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT
                     }
                     ChatMessageActions(model, message, !removed)
                     message.threadId?.let { RecordPin(model, studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.THREAD, it, !removed) }
@@ -141,23 +172,13 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
             }
         }
         if (removed) Text("No longer available to you", Modifier.padding(12.dp))
-        uploadRows.filter { it.target == target && it.markdown == null }.forEach { upload -> Row {
-            Text(upload.filename + " · " + upload.phase.toString())
-            if (upload.retryable) TextButton(onClick = { model.uploads.retry(upload.id) }) { Text("Retry") }
-            TextButton(onClick = { model.uploads.remove(upload.id) }) { Text("Remove") }
-        } }
-        Row {
-            TextButton(enabled = ready && !removed, onClick = {
-                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-                clipboard.primaryClip?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::pasteUri) }
-            }) { Text("Paste attachment") }
-            TextButton(enabled = ready && !removed, onClick = { picker.launch(arrayOf("*/*")) }) { Text("Attach") }
-            TextButton(enabled = ready && !removed, onClick = { choosingMention = true }) { Text("Mention") }
+        uploadRows.filter { it.target == target && it.markdown == null }.forEach { upload ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(upload.filename + " · " + uploadPhase(upload.phase), style = MaterialTheme.typography.labelSmall, maxLines = 1, modifier = Modifier.weight(1f).testTag("chat.upload.${upload.id}"))
+                if (upload.retryable) TextButton(onClick = { model.uploads.retry(upload.id) }) { Text("Retry") }
+                TextButton(onClick = { model.uploads.remove(upload.id) }) { Text("Remove") }
+            }
         }
-        if (choosingMention) AlertDialog(onDismissRequest = { choosingMention = false }, title = { Text("Mention a member") }, text = { Column { members.take(20).forEach { member -> TextButton(onClick = {
-            val mention = Mention(MentionType.PERSON, member.npub, member.label)
-            mentions = mentions + mention; text = MentionCodec.complete(text, mention); model.saveDraft(target, text, mentions); choosingMention = false
-        }) { Text(member.label) } } } }, confirmButton = { TextButton(onClick = { choosingMention = false }) { Text("Close") } })
         draftAttachments.filter { it.isText }.forEach { a ->
             val preview = rememberStagedPreview(model, a)
             TextAttachmentCard(
@@ -170,7 +191,25 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
             Text("${added.filename} added from your paste", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).testTag("chat.paste.notice"))
             TextButton(onClick = { model.removeDraftAttachment(target, added.id); justAdded = null }, modifier = Modifier.testTag("chat.paste.undo")) { Text("Undo") }
         } }
-        Row(Modifier.imePadding().padding(8.dp)) {
+        val composing = ready && !removed
+        if (composing && activeMention != null) mentionResults?.let { results ->
+            studio.otherstuff.ambulando.app.ui.chat.MentionLookahead(results, onPick = { mention ->
+                field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.mention(field.value, mention)
+                mentions = (mentions.filter { it.npub != mention.npub || it.type != mention.type } + mention)
+                model.saveDraft(target, text, mentions)
+            })
+        }
+        val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
+        val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        val pills = remember(mentions, amb) {
+            studio.otherstuff.ambulando.app.ui.chat.MentionPills(mentions, androidx.compose.ui.text.SpanStyle(color = amb.primary, background = amb.muted, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+        }
+        Row(Modifier.fillMaxWidth().imePadding().clickable(enabled = composing) { composerFocus.requestFocus(); keyboard?.show() }.testTag("chat.composer.area").padding(start = 2.dp, end = 6.dp, top = 4.dp, bottom = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
+            studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onPick = { picker.launch(arrayOf("image/*", "*/*")) }, onPaste = {
+                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                clipboard.primaryClip?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::pasteUri) }
+            }, onMention = { field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); model.saveDraft(target, text, mentions) })
             OutlinedTextField(field.value, { value ->
                 if (value.text == field.value.text) { field.value = value; return@OutlinedTextField }
                 var decision = ComposerPaste.decide(field.value.text, value.text, selectionStart = field.value.selection.start, selectionEnd = field.value.selection.end)
@@ -186,13 +225,14 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                     // A big paste: the field keeps its text and selection; the pasted text becomes a staged file.
                     is ComposerPaste.Decision.Attach -> if (ready) model.addPastedText(target, decision.text) { justAdded = it }
                 }
-            }, enabled = ready && !removed, maxLines = 5, label = { Text(if (threadId == null) "New conversation" else "Reply") },
+            }, enabled = composing, maxLines = 8, placeholder = { Text(if (threadId == null) "Message" else "Reply") },
+                visualTransformation = pills, shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
                 supportingText = if (PastedTextPolicy.showsCounter(text)) ({ Text("${PastedTextPolicy.remaining(text)} characters left", modifier = Modifier.testTag("chat.counter")) }) else null,
-                modifier = Modifier.weight(1f).testTag("chat.composer").contentReceiver(receiver))
-            TextButton(enabled = ready && (text.isNotBlank() || draftAttachments.any { it.isText }) && !removed && !UploadToken.containsAny(text), onClick = {
+                modifier = Modifier.weight(1f).then(Modifier.focusRequester(composerFocus)).testTag("chat.composer").contentReceiver(receiver))
+            studio.otherstuff.ambulando.app.ui.chat.SendButton(composing && (text.isNotBlank() || draftAttachments.any { it.isText }) && !UploadToken.containsAny(text)) {
                 val body = text
-                model.send(target, body, c, w, mentions) { if (text == body) text = "" }
-            }, modifier = Modifier.testTag("chat.send")) { Text("Send") }
+                model.send(target, body, c, w, mentions) { if (text == body) text = ""; sent++ }
+            }
         }
         openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
         openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed) { openSent = null } }
@@ -208,7 +248,6 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
         LaunchedEffect(w.id, docId) { model.sync.refreshDoc(model.connection!!, w, docId); model.markViewed(ViewStateRecord.ResourceType.DOCUMENT, docId) }
         LazyColumn(contentPadding = PaddingValues(16.dp)) { item {
             TextButton(onClick = { model.editorDoc = docId }, enabled = body != null && record?.accessRemoved == false && !w.accessRemoved) { Text("Edit") }
-            RecordPin(model, studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.DOCUMENT, docId, record?.accessRemoved == false && !w.accessRemoved)
             body?.let { RichDocument(model, it, record?.accessRemoved == false) } ?: Text("Document body not cached yet")
             DocumentComments(model, docId, record?.accessRemoved == false && !w.accessRemoved)
         } }
@@ -256,4 +295,78 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     var text: String
         get() = value.text
         set(next) { value = androidx.compose.ui.text.input.TextFieldValue(next, androidx.compose.ui.text.TextRange(next.length)) }
+}
+
+/** Where a conversation was left: the first visible row, its offset, and whether it was following the newest. */
+data class ChatPosition(val key: Any?, val offset: Int, val follow: Boolean)
+
+/**
+ * Keeps a conversation readable from its first layout: it opens on its newest message (never an empty or stale scroll
+ * position), or where the reader left it when they had scrolled back. While the reader is at the bottom it follows new
+ * messages and rows that grow after they are drawn (images, previews); scrolling up stops following until they return to
+ * the bottom. [keys] are the list's item keys in order.
+ */
+@Composable internal fun ChatFollowsNewest(
+    state: androidx.compose.foundation.lazy.LazyListState, target: ChatTarget, loaded: Boolean, keys: List<Any>,
+    saved: ChatPosition?, sent: Long = 0L, onSave: (ChatPosition) -> Unit,
+) {
+    var follow by remember(target) { mutableStateOf(saved?.follow ?: true) }
+    var placed by remember(target) { mutableStateOf(false) }
+    val count = keys.size
+    LaunchedEffect(sent) { if (sent > 0) { follow = true; if (count > 0) state.requestScrollToItem(count - 1, FOLLOW_OFFSET) } }
+    LaunchedEffect(state) {
+        var wasScrolling = false
+        snapshotFlow { state.isScrollInProgress }.collect { scrolling ->
+            if (scrolling) wasScrolling = true
+            else if (wasScrolling && placed) { follow = !state.canScrollForward; wasScrolling = false }
+        }
+    }
+    LaunchedEffect(state, loaded, count) {
+        if (!loaded || count == 0) return@LaunchedEffect
+        if (!placed) {
+            placed = true
+            val index = saved?.takeIf { !it.follow }?.let { keys.indexOf(it.key) }?.takeIf { it >= 0 }
+            if (index != null) { state.requestScrollToItem(index, saved.offset); return@LaunchedEffect }
+            follow = true
+        }
+        if (follow) state.requestScrollToItem(count - 1, FOLLOW_OFFSET)
+    }
+    LaunchedEffect(state, loaded) {
+        if (loaded) snapshotFlow { state.canScrollForward }.collect { more ->
+            val total = state.layoutInfo.totalItemsCount
+            // A layout snapshot may arrive during measurement. Request the next layout instead of re-entering it.
+            if (more && placed && follow && !state.isScrollInProgress && total > 0) state.requestScrollToItem(total - 1, FOLLOW_OFFSET)
+        }
+    }
+    DisposableEffect(state) {
+        onDispose { if (placed) onSave(ChatPosition(state.layoutInfo.visibleItemsInfo.firstOrNull()?.key, state.firstVisibleItemScrollOffset, follow)) }
+    }
+}
+
+/** Scrolling to the last row with a large offset lands on the end of the list (the offset is clamped). */
+private const val FOLLOW_OFFSET = 1_000_000
+
+/** A channel post's thread: reply count and latest activity; opens the conversation. */
+@Composable internal fun ThreadSummaryRow(post: FeedPost, onOpen: () -> Unit) {
+    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
+    Row(
+        Modifier.fillMaxWidth().padding(top = 4.dp).clickable(onClickLabel = "Open conversation", onClick = onOpen)
+            .background(amb.muted, androidx.compose.foundation.shape.RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp)
+            .testTag("chat.thread.${post.message.threadId}"),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        val replies = if (post.replyCount == 1) "1 reply" else "${post.replyCount} replies"
+        val last = post.lastReplyAt?.let { " · last ${studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(it)}" }.orEmpty()
+        Text(replies + last, style = MaterialTheme.typography.labelMedium, color = amb.primary, modifier = Modifier.weight(1f))
+        Text("Open", style = MaterialTheme.typography.labelMedium, color = amb.primary)
+    }
+}
+
+/** An upload's state in words. */
+internal fun uploadPhase(phase: ComposerUpload.Phase): String = when (phase) {
+    ComposerUpload.Phase.Preparing -> "Preparing"
+    ComposerUpload.Phase.Waiting -> "Waiting to upload"
+    ComposerUpload.Phase.Uploading -> "Uploading"
+    is ComposerUpload.Phase.Failed -> "Failed: ${phase.message}"
+    is ComposerUpload.Phase.Done -> "Uploaded"
 }

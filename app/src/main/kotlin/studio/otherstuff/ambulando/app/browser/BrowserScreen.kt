@@ -96,6 +96,7 @@ import java.util.Date
  */
 @Composable
 fun BrowserScreen(browser: BrowserModel) {
+    BrowserFileFlows(browser)
     val amb = Amb.colors
     val context = LocalContext.current
     val tab = browser.selected
@@ -119,6 +120,16 @@ fun BrowserScreen(browser: BrowserModel) {
             }
             tab?.refusal?.let { Notice(NoticeTone.WARNING, it, Modifier.align(Alignment.TopCenter).padding(8.dp).testTag("browser.refusal")) }
             if (tab != null && tab.loading) LinearProgressIndicator(progress = { tab.progress }, modifier = Modifier.fillMaxWidth().height(2.dp).align(Alignment.TopCenter))
+        }
+        browser.fileTransfer?.let { transfer ->
+            Column(Modifier.fillMaxWidth().testTag("browser.download.progress")) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Saving ${transfer.request.filename} · ${transfer.received / 1024} KB", modifier = Modifier.weight(1f), maxLines = 1)
+                    TextButton(onClick = { transfer.cancel() }, modifier = Modifier.testTag("browser.download.cancel")) { Text("Cancel") }
+                }
+                if (transfer.total > 0) LinearProgressIndicator(progress = { (transfer.received.toFloat() / transfer.total).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
         }
         BottomBar(browser, tab)
     }

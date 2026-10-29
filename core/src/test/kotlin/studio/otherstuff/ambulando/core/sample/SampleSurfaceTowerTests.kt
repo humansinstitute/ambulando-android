@@ -14,6 +14,7 @@ import studio.otherstuff.ambulando.core.surfaces.canvases
 import studio.otherstuff.ambulando.core.surfaces.contextComponents
 import studio.otherstuff.ambulando.core.surfaces.contextReferences
 import studio.otherstuff.ambulando.core.surfaces.napletHTML
+import studio.otherstuff.ambulando.core.surfaces.supportsPinOrdering
 import studio.otherstuff.ambulando.core.surfaces.personalPins
 import studio.otherstuff.ambulando.core.surfaces.personalWapps
 import studio.otherstuff.ambulando.core.surfaces.workspaceAgents
@@ -102,6 +103,24 @@ class SampleSurfaceTowerTests {
         assertEquals(403, h.exchange("PATCH", h.base() + "/canvases/$readOnly", mapOf("title" to "x", "expected_row_version" to 1)).status)
     }
 
+    @Test fun drawingElementRoutesFollowTowerChecks() = runBlocking {
+        val h = SampleHarness()
+        val canvas = h.exchange("POST", h.base() + "/canvases", mapOf("title" to "Sketch")).json().obj("canvas")!!.string("id")!!
+        val layout = mapOf("x" to 10.4, "y" to 20, "width" to 2, "height" to 9000, "z" to 0)
+        assertEquals("text needs text", 400, h.exchange("POST", h.base() + "/canvases/$canvas/elements", mapOf("kind" to "text", "layout" to layout, "data" to mapOf("text" to " "))).status)
+        assertEquals(400, h.exchange("POST", h.base() + "/canvases/$canvas/elements", mapOf("kind" to "video", "layout" to layout, "data" to emptyMap<String, Any>())).status)
+        val created = h.exchange("POST", h.base() + "/canvases/$canvas/elements", mapOf("kind" to "rectangle", "layout" to layout, "data" to emptyMap<String, Any>()))
+        assertEquals(201, created.status)
+        val element = created.json().obj("element")!!
+        assertEquals("""{"x":10,"y":20,"width":8,"height":4000,"z":1}""", element.obj("layout").toString())
+        val id = element.string("id")!!
+        assertEquals(409, h.exchange("PATCH", h.base() + "/canvases/$canvas/elements/$id", mapOf("data" to mapOf("label" to "x"), "expected_row_version" to 2)).status)
+        assertEquals(200, h.exchange("PATCH", h.base() + "/canvases/$canvas/elements/$id", mapOf("data" to mapOf("label" to "x"), "expected_row_version" to 1)).status)
+        val snapshot = h.exchange("GET", h.base() + "/canvases/$canvas/snapshot", null)
+        assertEquals(1, studio.otherstuff.ambulando.core.surfaces.CanvasScene.parse(snapshot.body).elements.size)
+        assertEquals(200, h.exchange("DELETE", h.base() + "/canvases/$canvas/elements/$id", mapOf("expected_row_version" to 2)).status)
+    }
+
     @Test fun boardVersionsSaveWithStaleBaseCheck() = runBlocking {
         val h = SampleHarness()
         val path = h.base() + "/files/${SampleIds.BOARD_FILE}/versions"
@@ -169,6 +188,26 @@ class SampleSurfaceTowerTests {
         assertEquals(3, h.api.personalPins(w, h.app).pins.size)
         // The Lab workspace has no surfaces.
         assertTrue(h.api.canvases(SampleIds.LAB, h.app).isEmpty())
+    }
+
+    @Test fun relativePinMovesReplayConflictAndKeepConcurrentAdditions() = runBlocking {
+        val h = SampleHarness()
+        assertTrue(h.api.supportsPinOrdering(w, h.app))
+        val pins = h.api.personalPins(w, h.app).pins.sortedWith(studio.otherstuff.ambulando.core.surfaces.PinRecord.displayOrder)
+        val target = pins.last(); val anchor = pins.first()
+        fun ref(pin: studio.otherstuff.ambulando.core.surfaces.PinRecord) = mapOf("resource_type" to pin.resourceType.wire, "resource_id" to pin.resourceId, "expected_row_version" to pin.rowVersion)
+        val move = ref(target) + mapOf("before" to ref(anchor), "mutation_id" to "5a000000-0000-4000-8000-00000000b011")
+        val path = h.base() + "/me/pin-order"
+        assertEquals(200, h.exchange("POST", path, move).status)
+        assertEquals(target.id, h.api.personalPins(w, h.app).pins.sortedWith(studio.otherstuff.ambulando.core.surfaces.PinRecord.displayOrder).first().id)
+        // Another device adds a new pin; replay must not remove it or renumber again.
+        h.tower.surfaces.externalPin("task", SampleIds.CANVAS_TASK, true)
+        assertEquals(200, h.exchange("POST", path, move).status)
+        assertEquals(3, h.api.personalPins(w, h.app).pins.count { it.pinned })
+        assertEquals(409, h.exchange("POST", path, move + ("mutation_id" to "5a000000-0000-4000-8000-00000000b012")).status)
+        h.tower.surfaces.externalPin(target.resourceType.wire, target.resourceId, false)
+        assertEquals(409, h.exchange("POST", path, move + ("mutation_id" to "5a000000-0000-4000-8000-00000000b013")).status)
+        assertEquals(false, h.api.personalPins(w, h.app).pins.first { it.id == target.id }.pinned)
     }
 
     @Test fun snapshotOfEverySeededCanvasParses() = runBlocking {

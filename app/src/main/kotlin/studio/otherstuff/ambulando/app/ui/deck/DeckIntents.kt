@@ -8,6 +8,9 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
  * integrator implements it on the sync engine and durable write queue.
  */
 interface DeckIntents : PinIntents {
+    /** Relative move, guarded by the row versions the user observed. */
+    suspend fun movePin(target: studio.otherstuff.ambulando.core.surfaces.PinRecord, before: studio.otherstuff.ambulando.core.surfaces.PinRecord?): Result<Unit> = Result.failure(IllegalStateException("Pin ordering unavailable"))
+
     /**
      * Refreshes what the Inbox shows for `context` (iOS `openInbox` + `openTasks` / `openDocs` / `openFiles` for the
      * context's scope). Called when the card starts for a new context and after an unlock.

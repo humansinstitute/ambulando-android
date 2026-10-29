@@ -78,7 +78,11 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         model.store.reader.canvasSnapshot(w.id, canvasId)?.let { CanvasScene.parseCancellable(it.bytes) }
     } }.collectAsState(null)
     LaunchedEffect(w.id, canvasId) { model.sync.refreshCanvas(model.connection!!, w, canvasId) }
-    scene?.let { NativeCanvas(model, canvasId, it) } ?: Text("Canvas not cached yet")
+    scene?.let { NativeCanvas(model, canvasId, it) } ?: Column(Modifier.fillMaxSize()) {
+        // Full screen has no top bar: the bottom controls stay available while the canvas loads.
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("Canvas not cached yet") }
+        CanvasBottomBar("Canvas", false, studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current, onFit = null, onToggleEdit = null)
+    }
 }
 
 @Composable private fun CanvasTasks(model: AppModel, channelId: String) {

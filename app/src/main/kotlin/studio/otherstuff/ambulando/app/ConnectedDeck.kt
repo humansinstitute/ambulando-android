@@ -22,6 +22,19 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
     DisposableEffect(pinsState) { pinsState.start(); onDispose { pinsState.stop() } }
     val pins by pinsState.state.collectAsState()
     val intents = remember(screen) { object : DeckIntents {
+        override suspend fun movePin(target: PinRecord, before: PinRecord?): Result<Unit> = runCatching {
+            model.engine.perform("pin-order:${w.id}", SyncPriority.USER) {
+                check(model.store.reader.workspaceWrites(c.id, w.id).none { it.kind == WriteKind.PIN_SET || it.kind == WriteKind.PIN_ORDER }) { "Wait for pending pin changes to synchronize (or discard a failed move)." }
+                check(model.towerAPI(c).supportsPinOrdering(w.id, w.appNpub)) { "Pin ordering needs an updated Tower connection." }
+                fun ref(pin: PinRecord) = buildJsonObject {
+                    put("resource_type", pin.resourceType.wire); put("resource_id", pin.resourceId); put("expected_row_version", pin.rowVersion)
+                }
+                model.writes.submit(WriteIntent(WriteKind.PIN_ORDER, null, buildJsonObject {
+                    ref(target).forEach { (key, value) -> put(key, value) }
+                    put("before", before?.let(::ref) ?: JsonNull); put("mutation_id", java.util.UUID.randomUUID().toString())
+                }), c, w)
+            }
+        }
         override fun refreshInbox(context: WorkContext) { model.refresh() }
         override fun markRead(resources: List<ViewStateRecord>) {
             resources.chunked(500).forEach { batch -> model.submit(WriteIntent(WriteKind.VIEW_MARK, null, buildJsonObject {

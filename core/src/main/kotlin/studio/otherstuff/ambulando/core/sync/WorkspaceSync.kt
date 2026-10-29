@@ -144,12 +144,18 @@ class WorkspaceSync(
         fun docKey(w: String, d: String): String = "doc:$w:$d"
         fun filesKey(w: String, c: String): String = "files:$w:$c"
         fun inboxKey(w: String): String = "inbox:$w"
+        fun notificationsKey(w: String): String = "notifications:$w"
         fun reactionsKey(w: String, scope: String): String = "reactions:$w:$scope"
         fun downloadKey(w: String, f: String): String = "download:$w:$f"
         fun attachmentKey(w: String, objectId: String): String = "attachment:$w:$objectId"
 
         /** Most targets refreshed for one conversation's reactions (Tower lists reactions per target). */
         const val REACTION_TARGET_LIMIT = 40
+        /** Item pages read by one snapshot job (50 per page); a larger inbox continues in following jobs from the stored cursor. */
+        const val NOTIFICATION_PAGE_BUDGET = 10
+        /** Replay pages applied in one run (200 changes each); the rest continues on the next hint or refresh. */
+        const val NOTIFICATION_REPLAY_BUDGET = 25
+
         /** Most inbox records fetched individually because they are not in local lists yet. */
         const val INBOX_HYDRATION_LIMIT = 30
 

@@ -1,5 +1,10 @@
 package studio.otherstuff.ambulando.app
 
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.ui.platform.testTag
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,10 +30,18 @@ import java.util.UUID
         val table = when (type.wire) { "task" -> FlaggedTable.TASKS; "document" -> FlaggedTable.DOCS; "thread" -> FlaggedTable.THREADS; else -> FlaggedTable.CHANNELS }
         model.store.reader.isAccessRemoved(w.id, table, id)
     } }.collectAsState(false)
-    TextButton(enabled = enabled && !removed && !w.accessRemoved, onClick = { model.submit(WriteIntent(WriteKind.PIN_SET, id, buildJsonObject {
+    var showFailure by remember(type, id) { mutableStateOf(false) }
+    val failure = current.second?.takeIf { !it.isPending }
+    androidx.compose.material3.IconButton(modifier = androidx.compose.ui.Modifier.testTag("pin.toggle"), enabled = enabled && !removed && !w.accessRemoved, onClick = {
+        if (failure != null) showFailure = true else model.submit(WriteIntent(WriteKind.PIN_SET, id, buildJsonObject {
         put("resource_type", type.wire); put("pinned", !current.third); put("expected_row_version", current.first?.rowVersion ?: 0); put("mutation_id", UUID.randomUUID().toString())
-    })) }) { Text(if (current.third) "Unpin" else "Pin") }
-    current.second?.lastError?.let { Text(it) }
+    })) }) {
+        Icon(when { failure != null -> androidx.compose.material.icons.Icons.Outlined.WarningAmber; current.third -> androidx.compose.material.icons.Icons.Filled.PushPin; else -> androidx.compose.material.icons.Icons.Outlined.PushPin },
+            if (failure != null) "Pin not saved" else if (current.third) "Unpin" else "Pin")
+    }
+    if (showFailure && failure != null) AlertDialog(onDismissRequest = { showFailure = false }, title = { Text("Pin not saved") }, text = { Text(failure.lastError ?: "Try again or discard this change.") },
+        confirmButton = { TextButton(onClick = { showFailure = false; model.act { model.writes.retry(failure.id, c) } }) { Text("Retry") } },
+        dismissButton = { TextButton(onClick = { showFailure = false; model.act { model.store.writer.discardWrite(failure.id) } }) { Text("Discard") } })
 }
 
 @Composable internal fun DocumentComments(model: AppModel, docId: String, enabled: Boolean) {

@@ -74,10 +74,22 @@ class SampleSurfaceTower(
             return when (first) {
                 "canvases", "workspace-agents", "agent-activities", "personal-wapps", "record-sync" -> true
                 "scopes" -> p.size >= 4 && p[2] == "context"
-                "me" -> p.size >= 2 && p[1] in setOf("pins", "autopilot-agents")
+                "me" -> p.size >= 2 && p[1] in setOf("pins", "pin-order", "autopilot-agents")
                 "files" -> p.size == 5 && p[2] == "versions" && p[4] == "object"
                 else -> false
             }
+        }
+
+        /** Drawing element kinds Tower stores. */
+        val ELEMENT_KINDS = setOf("text", "rectangle", "diamond", "ellipse", "arrow", "line", "draw", "frame")
+
+        /** An element frame as Tower stores it: whole points, 8…4000 × 8…4000, z 1…100000. */
+        fun elementLayout(value: Any?): Row {
+            val m = value.asMap() ?: emptyMap<String, Any?>()
+            fun n(key: String, fallback: Double) = (m[key] as? Number)?.toDouble() ?: fallback
+            return linkedMapOf("x" to Math.round(n("x", 0.0)), "y" to Math.round(n("y", 0.0)),
+                "width" to Math.round(n("width", 120.0)).coerceIn(8L, 4000L), "height" to Math.round(n("height", 80.0)).coerceIn(8L, 4000L),
+                "z" to Math.round(n("z", 1.0)).coerceIn(1L, 100_000L))
         }
 
         /** `normalizeFlightDeckPgCanvasLayout`: rounded, size clamped to 220…1200 × 160…1000, z to 1…100000; `task_tree` kept. */
@@ -470,6 +482,8 @@ class SampleSurfaceTower(
             method == "GET" && n == 1 && head == "personal-wapps" ->
                 200 to linkedMapOf("personal_wapps" to state.rows("wapps").sortedBy { it["sort_order"].asInt() ?: 0 }, "next_cursor" to null)
             // Pins
+            method == "POST" && n == 2 && head == "me" && p[1] == "pin-order" -> movePin(o)
+            method == "GET" && n == 1 && head == "record-sync" -> 200 to mapOf("protocol_version" to 1, "personal_pin_order_version" to 1)
             method == "GET" && n == 2 && head == "record-sync" && p[1] == "priority" -> pinFeed(url)
             method == "PUT" && n == 4 && head == "me" -> putPin(p[2], p[3], o)
             else -> errorReply(404, "not_found")
@@ -568,6 +582,41 @@ class SampleSurfaceTower(
                 changes.add(SampleChange("canvas_naplet", p[3], "updated", rowVersion = version + 1L, payload = mapOf("canvas_id" to p[1])))
                 200 to linkedMapOf("workspace_id" to workspaceId, "naplet" to naplet)
             }
+            // Drawing elements (Tower `normalizeFlightDeckPgCanvasElementLayout`: whole points, 8–4000 wide and high, z 1–100000).
+            method == "POST" && p.size == 3 && p[2] == "elements" -> {
+                val kind = o["kind"].asString() ?: ""
+                val data = o["data"].asMap() ?: emptyMap<String, Any?>()
+                if (kind !in ELEMENT_KINDS || o["layout"] !is Map<*, *>) return errorReply(400, "validation_error")
+                if (kind == "text" && (data["text"].asString() ?: "").isBlank()) return errorReply(400, "validation_error")
+                val id = newUUID()
+                val stamp = now()
+                val row: Row = linkedMapOf("id" to id, "canvas_id" to p[1], "kind" to kind, "layout" to elementLayout(o["layout"]),
+                    "data" to LinkedHashMap(data), "row_version" to 1L, "created_at" to stamp, "updated_at" to stamp)
+                state.put("elements", id, row)
+                changes.add(SampleChange("canvas_element", id, "created", rowVersion = 1, payload = mapOf("canvas_id" to p[1])))
+                201 to linkedMapOf("workspace_id" to workspaceId, "element" to row)
+            }
+            (method == "PATCH" || method == "DELETE") && p.size == 4 && p[2] == "elements" -> {
+                val version = expected() ?: return errorReply(400, "validation_error")
+                val element = state.row("elements", p[3])
+                if (element == null || element["canvas_id"] != p[1] || version != element["row_version"].asInt()) return errorReply(409, "stale_row_version")
+                if (method == "DELETE") {
+                    state.put("elements", p[3], null)
+                    changes.add(SampleChange("canvas_element", p[3], "deleted", payload = mapOf("canvas_id" to p[1])))
+                    return 200 to linkedMapOf("workspace_id" to workspaceId, "deleted" to true, "id" to p[3])
+                }
+                if (o["layout"] == null && o["data"] == null) return errorReply(400, "validation_error")
+                o["layout"]?.let { element["layout"] = elementLayout(it) }
+                o["data"].asMap()?.let { data ->
+                    if (element["kind"] == "text" && (data["text"].asString() ?: "").isBlank()) return errorReply(400, "validation_error")
+                    element["data"] = LinkedHashMap(data)
+                }
+                element["row_version"] = version + 1L
+                element["updated_at"] = now()
+                state.put("elements", p[3], element)
+                changes.add(SampleChange("canvas_element", p[3], "updated", rowVersion = version + 1L, payload = mapOf("canvas_id" to p[1])))
+                200 to linkedMapOf("workspace_id" to workspaceId, "element" to element)
+            }
             else -> errorReply(403, "permission_denied")
         }
     }
@@ -630,6 +679,36 @@ class SampleSurfaceTower(
         state.put("pins", row["id"] as String, row)
         changes.add(SampleChange("personal_pin", row["id"] as String, "updated", row["channel_id"].asString(), row["scope_id"].asString(), row["row_version"] as Long))
         return row
+    }
+
+    /** Synthetic server for device interaction tests; follows Tower's versioned relative-move contract. */
+    private fun movePin(o: Row): Reply {
+        val mutation = o["mutation_id"].asString() ?: return errorReply(400, "invalid_pin_order")
+        val hash = Sha256Hex.of("order|" + o.toString())
+        state.row("pin_mutations", mutation)?.let { prior ->
+            if (prior["hash"] != hash) return errorReply(409, "mutation_id_reused")
+            return 200 to mapOf("pins" to prior["ack"])
+        }
+        fun find(ref: Map<*, *>): Row? = state.rows("pins").firstOrNull { it["resource_type"] == ref["resource_type"] && it["resource_id"] == ref["resource_id"] && it["pinned"] == true && it["row_version"].asInt() == ref["expected_row_version"].asInt() }
+        val target = find(o) ?: return errorReply(409, "pin_order_conflict")
+        val before = o["before"] as? Map<*, *>
+        val anchor = before?.let { find(it) ?: return errorReply(409, "pin_order_conflict") }
+        if (target === anchor) return errorReply(400, "invalid_pin_order")
+        val rows = state.rows("pins").filter { it["pinned"] == true }.sortedWith { a, b ->
+            studio.otherstuff.ambulando.core.surfaces.PinRecord.displayOrder.compare(
+                studio.otherstuff.ambulando.core.surfaces.PinRecord.parse(toJsonElement(a) as JsonObject),
+                studio.otherstuff.ambulando.core.surfaces.PinRecord.parse(toJsonElement(b) as JsonObject))
+        }.toMutableList()
+        rows.remove(target)
+        val index = anchor?.let { rows.indexOf(it) } ?: rows.size
+        rows.add(index, target)
+        rows.forEachIndexed { position, row ->
+            row["order_position"] = position + 1; row["row_version"] = lv(row, "row_version") + 1
+            row["updated_at"] = now(); state.put("pins", row["id"] as String, row)
+            changes.add(SampleChange("personal_pin", row["id"] as String, "updated", row["channel_id"].asString(), row["scope_id"].asString(), row["row_version"] as Long))
+        }
+        state.put("pin_mutations", mutation, linkedMapOf("hash" to hash, "ack" to rows.map { LinkedHashMap(it) }))
+        return 200 to mapOf("pins" to rows)
     }
 
     private fun putPin(type: String, resource: String, o: Row): Reply {

@@ -355,6 +355,7 @@ internal suspend fun WorkspaceSync.reseed(connection: ConnectionRecord, workspac
     store.writer.saveEventCursor(connection.id, workspace.id, head)
     refreshWorkspace(connection, workspace, SyncPriority.BACKGROUND)
     refreshInbox(connection, workspace, SyncPriority.BACKGROUND)
+    refreshNotifications(connection, workspace, SyncPriority.BACKGROUND)
     val visible = live.feed(workspace.id).visibleChannelId
     for (channel in store.reader.syncableChannels(workspace.id)) {
         val priority = if (channel.id == visible) SyncPriority.VISIBLE else SyncPriority.BACKGROUND
@@ -405,7 +406,7 @@ internal fun liveRank(refresh: EventPlan.Refresh, visible: String?): Int = when 
     is EventPlan.Refresh.ChannelDocs -> if (refresh.channelId == visible) 1 else 3
     is EventPlan.Refresh.ChannelFiles -> if (refresh.channelId == visible) 1 else 3
     is EventPlan.Refresh.Task, is EventPlan.Refresh.Doc -> 2
-    EventPlan.Refresh.Inbox, EventPlan.Refresh.Pins -> 3
+    EventPlan.Refresh.Inbox, EventPlan.Refresh.Pins, EventPlan.Refresh.Notifications -> 3
     is EventPlan.Refresh.AgentActivity -> if (refresh.channelId == visible) 1 else 3
     is EventPlan.Refresh.Canvas, is EventPlan.Refresh.ContextReferences -> 3
     EventPlan.Refresh.Structure, EventPlan.Refresh.Directory, EventPlan.Refresh.Access, EventPlan.Refresh.Canvases,
@@ -494,6 +495,7 @@ private suspend fun WorkspaceSync.materialize(
             store.writer.upsertViewStates(w, api.viewStates(w, app), complete = true)
             engine.recovered(WorkspaceSync.inboxKey(w))
         }
+        EventPlan.Refresh.Notifications -> refreshNotifications(connection, workspace, SyncPriority.VISIBLE)
         // Scopes/channels are re-listed as their own coalescing job (also run on every foreground resume).
         EventPlan.Refresh.Structure -> refreshWorkspace(connection, workspace, SyncPriority.BACKGROUND)
         EventPlan.Refresh.Directory -> refreshDirectory(connection, workspace, SyncPriority.BACKGROUND)

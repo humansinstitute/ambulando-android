@@ -1,5 +1,7 @@
 package studio.otherstuff.ambulando.core.sample
 
+import studio.otherstuff.ambulando.core.surfaces.createBoardFile
+
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -165,6 +167,16 @@ class SampleWorkTowerTests {
         assertEquals(409, h.exchange("PATCH", h.base() + "/docs/$doc/comments/$id", mapOf("row_version" to 5, "comment_status" to "resolved")).status)
         assertEquals(200, h.exchange("PATCH", h.base() + "/docs/$doc/comments/$id", mapOf("row_version" to 1, "comment_status" to "resolved")).status)
         assertEquals("resolved", h.api.docComments(w, h.app, doc).single().status)
+    }
+
+    @Test fun createBoardRegistersAnEmptyExcalidrawFileInTheChannel() = runBlocking {
+        val h = harness()
+        val id = h.api.createBoardFile(w, h.app, general, "  Launch ideas ")
+        val listed = h.api.channelFiles(w, h.app, general).items.single { it.id == id }
+        assertEquals("Launch ideas.excalidraw", listed.displayName)
+        val scene = studio.otherstuff.ambulando.core.transport.parseJsonObject(h.api.fileObject(w, h.app, id).bytes, "board")
+        assertEquals("excalidraw", scene.string("type"))
+        assertTrue("a new board starts empty", (scene["elements"] as kotlinx.serialization.json.JsonArray).isEmpty())
     }
 
     @Test fun uploadUsesUnsignedPresignedPutThenFileRecord() = runBlocking {

@@ -17,12 +17,13 @@ Updates signed with the same release certificate retain the identity, connection
 - Task lists/boards, creation, state/priority/assignee changes, comments and conflict handling.
 - Native rich-document reading, bundled lossless editing with edit leases and durable drafts, comments and recovery.
 - Files and folders, uploads, hash-verified downloads, local previews and Android sharing.
+- Notification inbox shared with other Ambulando apps: unread badge, filters, read/dismiss/archive, tap-through, offline reading.
 - Local search; Deck activity, personal pins, recent channels, canvases and WApp/agent launchers.
 - Native canvas viewport and naplets, task relationships, native Excalidraw previews and bundled board editing.
 - Context references, agents/activity, Toolbox, scope/channel management and an HTTPS browser with explicit NIP-07 consent.
 
-See [feature status and validation](docs/parity-matrix.md). Feed, push notifications, FIPS transport, pipeline/session
-viewers, workrooms and reports are not supported, matching the iPhone client's documented boundary. WApp configuration
+See [feature status and validation](docs/parity-matrix.md). Feed, Android OS push notifications, FIPS transport, pipeline/session
+viewers, workrooms and reports are not supported. iPhone has APNs-specific registration and tap support; Android needs its own supported provider contract. WApp configuration
 and personal agent configuration remain in the web app.
 
 ## Privacy

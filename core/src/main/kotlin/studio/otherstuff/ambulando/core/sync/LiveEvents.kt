@@ -21,6 +21,8 @@ class EventPlan {
         data class ChannelFiles(val channelId: String) : Refresh()
         data class Reactions(val channelId: String, val messageId: String) : Refresh()
         data object Inbox : Refresh()
+        /** The viewer's notification inbox changed (actor-private hint event: carries no content, only "pull `changes` now"). */
+        data object Notifications : Refresh()
         /** Scopes and channels (complete lists flag what the actor can no longer see). */
         data object Structure : Refresh()
         /** Member directory and personal scope order. */
@@ -132,6 +134,7 @@ class EventPlan {
                         if (target != null && channel != null && !fold) plan.refreshes.add(Refresh.Reactions(channel, target))
                     }
                     "resource_view_state" -> plan.refreshes.add(Refresh.Inbox)
+                    "notification_item" -> plan.refreshes.add(Refresh.Notifications)
                     "scope", "channel" -> plan.refreshes.add(Refresh.Structure)
                     "canvas", "canvas_order" -> {
                         plan.refreshes.add(Refresh.Canvases)

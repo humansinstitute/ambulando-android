@@ -44,6 +44,12 @@ sealed interface WorkRoute {
     data class HtmlArtefact(override val workspaceId: String, val canvasId: String, val napletId: String, val title: String) : WorkRoute
 }
 
+/**
+ * Records shown full screen on a phone: the global top bar and section bar are hidden and the screen draws its own
+ * navigation and exit at the bottom, within thumb reach (the web's mobile canvas).
+ */
+val WorkRoute.fullScreen: Boolean get() = this is WorkRoute.Canvas
+
 /** The conversation shown in the focused thread view over the current section (the web's thread modal). */
 @Immutable
 data class ThreadFocus(val workspaceId: String, val channelId: String?, val threadId: String)
@@ -76,6 +82,8 @@ class AppServices(
     val unlocked: Boolean,
     /** Sample-data mode: screens show the sample label. */
     val sample: Boolean,
+    /** Opens a stored image (`storage://<uuid>`) in the full-screen image overlay. */
+    val viewImage: (objectId: String, title: String) -> Unit = { _, _ -> },
 )
 
 val LocalAppServices = staticCompositionLocalOf<AppServices> { error("AppServices not provided") }

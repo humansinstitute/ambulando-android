@@ -33,6 +33,7 @@ import studio.otherstuff.ambulando.core.store.markOutbox
 import studio.otherstuff.ambulando.core.store.outbox
 import studio.otherstuff.ambulando.core.store.outboxItem
 import studio.otherstuff.ambulando.core.store.retryOutbox
+import studio.otherstuff.ambulando.core.store.thread
 import studio.otherstuff.ambulando.core.store.updateOutboxAttachments
 import studio.otherstuff.ambulando.core.sync.SyncBackoff
 import studio.otherstuff.ambulando.core.sync.SyncEngine
@@ -73,7 +74,7 @@ object OutboxRequest {
      * Builds the exact JSON bytes for `POST /channels/:c/messages`, including the kind 33358 instruction signature over
      * `body` with the workspace, channel and (for replies) thread tags. These bytes are frozen and reused for every retry.
      */
-    suspend fun build(item: OutboxItem, signer: EventSigner): ByteArray {
+    suspend fun build(item: OutboxItem, signer: EventSigner, inheritedAgentRecipient: String? = null): ByteArray {
         val signed = MessageInstructionSignature.sign(item.body, item.workspaceId, item.channelId, item.threadId, signer = signer)
         if (signed.signerNpub != item.signerNpub) throw IdentityError.SignerMismatch
         val o = LinkedHashMap<String, Any?>()
@@ -86,7 +87,13 @@ object OutboxRequest {
         if (wire.size != item.attachments.size || !item.attachments.all { it.complete }) throw FileTransferError.NotAttachable
         // Storage links in the body are attachments too (the web's chat storage attachment merge).
         val attachments = StorageMarkdown.merged(wire, item.body)
-        if (attachments.isNotEmpty()) o["metadata"] = mapOf("attachments" to attachments.map { it.requestObject })
+        val metadata = linkedMapOf<String, Any?>()
+        if (attachments.isNotEmpty()) metadata["attachments"] = attachments.map { it.requestObject }
+        if (item.threadId != null && item.mentions.isEmpty() && inheritedAgentRecipient != null &&
+            studio.otherstuff.ambulando.core.nostr.NostrKeys.isValidNpub(inheritedAgentRecipient)) {
+            metadata["agent_direct_recipient_npub"] = inheritedAgentRecipient
+        }
+        if (metadata.isNotEmpty()) o["metadata"] = metadata
         return jsonBody(jsonObjectOf(*o.toList().toTypedArray()))
     }
 
@@ -351,7 +358,8 @@ class OutboxSender(
                     if (!permanent) scheduleRetry(item.attempts + 1)
                     continue
                 }
-                val built = OutboxRequest.build(ready, identity)
+                val inherited = ready.threadId?.let { store.reader.thread(ready.workspaceId, it)?.raw?.obj("metadata")?.string("inherited_agent_recipient_npub") }
+                val built = OutboxRequest.build(ready, identity, inherited)
                 store.writer.freezeOutbox(item.id, built)
                 request = store.reader.outboxItem(item.id)?.request
             }

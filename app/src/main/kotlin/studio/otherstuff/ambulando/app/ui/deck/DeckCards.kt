@@ -1,6 +1,18 @@
 package studio.otherstuff.ambulando.app.ui.deck
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DragHandle
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -11,6 +23,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.*
+import kotlin.math.roundToInt
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import studio.otherstuff.ambulando.app.ui.nav.*
@@ -68,15 +82,78 @@ import studio.otherstuff.ambulando.core.store.LocalStore
 
 @Composable internal fun DeckPinnedCard(screen: ScreenScope, pins: PinsSnapshot, intents: DeckIntents) {
     val services = LocalAppServices.current
+    val scope = rememberCoroutineScope()
+    var error by remember { mutableStateOf<String?>(null) }
+    var moving by remember { mutableStateOf(false) }
+    var preview by remember(pins.visibleItems) { mutableStateOf(pins.visibleItems) }
+    val currentRows by rememberUpdatedState(preview)
+    val enabled = !moving && pins.orderWrite == null && pins.pending.isEmpty()
+    fun save(target: studio.otherstuff.ambulando.core.store.PinnedItem, before: studio.otherstuff.ambulando.core.store.PinnedItem?) {
+        moving = true
+        scope.launch {
+            intents.movePin(target.pin, before?.pin).onFailure { error = it.message }
+            moving = false
+            preview = pins.visibleItems
+        }
+    }
     DeckCardFrame("Pinned items", "pinned") {
-        items(pins.visibleItems, key = { it.id }) { row ->
-            ActivityRow(row.title ?: "Pinned record", row.pin.resourceType.wire, row.accessRemoved) {
-                val id = row.pin.resourceId
-                when (row.pin.resourceType.wire) {
-                    "task" -> services.open(WorkRoute.Task(screen.workspaceId, id))
-                    "document" -> services.open(WorkRoute.Doc(screen.workspaceId, id))
-                    "thread" -> services.open(WorkRoute.Thread(screen.workspaceId, row.channelId, id))
-                    "channel" -> intents.openInChat(id)
+        error?.let { item { DeckNote(it) } }
+        pins.orderWrite?.let { write -> item {
+            if (write.isPending) DeckNote("Saving pin order…") else {
+                DeckNote(write.lastError ?: "Pin order not saved")
+                TextButton(onClick = { intents.discardPinWrite(write.id) }) { Text("Discard move") }
+            }
+        } }
+        items(preview, key = { it.id }) { row ->
+            var distance by remember(row.id) { mutableFloatStateOf(0f) }
+            var height by remember(row.id) { mutableIntStateOf(64) }
+            androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().graphicsLayer { translationY = distance }.onSizeChanged { height = it.height }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                androidx.compose.material3.Icon(Icons.Outlined.DragHandle, "Drag to reorder ${row.title ?: "pin"}",
+                    Modifier.padding(12.dp).size(24.dp).testTag("pin.drag.${row.pin.resourceId}")
+                        .semantics {
+                            customActions = listOf(
+                                CustomAccessibilityAction("Move up") {
+                                    val index = currentRows.indexOfFirst { it.id == row.id }
+                                    if (enabled && index > 0) { save(row, currentRows[index - 1]); true } else false
+                                },
+                                CustomAccessibilityAction("Move down") {
+                                    val index = currentRows.indexOfFirst { it.id == row.id }
+                                    if (enabled && index >= 0 && index < currentRows.lastIndex) { save(row, currentRows.getOrNull(index + 2)); true } else false
+                                })
+                        }
+                        .pointerInput(row.id, enabled) {
+                            if (enabled) detectDragGestures(
+                                onDragStart = { distance = 0f },
+                                onDragCancel = { preview = pins.visibleItems; distance = 0f },
+                                onDragEnd = {
+                                    val index = currentRows.indexOfFirst { it.id == row.id }
+                                    val destination = (index + (distance / height.coerceAtLeast(1)).roundToInt()).coerceIn(0, currentRows.lastIndex)
+                                    if (index >= 0 && destination != index) {
+                                        val reordered = currentRows.toMutableList().apply { add(destination, removeAt(index)) }
+                                        preview = reordered
+                                        save(row, reordered.getOrNull(destination + 1))
+                                    }
+                                    distance = 0f
+                                },
+                                onDrag = { change, drag -> change.consume(); distance += drag.y })
+                        })
+                androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
+                    ActivityRow(row.title ?: "Pinned record", row.pin.resourceType.wire, row.accessRemoved) {
+                        val id = row.pin.resourceId
+                        when (row.pin.resourceType.wire) {
+                            "task" -> services.open(WorkRoute.Task(screen.workspaceId, id))
+                            "document" -> services.open(WorkRoute.Doc(screen.workspaceId, id))
+                            "thread" -> services.open(WorkRoute.Thread(screen.workspaceId, row.channelId, id))
+                            "channel" -> intents.openInChat(id)
+                        }
+                    }
+                }
+                // Also works with a keyboard and switch access; drag never opens or unpins a row.
+                androidx.compose.material3.IconButton(enabled = enabled && preview.indexOf(row) > 0, onClick = { save(row, preview[preview.indexOf(row) - 1]) }, modifier = Modifier.testTag("pin.up.${row.pin.resourceId}")) {
+                    androidx.compose.material3.Icon(Icons.Outlined.KeyboardArrowUp, "Move up")
+                }
+                androidx.compose.material3.IconButton(enabled = enabled && preview.indexOf(row) < preview.lastIndex, onClick = { save(row, preview.getOrNull(preview.indexOf(row) + 2)) }, modifier = Modifier.testTag("pin.down.${row.pin.resourceId}")) {
+                    androidx.compose.material3.Icon(Icons.Outlined.KeyboardArrowDown, "Move down")
                 }
             }
         }

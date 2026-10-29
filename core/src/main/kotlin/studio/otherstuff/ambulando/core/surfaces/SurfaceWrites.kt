@@ -27,6 +27,8 @@ import studio.otherstuff.ambulando.core.transport.TowerOrigin
 import studio.otherstuff.ambulando.core.transport.WorkspaceRecord
 import studio.otherstuff.ambulando.core.transport.channelTasks
 import studio.otherstuff.ambulando.core.transport.jsonBody
+import studio.otherstuff.ambulando.core.transport.jsonObjectOf
+import studio.otherstuff.ambulando.core.transport.string
 import studio.otherstuff.ambulando.core.transport.newRequestId
 import studio.otherstuff.ambulando.core.transport.obj
 import studio.otherstuff.ambulando.core.transport.parseJsonObjectOrNull
@@ -63,6 +65,13 @@ class StoreCanvasEditBackend(
     private val api = TowerAPI(client)
 
     override suspend fun requireSigner() = identity.requireSigner(connection.signerNpub)
+
+    /** Creates an empty board File in `channelId` (see [createBoardFile]); the caller then adds it to a canvas. */
+    suspend fun createBoard(channelId: String, title: String): String {
+        requireSigner()
+        if (workspace.accessRemoved) throw SurfaceHttpException(403, "access_removed")
+        return surfaceHttp { api.createBoardFile(workspace.id, workspace.appNpub, channelId, title) }
+    }
 
     override suspend fun exchange(method: String, path: String, body: ByteArray): Pair<Int, ByteArray> {
         val parts = path.split('/')
@@ -111,6 +120,22 @@ suspend fun TowerAPI.boardVersionBytes(workspaceId: String, appNpub: String, fil
     if (bytes.size > BoardScene.MAX_BYTES) throw BoardScene.SceneException.TooLarge("This board is larger than the 24 MB limit.")
     if (!sha256.isNullOrEmpty() && Sha256Hex.of(bytes) != sha256) throw DocumentBodyError.Integrity
     return bytes
+}
+
+/**
+ * Creates a new, empty Excalidraw board as a private File in `channelId` (version 1), as the web's "Create board": the
+ * scene is uploaded first, then registered as `<title>.excalidraw` with `metadata.kind = excalidraw_board`. Returns the
+ * new file id. Only people who can read the channel can open the board.
+ */
+suspend fun TowerAPI.createBoardFile(workspaceId: String, appNpub: String, channelId: String, title: String): String {
+    val name = JsonFields.prefix(title.trim(), CanvasEditor.MAX_TITLE).ifEmpty { "Untitled board" }
+    val bytes = BoardScene.serialize(BoardScene.empty())
+    val objectId = store(workspaceId, appNpub, bytes, BoardScene.CONTENT_TYPE, BoardScene.fileName(name), null) { }
+    val body = jsonObjectOf("storage_object_id" to objectId, "display_name" to BoardScene.fileName(name),
+        "metadata" to jsonObjectOf("kind" to "excalidraw_board", "title" to name))
+    val o = obj(client.request(method = "POST", path = TowerAPI.base(workspaceId) + "/channels/" + TowerAPI.uuid(channelId) + "/files", appNpub = appNpub,
+        jsonBody = jsonBody(body)), "board file")
+    return (o["file"] as? JsonObject)?.string("id")?.let { JsonFields.lowerUuid(it) } ?: throw TowerError.Malformed("board file")
 }
 
 /** Renames a board File (metadata only: no new version). Tower must confirm the exact name. */

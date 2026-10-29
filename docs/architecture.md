@@ -85,5 +85,43 @@ is opened. Conversations open in a focused thread view over the current section.
 ## 7. Platform limits
 
 - Background execution is opportunistic and decided by Android.
-- Push notifications are not available (Tower provides Web Push only).
+- Android OS push notifications are not available: this app needs a supported Android provider and Tower device-registration contract. iPhone's APNs contract is separate. The
+  in-app notification inbox (§8) is supported and works without push.
 - FIPS transport is not offered; the app is HTTPS-only and never falls back silently.
+
+## 8. Notifications
+
+Tower owns one durable, actor-private notification inbox per workspace (`org.wingman.notification.item` v1, shared by
+every consuming app). Android reads it through the same single sync owner as everything else:
+
+- **Store.** `notification_items` and `notification_sync` are private to the connection (origin + signer) and go with it on
+  disconnect. Only the inbox partition is hydrated by default; the archive is loaded on demand and dropped with the cursor.
+- **Read path.** A keyed `notifications:<w>` engine job. Cold start pages `items?view=inbox`, takes the first page's `head_seq`
+  as the snapshot sequence and replays `changes?after_seq=` from it. The snapshot is resumable: each page is stored with its
+  continuation cursor, the snapshot sequence and a generation, a job reads a bounded number of pages and hands the rest to a
+  following job, and nothing is declared complete (and no replay starts) until the last page is stored; `local_seq` moves only to a delivered page's
+  `through_seq`, in the transaction that applied the page. `410 reset_required` forgets the cursor and starts over.
+  The event stream's `notification_item` event is a content-free hint that schedules the job; `changes` is the authority.
+  Redelivery is expected and idempotent (`change_seq`, then `row_version`).
+- **Write path.** Read/dismiss/archive and bulk changes use the durable write queue with a `mutation_id`, the
+  `expected_row_version` and `observed_change_seq` of the row as it was drawn (never a later lookup), and an optimistic overlay kept apart from server state.
+  `state_conflict` adopts Tower's item and drops the tap (activity folded in after the user looked is never acknowledged
+  by an older tap). A changed request under a used `mutation_id` is a rejection, shown to the user. Bulk changes are
+  bounded by `up_to_seq`.
+- **Per-app view (wire v1.1).** Every list, count, change page and bulk selector carries `client_app_id=ambulando`, a
+  presentation filter and never access authority: Tower returns what this app may show (audience, and the person's inbox
+  rules for this app), and the unread badge uses the same predicate as the list. Read state is shared with other apps. The
+  first snapshot page's `rules_revision` is stored with the snapshot and sent with `changes`; a `410 reset_required` (or a
+  page/count under a different revision) starts over from a new snapshot and Settings reads the rules again. A page that
+  filtered everything may advance `through_seq` to the head; one that claims more without moving is refused.
+- **Rules (preferences).** Category switches write the app-specific key (`client_app_id=ambulando`, never the wildcard,
+  which would change other apps) by per-key compare-and-set: each entry carries `expected_row_version`, the exact key's
+  `row_version` from the last read (0 only when absent; a `default` row is kept and its version still counts). Writes are
+  all-or-nothing; `409 rules_conflict` adopts every current rule and the revision, shows a note and leaves the choice to the
+  person, whose retry uses a new `mutation_id`. A reused id with a different body is a rejection.
+- **Resource viewed, notification read and feed state stay separate.** Inbox actions never write view state; opening a
+  record uses the existing view-state flow, and Tower derives notification read from it.
+- **Redaction and access.** An unavailable item shows no text and cannot be opened; a content-free tombstone removes the
+  row; a 403 purges stored notification text for that workspace; a missing route (older Tower) is reported as unsupported.
+- **Not offered.** Alerts, phone push, quiet hours and per-device settings (not implemented by Tower; no push provider is
+  configured) are described as unavailable rather than shown as controls.

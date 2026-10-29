@@ -11,6 +11,9 @@ import androidx.compose.ui.unit.dp
 import studio.otherstuff.ambulando.app.background.BackgroundScheduler
 import studio.otherstuff.ambulando.app.ui.theme.AppearancePreference
 import studio.otherstuff.ambulando.core.store.*
+import studio.otherstuff.ambulando.core.sync.loadNotificationPreferences
+import studio.otherstuff.ambulando.core.sync.NotificationPreferenceResult
+import studio.otherstuff.ambulando.core.sync.setNotificationInbox
 
 @Composable internal fun NativeSettings(model: AppModel, done: () -> Unit) {
     val context = LocalContext.current
@@ -32,6 +35,7 @@ import studio.otherstuff.ambulando.core.store.*
         TextButton(onClick = { model.exportDiagnostics() }) { Text("Export diagnostics") }
         TextButton(onClick = { model.clearDiagnostics() }) { Text("Clear diagnostics") }
         Text("Diagnostics stay on this device until you choose to share. The newest 300 entries are kept in private app storage until replaced or cleared. No keys, tokens, message text or user identifiers are included.", style = MaterialTheme.typography.bodySmall)
+        NativeNotificationSettings(model)
         Row { Text("Show Agents", Modifier.weight(1f)); Switch(model.showAgents, { model.showAgents = it; model.act { model.store.writer.setState("settings.agents", it.toString()) } }) }
         Row { Text("Show Context", Modifier.weight(1f)); Switch(model.showContext, { model.showContext = it; model.act { model.store.writer.setState("settings.context", it.toString()) } }) }
         AppearancePreference.entries.forEach { value -> TextButton(onClick = { model.appearance = value; model.act { model.store.writer.setState("settings.appearance", value.name) } }) { Text(value.name) } }
@@ -56,4 +60,55 @@ import studio.otherstuff.ambulando.core.store.*
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Disconnect this Tower?") }, text = { Text("Downloaded history, drafts and unsent work for this connection will be removed from this device.") }, confirmButton = {
         TextButton(onClick = { model.disconnect(); confirm = false; done() }) { Text("Disconnect") }
     }, dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
+}
+
+@Composable private fun NativeNotificationSettings(model: AppModel) {
+    val c = model.connection ?: return
+    val w = model.workspace ?: return
+    var state by remember(c.id, w.id) { mutableStateOf<studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState>(studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.Loading) }
+    var attempt by remember { mutableIntStateOf(0) }
+    val sync by remember(c.id, w.id) { model.store.liveQuery({ it.table == StoreTable.NOTIFICATIONS }) { model.store.reader.notificationSync(c.id, w.id) } }.collectAsState(null)
+    // A new rules revision on the inbox copy means the person's rules changed (this device or another): read them again.
+    LaunchedEffect(c.id, w.id, attempt, sync?.state, sync?.rulesRevision) {
+        val phase = sync?.state
+        if (phase == NotificationSyncState.Phase.UNSUPPORTED) { state = studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.NotSupported; return@LaunchedEffect }
+        if (phase == NotificationSyncState.Phase.ACCESS_LOST || model.identityState !is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked) { state = studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.Failed("Unlock to load these settings."); return@LaunchedEffect }
+        state = try {
+            studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.Ready(model.sync.loadNotificationPreferences(c, w), sync?.inboxStartedAt)
+        } catch (e: studio.otherstuff.ambulando.core.transport.TowerError.Http) {
+            if (e.status == 404 || e.status == 501 || e.status == 405) studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.NotSupported
+            else studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.Failed(studio.otherstuff.ambulando.core.transport.ConnectionFailure.userMessage(e) ?: "Unexpected error")
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.Failed(studio.otherstuff.ambulando.core.transport.ConnectionFailure.userMessage(e) ?: "Unexpected error")
+        }
+    }
+    Text("Notifications", style = MaterialTheme.typography.titleMedium)
+    studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsContent(state, sync?.state, object : studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsActions {
+        override fun setInbox(category: studio.otherstuff.ambulando.core.transport.NotificationCategoryInfo, on: Boolean) {
+            val ready = state as? studio.otherstuff.ambulando.app.ui.notifications.NotificationSettingsState.Ready ?: return
+            state = ready.copy(saving = true)
+            model.act {
+                state = try {
+                    when (val result = model.sync.setNotificationInbox(c, w, category, on, ready.preferences)) {
+                        is NotificationPreferenceResult.Saved -> {
+                            // The inbox is filtered by these rules: refresh it now rather than at the next hint.
+                            model.refreshNotifications()
+                            ready.copy(preferences = result.preferences, saving = false)
+                        }
+                        is NotificationPreferenceResult.Conflict -> {
+                            model.showNotificationMessage("These settings were changed on another device. The latest are shown; choose again to apply your change.")
+                            ready.copy(preferences = result.preferences, saving = false)
+                        }
+                        is NotificationPreferenceResult.Rejected -> {
+                            model.showNotificationMessage("Tower did not accept that change. The current settings are shown.")
+                            ready.copy(preferences = result.preferences, saving = false)
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                    model.showNotificationMessage("Could not save that setting: " + studio.otherstuff.ambulando.core.transport.ConnectionFailure.userMessage(e)); ready.copy(saving = false)
+                }
+            }
+        }
+        override fun reload() { attempt += 1 }
+    })
 }

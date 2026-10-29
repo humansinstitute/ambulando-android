@@ -84,6 +84,30 @@ class BrowserModel(private val context: Context) {
     companion object {
         const val BRIDGE = "ambulandoNostr"
         const val MAX_TABS = 12
+        // HTTPS top-frame only. Page-created bytes never receive native credentials or local filesystem paths.
+        val FILE_SCRIPT = """
+            (() => {
+              if (window.top !== window || location.protocol !== 'https:') return;
+              const send = value => window.ambulandoFiles.postMessage(JSON.stringify(value));
+              document.addEventListener('click', async event => {
+                const a = event.target.closest && event.target.closest('a[href]');
+                if (!a || !event.isTrusted) return;
+                const url = new URL(a.href, location.href);
+                if (!a.hasAttribute('download') && !['blob:', 'data:'].includes(url.protocol)) return;
+                if (!['https:', 'blob:', 'data:'].includes(url.protocol)) return;
+                event.preventDefault();
+                try {
+                  if (url.protocol === 'https:') { send({url: url.href, filename: a.download || url.pathname.split('/').pop()}); return; }
+                  const response = await fetch(url.href); const blob = await response.blob();
+                  if (blob.size > 16 * 1024 * 1024) throw new Error('Download exceeds the 16 MB limit.');
+                  const reader = new FileReader();
+                  reader.onload = () => send({filename: a.download || 'download', base64: reader.result.split(',')[1]});
+                  reader.onerror = () => send({error: 'Cannot read page download.'});
+                  reader.readAsDataURL(blob);
+                } catch (e) { send({error: String(e.message || e)}); }
+              }, true);
+            })();
+        """.trimIndent()
 
         /**
          * NIP-07 for the top frame of HTTPS pages. Every call goes to the native listener, which checks the calling frame
@@ -122,6 +146,14 @@ class BrowserModel(private val context: Context) {
     }
 
     val tabs = mutableStateListOf<BrowserTab>()
+    var fileSelection by mutableStateOf<BrowserFileSelection?>(null)
+    var download by mutableStateOf<BrowserDownload?>(null)
+    var fileTransfer by mutableStateOf<BrowserFileTransfer?>(null)
+    fun cancelFileRequests(tab: BrowserTab? = null) {
+        if (tab == null || fileSelection?.tab === tab) { fileSelection?.finish(null); fileSelection = null }
+        if (tab == null || download?.tab === tab) download = null
+        if (tab == null || fileTransfer?.request?.tab === tab) fileTransfer?.cancel()
+    }
     var selectedId by mutableStateOf<UUID?>(null)
     var presented by mutableStateOf(false)
         private set
@@ -197,18 +229,21 @@ class BrowserModel(private val context: Context) {
     fun hide() {
         if (!presented) return
         presented = false
+        cancelFileRequests()
         tabs.forEach { broker?.tabClosed(it.id) }
         dialog?.reply?.invoke(false)
         dialog = null
     }
 
-    fun select(tab: BrowserTab) { selectedId = tab.id; showingTabs = false }
+    fun select(tab: BrowserTab) { if (selectedId != tab.id) cancelFileRequests(); selectedId = tab.id; showingTabs = false }
 
     fun close(tab: BrowserTab) {
         val index = tabs.indexOfFirst { it.id == tab.id }.takeIf { it >= 0 } ?: return
         broker?.tabClosed(tab.id)
+        cancelFileRequests(tab)
         tab.webView.stopLoading()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) WebViewCompat.removeWebMessageListener(tab.webView, BRIDGE)
+        WebViewCompat.removeWebMessageListener(tab.webView, "ambulandoFiles")
         tab.webView.destroy()
         tabs.removeAt(index)
         if (selectedId == tab.id) selectedId = tabs.getOrNull(index)?.id ?: tabs.lastOrNull()?.id
@@ -250,7 +285,28 @@ class BrowserModel(private val context: Context) {
         val tab = BrowserTab(webView)
         webView.webViewClient = TabClient(tab)
         webView.webChromeClient = TabChrome(tab)
-        webView.setDownloadListener { _, _, _, _, _ -> tab.refusal = "Downloads are not available in the Ambulando browser." }
+        webView.setDownloadListener { url, _, disposition, mime, _ ->
+            requestDownload(tab, url, android.webkit.URLUtil.guessFileName(url, disposition, mime), mime)
+        }
+        WebViewCompat.addDocumentStartJavaScript(webView, FILE_SCRIPT, setOf("*"))
+        WebViewCompat.addWebMessageListener(webView, "ambulandoFiles", setOf("*")) { _, message, origin, main, _ ->
+            if (main && tab.origin != null && tab.origin == BrowserURLPolicy.origin(runCatching { URI(origin.toString()) }.getOrNull()) && message.data.orEmpty().length <= BrowserFilePolicy.MAX_BYTES * 4 / 3 + 4096) {
+                runCatching {
+                    val request = WireJson.parseToJsonElement(message.data!!).jsonObject
+                    val error = request["error"]?.jsonPrimitive?.content
+                    if (error != null) tab.refusal = error.take(200) else {
+                        val url = request["url"]?.jsonPrimitive?.content
+                        val name = request["filename"]?.jsonPrimitive?.content
+                        val encoded = request["base64"]?.jsonPrimitive?.content
+                        if (encoded != null) {
+                            val bytes = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+                            require(bytes.size <= BrowserFilePolicy.MAX_BYTES)
+                            if (download == null && fileTransfer == null) download = BrowserDownload(tab, tab.documentId, null, bytes, BrowserFilePolicy.filename(name), "application/octet-stream")
+                        } else if (url != null) requestDownload(tab, url, name, "application/octet-stream")
+                    }
+                }.onFailure { tab.refusal = "This download could not be read (maximum 16 MB)." }
+            }
+        }
         WebViewCompat.addDocumentStartJavaScript(webView, NOSTR_SCRIPT, setOf("*"))
         WebViewCompat.addWebMessageListener(webView, BRIDGE, setOf("*")) { _, message, sourceOrigin, isMainFrame, reply ->
             onBridgeMessage(tab, message, sourceOrigin, isMainFrame, reply)
@@ -300,6 +356,15 @@ class BrowserModel(private val context: Context) {
         }
     }
 
+
+    private fun requestDownload(tab: BrowserTab, url: String, name: String?, mime: String?) {
+        if (tab.origin == null || !BrowserFilePolicy.https(url)) {
+            tab.refusal = "Only HTTPS files or page-created downloads can be saved."; return
+        }
+        if (download != null || fileTransfer != null) { tab.refusal = "Finish or cancel the open save picker first."; return }
+        download = BrowserDownload(tab, tab.documentId, url, null, BrowserFilePolicy.filename(name), mime ?: "application/octet-stream")
+    }
+
     // Signing state
 
     fun answer(prompt: NIP07Prompt, decision: NIP07Decision) { broker?.resolve(prompt.id, decision) }
@@ -307,7 +372,7 @@ class BrowserModel(private val context: Context) {
     fun updateLocked(value: Boolean) {
         locked = value
         broker?.setLocked(value)
-        if (value) { dialog?.reply?.invoke(false); dialog = null }
+        if (value) { cancelFileRequests(); dialog?.reply?.invoke(false); dialog = null }
     }
 
     fun forget(origin: String) { broker?.forget(origin) }
@@ -330,6 +395,7 @@ class BrowserModel(private val context: Context) {
     // WebView plumbing
 
     private fun committed(tab: BrowserTab, url: String?) {
+        cancelFileRequests(tab)
         tab.documentId += 1
         tab.origin = BrowserURLPolicy.origin(url?.let { runCatching { URI(it) }.getOrNull() })
         tab.refusal = null
@@ -424,11 +490,17 @@ class BrowserModel(private val context: Context) {
         /** Popups (`target=_blank`, `window.open`) become tabs; their first navigation still passes the URL policy. */
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             if (!isUserGesture) return false
-            val child = addTab() ?: return false
             val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+            val child = addTab() ?: return false
             transport.webView = child.webView
             resultMsg.sendToTarget()
             presented = true
+            return true
+        }
+
+        override fun onShowFileChooser(view: WebView, callback: android.webkit.ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+            if (tab.origin == null || fileSelection != null) { callback.onReceiveValue(null); return true }
+            fileSelection = BrowserFileSelection(tab, params, callback)
             return true
         }
 

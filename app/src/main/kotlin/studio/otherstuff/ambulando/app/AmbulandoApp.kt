@@ -51,7 +51,9 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     var settings by remember { mutableStateOf(false) }
     var management by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf(false) }
+    var notifications by remember { mutableStateOf(false) }
     var person by remember { mutableStateOf<String?>(null) }
+    var viewingImage by remember(model.workspace?.id) { mutableStateOf<Pair<String, String>?>(null) }
     var collapsed by remember(model.workspace?.id) { mutableStateOf(emptySet<String>()) }
     val c = model.connection ?: return
     val w = model.workspace
@@ -63,9 +65,10 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         browser.configure(false, studio.otherstuff.ambulando.core.browser.NIP07Sites.decode(model.store.reader.state(key)), { model.identity.publicKeyHex() }, { model.identity.sign(it) }, NIP07SitePersistence { sites -> model.act { model.store.writer.setState(key, studio.otherstuff.ambulando.core.browser.NIP07Sites.encode(sites)) } })
     }
     DisposableEffect(browser) { onDispose { browser.updateLocked(true) } }
-    fun openUrl(url: String) {
-        val objectId = studio.otherstuff.ambulando.app.ui.rich.RichLinks.storageObjectId(url)
-        if (objectId != null && w != null && !w.accessRemoved) model.act {
+    /** Hands a stored attachment to Android's share sheet (downloading it into the private cache first). */
+    fun shareStorage(objectId: String) {
+        if (w == null || w.accessRemoved) return
+        model.act {
             val cache = FileCache(java.io.File(androidContext.cacheDir, "AmbulandoFiles"))
             val known = model.store.reader.files(w.id).firstOrNull { it.storageObjectId == objectId }
             if (known?.accessRemoved == true) throw IllegalStateException("No longer available to you")
@@ -77,6 +80,15 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             val local = file ?: throw IllegalStateException("Attachment is not cached; retry when connected")
             val uri = androidx.core.content.FileProvider.getUriForFile(androidContext, "${androidContext.packageName}.files", local)
             androidContext.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType(known?.contentType ?: "application/octet-stream").putExtra(android.content.Intent.EXTRA_STREAM, uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), "Share attachment"))
+        }
+    }
+    fun openUrl(url: String) {
+        val objectId = studio.otherstuff.ambulando.app.ui.rich.RichLinks.storageObjectId(url)
+        if (objectId != null && w != null && !w.accessRemoved) model.act {
+            // A stored image opens in the image overlay (as on the web), not as a file; other files go to the share sheet.
+            val known = model.store.reader.files(w.id).firstOrNull { it.storageObjectId == objectId }
+            if (known?.contentType?.startsWith("image/") == true && !known.accessRemoved) viewingImage = objectId to known.displayName
+            else shareStorage(objectId)
         } else if (!browser.handleLink(url)) {
             val decision = runCatching { studio.otherstuff.ambulando.core.browser.BrowserURLPolicy.decide(java.net.URI(url), true) }.getOrNull()
             if (decision is studio.otherstuff.ambulando.core.browser.BrowserURLPolicy.Decision.External) runCatching { androidContext.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
@@ -108,16 +120,33 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             "document", "doc" -> { model.section = AppSection.DOCS; stacks.push(AppSection.DOCS, WorkRoute.Doc(w.id, id)) }
             "file" -> { model.section = AppSection.FILES; stacks.push(AppSection.FILES, WorkRoute.File(w.id, id)) }
             "thread" -> { model.section = AppSection.CHAT; stacks.push(AppSection.CHAT, WorkRoute.Thread(w.id, null, id)) }
+            // The web's thread reference: `chat:<channelId>#<messageId>` opens that message's conversation.
+            "chat", "message", "chat_message" -> model.act {
+                val (channelId, messageId) = studio.otherstuff.ambulando.core.store.MentionSearch.parseThreadId(id) ?: (id to null)
+                val message = messageId?.let { model.store.reader.message(w.id, it) }
+                val threadId = message?.threadId
+                val channelRow = model.channels.firstOrNull { it.id == (message?.channelId ?: channelId) } ?: throw IllegalStateException("This conversation is not available on this device.")
+                model.section = AppSection.CHAT
+                model.selectContext(channelRow.scopeId, channelRow.id)
+                if (threadId != null) stacks.push(AppSection.CHAT, WorkRoute.Thread(w.id, channelRow.id, threadId))
+            }
+            "channel" -> model.channels.firstOrNull { it.id == id }?.let { model.section = AppSection.CHAT; model.selectContext(it.scopeId, it.id) }
+                ?: model.act { error("This channel is not available to you.") }
+            "scope" -> model.scopes.firstOrNull { it.id == id }?.let { model.selectContext(it.id, null) }
+                ?: model.act { error("This scope is not available to you.") }
             "person", "agent" -> person = id
             else -> model.act { error("This reference cannot be opened in the native app.") }
         }
-    }, true, model.environment.isSample)
+    }, true, model.environment.isSample, viewImage = { id, title -> viewingImage = id to title })
     if (browser.presented) { BrowserScreen(browser); return }
     CompositionLocalProvider(LocalAppServices provides services, LocalAvatars provides avatars) {
         model.notice?.let { message -> AlertDialog(onDismissRequest = model::clearNotice, title = { Text("Not completed") }, text = { Text(message) }, confirmButton = { TextButton(onClick = model::clearNotice) { Text("Dismiss") } }) }
+        viewingImage?.let { (id, title) -> StoredImageViewer(model, id, title, onShare = { shareStorage(id) }) { viewingImage = null } }
         if (settings) { NativeSettings(model) { settings = false }; return@CompositionLocalProvider }
         if (management) { WorkspaceManagement(model) { management = false }; return@CompositionLocalProvider }
         if (search) { NativeSearch(model) { search = false }; return@CompositionLocalProvider }
+        if (notifications) { NativeNotifications(model) { notifications = false }; return@CompositionLocalProvider }
+        val notificationUnread by remember(c.id, w?.id) { model.store.liveQuery({ it.table == StoreTable.NOTIFICATIONS }) { w?.let { model.store.reader.notificationCounts(c.id, it.id).unread } ?: 0 } }.collectAsState(0)
         val unread by remember(w?.id) { model.store.liveQuery({ it.workspaceId == w?.id }) { w?.let { model.store.reader.unreadChannelIds(it.id) } ?: emptySet() } }.collectAsState(emptySet())
         val people by remember(c.id, w?.id) { model.store.liveQuery({ it.workspaceId == w?.id || it.table == StoreTable.PROFILES }) { w?.let { model.store.reader.people(c.id, it.id) } } }.collectAsState(null)
         person?.let { npub ->
@@ -136,13 +165,14 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             override fun chooseHome() { choose(null, null) }
             override fun toggleViewLock() { model.viewLocked = !model.viewLocked }
             override fun search() { focusManager.clearFocus(force = true); keyboard?.hide(); search = true }
+            override fun notifications() { focusManager.clearFocus(force = true); keyboard?.hide(); notifications = true }
             override fun showBrowser() { focusManager.clearFocus(force = true); keyboard?.hide(); browser.show() }
             override fun settings() { focusManager.clearFocus(force = true); keyboard?.hide(); settings = true }
             override fun unlock() { model.lock() }
         }
         val chrome = ShellChromeState(model.section, AppSection.visible(model.showAgents, model.showContext), w?.label ?: "Workspaces",
             model.scopes.firstOrNull { it.id == model.context.scopeId }?.name, model.channels.firstOrNull { it.id == model.context.channelId }?.name,
-            model.context.isHome, model.viewLocked, !syncStatus.isIdle, browser.tabs.size, people?.person(c.signerNpub), false, model.environment.isSample, sidebar, syncStatus.errors.values.firstOrNull()?.let { "Stored content is available. Update failed: $it" })
+            model.context.isHome, model.viewLocked, !syncStatus.isIdle, browser.tabs.size, people?.person(c.signerNpub), false, model.environment.isSample, sidebar, syncStatus.errors.values.firstOrNull()?.let { "Stored content is available. Update failed: $it" }, studio.otherstuff.ambulando.core.notifications.NotificationInboxLogic.badge(notificationUnread))
         val screen = w?.let { ScreenScope(c.id, it.id, it.appNpub, c.signerNpub, model.context.scopeId, model.context.channelId) }
         val intents = remember(screen) { object : TasksIntents {
             override fun submit(intent: WriteIntent) = model.submit(intent)
@@ -152,7 +182,17 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             override fun applyMine(item: WriteItem) { model.act { model.writes.retry(item.id, c, true) } }
             override fun discardWrite(item: WriteItem) { model.act { model.store.writer.discardWrite(item.id) } }
         } }
-        WorkspaceShell(chrome, actions, stacks, sidebar = {
+        WorkspaceShell(chrome, actions, stacks, pinControl = { route ->
+            val target = when (route) {
+                is WorkRoute.Task -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.TASK to route.taskId
+                is WorkRoute.Doc -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.DOCUMENT to route.docId
+                is WorkRoute.Thread -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.THREAD to route.threadId
+                is WorkRoute.Channel -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.CHANNEL to route.channelId
+                null -> if (model.section == AppSection.CHAT) model.context.channelId?.let { studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.CHANNEL to it } else null
+                else -> null
+            }
+            target?.let { (type, id) -> RecordPin(model, type, id) }
+        }, sidebar = {
             SidebarContent(SidebarState(w?.label ?: "Workspaces", w?.id, model.workspaces.map { it.id to it.label }, true, groups, unread, collapsed, model.context,
                 labels, model.scopes.filter { !it.accessRemoved }.map { it.id }.toSet(),
                 if (w == null) studio.otherstuff.ambulando.core.context.NavigationLoadState.FindingWorkspaces else studio.otherstuff.ambulando.core.context.NavigationLoadState.Ready(model.notice), false), object : SidebarActions {
@@ -183,7 +223,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             }
         }, routeScreen = { _, route ->
             if (screen != null) when (route) {
-                is WorkRoute.Task -> Column { RecordPin(model, studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.TASK, route.taskId); Box(Modifier.weight(1f)) { TaskDetailScreen(remember(screen, route.taskId) { TaskDetailState(model.store, screen, route.taskId, coroutineScope) }, screen, intents) } }
+                is WorkRoute.Task -> Column { Box(Modifier.weight(1f)) { TaskDetailScreen(remember(screen, route.taskId) { TaskDetailState(model.store, screen, route.taskId, coroutineScope) }, screen, intents) } }
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)
                 is WorkRoute.Thread -> ConnectedChat(model, route.threadId)

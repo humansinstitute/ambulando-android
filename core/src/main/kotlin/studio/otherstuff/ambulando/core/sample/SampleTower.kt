@@ -70,6 +70,9 @@ class SampleTower(
 
     private fun stateFile(name: String): File? = directory?.let { File(it, name) }
 
+    /** The notification inbox of the Studio workspace (a labelled stand-in, never evidence of live behaviour). */
+    val notifications = SampleNotifications(SampleIds.STUDIO, auth)
+
     /** Tasks, documents, files, storage, inbox and reactions of the Studio workspace. */
     val work = SampleWorkTower(SampleIds.STUDIO, SampleHosts.ORIGIN, SampleHosts.OBJECTS, stateFile("sample-work.json"), auth)
 
@@ -245,7 +248,7 @@ class SampleTower(
         }
         if (actorNpub != signer) actorNpub = signer
         // Surface routes first: their ownership is exact (board versions live under `/files/:f/versions/:v/object`).
-        val handled = boards.handle(request) ?: surfaces.handle(request) ?: labSurfaces.handle(request) ?: work.handle(request) ?: labWork.handle(request)
+        val handled = notifications.handle(request) ?: boards.handle(request) ?: surfaces.handle(request) ?: labSurfaces.handle(request) ?: work.handle(request) ?: labWork.handle(request)
         if (handled != null) return boards.project(handled, request)
         return chatRoute(request, url, signer)
     }

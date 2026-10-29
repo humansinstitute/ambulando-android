@@ -2,6 +2,7 @@ package studio.otherstuff.ambulando.core.surfaces
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -29,6 +30,8 @@ class CanvasEditingTests {
 
         val canvases = LinkedHashMap<String, Canvas>()
         val naplets = LinkedHashMap<String, Naplet>()
+        data class Element(val id: String, val canvas: String, val kind: String, var layout: JsonObject, var data: JsonObject, var version: Int)
+        val elements = LinkedHashMap<String, Element>()
         val denied = HashSet<String>()
         val titles = HashMap<String, String>()
         val writes = ArrayList<String>()
@@ -49,7 +52,9 @@ class CanvasEditingTests {
             if (n.source in denied) mapOf("id" to n.id, "access" to "denied", "layout" to n.layout, "row_version" to n.version)
             else mapOf("id" to n.id, "access" to "ready", "title" to n.title, "layout" to n.layout, "row_version" to n.version,
                 "source" to mapOf("type" to n.type, "id" to n.source), "content" to mapOf("body" to "text"))
-        }, "elements" to emptyList<Any>())
+        }, "elements" to elements.values.filter { it.canvas == canvasId }.map { e ->
+            mapOf("id" to e.id, "kind" to e.kind, "layout" to e.layout, "data" to e.data, "row_version" to e.version)
+        })
 
         override suspend fun requireSigner() { if (locked) error("locked") }
 
@@ -71,6 +76,23 @@ class CanvasEditingTests {
                 if (JsonFields.flexibleInt(o["expected_row_version"]) != canvas.version) return answer(409, "code" to "stale_row_version")
                 canvas.title = JsonFields.string(o["title"])!!; canvas.version += 1
                 return answer(200, "canvas" to canvasJson(canvas))
+            }
+            if (parts.getOrNull(2) == "elements") {
+                if (parts.size == 3 && method == "POST") {
+                    val kind = JsonFields.string(o["kind"])!!
+                    val data = o["data"]!!.jsonObject
+                    if (kind == "text" && JsonFields.string(data["text"]).isNullOrBlank()) return answer(400, "code" to "validation_error")
+                    val e = Element(newId(), canvas.id, kind, o["layout"]!!.jsonObject, data, 1)
+                    elements[e.id] = e
+                    return answer(201, "element" to mapOf("id" to e.id))
+                }
+                val e = elements[parts[3]] ?: return answer(404, "code" to "element_unavailable")
+                if (JsonFields.flexibleInt(o["expected_row_version"]) != e.version) return answer(409, "code" to "stale_row_version")
+                return when (method) {
+                    "PATCH" -> { o["layout"]?.let { e.layout = it.jsonObject }; o["data"]?.let { e.data = it.jsonObject }; e.version += 1; answer(200, "element" to mapOf("id" to e.id)) }
+                    "DELETE" -> { elements.remove(e.id); answer(200) }
+                    else -> answer(405)
+                }
             }
             if (parts.size == 3 && method == "POST") {
                 val source = o["source"]!!.jsonObject
@@ -195,6 +217,99 @@ class CanvasEditingTests {
         assertEquals(2, current.rowVersion)
         assertEquals(CanvasEditError.Conflict, refused<CanvasEditError> { editor.removeNaplet(canvas, stale) })
         assertEquals(1, scene(tower, canvas).naplets.size)
+    }
+
+    @Test fun duplicateAndReorderFollowTheWeb() = runBlocking {
+        val tower = FakeTower(w)
+        val editor = CanvasEditor(w, tower)
+        val canvas = tower.seedCanvas("Board")
+        val doc = Ids.uuid(2, "0006")
+        tower.seedNaplet(canvas, "document", doc, "Notes", mapOf("x" to 10, "y" to 20, "width" to 360, "height" to 280, "z" to 1))
+        tower.seedNaplet(canvas, "document", Ids.uuid(3, "0006"), "Plan", mapOf("x" to 500, "y" to 20, "width" to 360, "height" to 280, "z" to 2))
+        tower.reloadSnapshot(canvas)
+        val notes = scene(tower, canvas).naplets.first { it.title == "Notes" }
+        assertEquals(doc, notes.sourceId)
+
+        editor.duplicateNaplet(canvas, notes, scene(tower, canvas).highestZ)
+        val copy = scene(tower, canvas).naplets.last()
+        assertEquals("Notes", copy.title)
+        assertEquals(doc, copy.sourceId)
+        assertEquals("24 points down and right of the original", 34.0, copy.layout.x, 0.0)
+        assertEquals(44.0, copy.layout.y, 0.0)
+        assertEquals("above everything else", 3, copy.layout.z)
+
+        editor.reorder(canvas, scene(tower, canvas).naplets.first { it.title == "Plan" }, forward = true)
+        assertEquals("z + 1", 3, scene(tower, canvas).naplets.first { it.title == "Plan" }.layout.z)
+        editor.reorder(canvas, notes.copy(rowVersion = scene(tower, canvas).naplets.first { it.title == "Notes" }.rowVersion), forward = false)
+        assertEquals("never below 1", 1, scene(tower, canvas).naplets.first { it.title == "Notes" }.layout.z)
+    }
+
+    @Test fun drawingElementsAreCreatedEditedDuplicatedGroupedAndRemoved() = runBlocking {
+        val tower = FakeTower(w)
+        val editor = CanvasEditor(w, tower)
+        val canvas = tower.seedCanvas("Board")
+        fun elements() = scene(tower, canvas).elements
+
+        editor.createElement(canvas, NewCanvasElement.Text("  Hello  "), CanvasLayout(10.4, 20.6, 240.0, 120.0, 1))
+        val text = elements().single()
+        assertEquals("Hello", text.text)
+        assertEquals("rounded to whole points", 10.0, text.layout.x, 0.0)
+        assertEquals(CanvasEditError.Invalid("Text can't be empty."), refused<CanvasEditError> { editor.createElement(canvas, NewCanvasElement.Text("  "), CanvasLayout(0.0, 0.0, 10.0, 10.0, 1)) })
+        assertEquals(CanvasEditError.Invalid("That shape can't be drawn here."), refused<CanvasEditError> { editor.createElement(canvas, NewCanvasElement.Shape(CanvasElement.Kind.TEXT), CanvasLayout(0.0, 0.0, 10.0, 10.0, 1)) })
+
+        editor.createElement(canvas, NewCanvasElement.Shape(CanvasElement.Kind.ELLIPSE), CanvasLayout(300.0, 0.0, 2.0, 9000.0, 2))
+        val ellipse = elements().first { it.kind == CanvasElement.Kind.ELLIPSE }
+        assertEquals("Tower's size bounds", 8.0, ellipse.layout.width, 0.0)
+        assertEquals(4000.0, ellipse.layout.height, 0.0)
+
+        editor.createElement(canvas, NewCanvasElement.Arrow(listOf(400.0, 300.0), listOf(100.0, 100.0)), CanvasLayout(0.0, 0.0, 8.0, 8.0, 3))
+        val arrow = elements().first { it.kind == CanvasElement.Kind.ARROW }
+        assertEquals("the frame spans both ends", CanvasLayout(100.0, 100.0, 300.0, 200.0, 3), arrow.layout)
+        assertEquals(listOf(300.0, 200.0), arrow.start)
+        assertEquals(listOf(0.0, 0.0), arrow.end)
+        assertEquals("forward", JsonFields.string(arrow.savedData["direction"]))
+
+        // Data edits keep the keys they do not change; a stale version is refused.
+        editor.updateElement(canvas, arrow, data = mapOf("lineStyle" to JsonPrimitive("dashed")))
+        val dashed = elements().first { it.id == arrow.id }
+        assertEquals("dashed", dashed.lineStyle)
+        assertEquals(listOf(300.0, 200.0), dashed.start)
+        assertEquals(CanvasEditError.Conflict, refused<CanvasEditError> { editor.updateElement(canvas, arrow, layout = arrow.layout.copy(x = 0.0)) })
+        assertEquals(CanvasEditError.Invalid("Text can't be empty."), refused<CanvasEditError> { editor.updateElement(canvas, text, data = mapOf("text" to JsonPrimitive(" "))) })
+        editor.updateElement(canvas, text, layout = text.layout.copy(x = 50.0), data = mapOf("text" to JsonPrimitive("Hi"), "fontSize" to JsonPrimitive(28)))
+        val moved = elements().first { it.id == text.id }
+        assertEquals("Hi", moved.text); assertEquals(28.0, moved.fontSize, 0.0); assertEquals(50.0, moved.layout.x, 0.0)
+
+        editor.duplicateElement(canvas, moved, scene(tower, canvas).highestZ)
+        val copy = elements().single { it.text == "Hi" && it.id != moved.id }
+        assertEquals("Hi", copy.text); assertEquals(74.0, copy.layout.x, 0.0); assertEquals(4, copy.layout.z)
+
+        val members = listOf(canvasItemKey("element", moved.id), canvasItemKey("element", copy.id))
+        val groupId = editor.createElement(canvas, NewCanvasElement.Group(members), groupBounds(listOf(moved.layout, copy.layout)))
+        val group = elements().single { it.id == groupId }
+        assertTrue(group.isGroup)
+        assertEquals("padded by 32 and below its members", CanvasLayout(18.0, -11.0, 328.0, 208.0, 1), group.layout)
+        assertEquals(CanvasEditError.Invalid("Choose at least two items to group."), refused<CanvasEditError> { editor.createElement(canvas, NewCanvasElement.Group(members.take(1)), group.layout) })
+        val frameId = editor.createElement(canvas, NewCanvasElement.Frame, CanvasLayout(0.0, 0.0, 400.0, 300.0, 1))
+        assertTrue(elements().single { it.id == frameId }.let { it.kind == CanvasElement.Kind.FRAME && !it.isGroup })
+
+        editor.reorderElement(canvas, elements().first { it.id == copy.id }, forward = false)
+        assertEquals(3, elements().first { it.id == copy.id }.layout.z)
+        editor.deleteElement(canvas, elements().first { it.id == ellipse.id })
+        assertTrue(elements().none { it.id == ellipse.id })
+    }
+
+    @Test fun movingAnArrowEndKeepsTheOtherEndAndItsBend() {
+        val arrow = CanvasScene.parse(bytes("naplets" to emptyList<Any>(), "elements" to listOf(mapOf("id" to Ids.uuid(9, "0007"), "kind" to "arrow", "row_version" to 1,
+            "layout" to mapOf("x" to 100, "y" to 100, "width" to 200, "height" to 100, "z" to 2), "data" to mapOf("start" to listOf(0, 100), "end" to listOf(200, 0)))))).elements.single()
+        assertEquals(listOf(100.0, 200.0) to listOf(300.0, 100.0), arrow.endPoints())
+        val (layout, data) = arrow.movingEnd(start = false, to = listOf(50.0, 400.0))
+        assertEquals(CanvasLayout(50.0, 200.0, 50.0, 200.0, 2), layout)
+        assertEquals("[50,0]", data["start"].toString()); assertEquals("[0,200]", data["end"].toString())
+        val bent = arrow.copy(curve = listOf(100.0, -50.0))
+        val (bentLayout, bentData) = bent.movingEnd(start = true, to = listOf(100.0, 200.0))
+        assertEquals("the bend stays inside the frame", CanvasLayout(100.0, 50.0, 200.0, 150.0, 2), bentLayout)
+        assertEquals("[100,0]", bentData["curve"].toString())
     }
 
     @Test fun permissionAccessLossDeniedSourcesAndLockedItems() = runBlocking {

@@ -40,7 +40,7 @@ class ConnectionSettingsTest {
                 assertTrue(file.isFile)
                 val uri = androidx.core.content.FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.files", file)
                 val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
-                assertTrue(text.contains("build 4")); assertTrue(text.contains("UTC"))
+                assertTrue(text.contains("build ${BuildConfig.VERSION_CODE}")); assertTrue(text.contains("UTC"))
                 assertFalse(text.contains(model.connection!!.signerNpub))
                 assertFalse(text.contains(model.workspace!!.id))
             } finally { instrumentation.removeMonitor(chooser) }

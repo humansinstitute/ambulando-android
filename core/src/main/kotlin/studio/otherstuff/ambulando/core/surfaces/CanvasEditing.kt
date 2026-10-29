@@ -62,6 +62,8 @@ class CanvasEditor(private val workspaceId: String, private val backend: CanvasE
         const val MAX_WIDTH = 1200.0
         const val MAX_HEIGHT = 1000.0
         const val MAX_TITLE = 200
+        /** How far a duplicate is placed from its original, down and right (sol `duplicateSelected`). */
+        const val DUPLICATE_OFFSET = 24.0
 
         /** Clamps a frame to what Tower will store, rounded to whole points (halves away from zero). */
         fun clamped(layout: CanvasLayout): CanvasLayout = CanvasLayout(round(layout.x), round(layout.y),
@@ -90,7 +92,7 @@ class CanvasEditor(private val workspaceId: String, private val backend: CanvasE
         internal fun obj(vararg pairs: Pair<String, JsonElement>) = JsonObject(linkedMapOf(*pairs))
     }
 
-    private fun canvasPath(canvasId: String) = base(workspaceId) + "/canvases/" + uuid(canvasId)
+    internal fun canvasPath(canvasId: String) = base(workspaceId) + "/canvases/" + uuid(canvasId)
     private fun napletPath(canvasId: String, napletId: String) = canvasPath(canvasId) + "/naplets/" + uuid(napletId)
 
     // MARK: Canvases
@@ -152,6 +154,27 @@ class CanvasEditor(private val workspaceId: String, private val backend: CanvasE
         reloadSnapshot(canvasId)
     }
 
+    /**
+     * Adds a second naplet for the same source, offset from the original and above everything else (the web's
+     * Duplicate). The saved layout's other keys (such as a tree's view) are copied.
+     */
+    suspend fun duplicateNaplet(canvasId: String, naplet: CanvasNaplet, topZ: Int) {
+        val sourceId = naplet.sourceId ?: throw CanvasEditError.Invalid("Restricted items can't be duplicated.")
+        val l = naplet.layout
+        var layout = layoutObject(clamped(l.copy(x = l.x + DUPLICATE_OFFSET, y = l.y + DUPLICATE_OFFSET, z = topZ + 1)), naplet.savedLayout)
+        // A copied task tree is its own instance (sol `duplicateSelected`).
+        (layout["task_tree"] as? JsonObject)?.let { tree ->
+            layout = JsonObject(layout + ("task_tree" to JsonObject(tree + ("instance_id" to JsonPrimitive(java.util.UUID.randomUUID().toString())))))
+        }
+        addNaplet(canvasId, naplet.sourceType, sourceId, naplet.title, layout)
+    }
+
+    /** Moves a naplet one step up or down the stacking order (sol `orderSelected`: z ± 1 within Tower's bounds). */
+    suspend fun reorder(canvasId: String, naplet: CanvasNaplet, forward: Boolean) {
+        val z = (naplet.layout.z + if (forward) 1 else -1).coerceIn(1, 100_000)
+        if (z != naplet.layout.z) updateLayout(canvasId, naplet, naplet.layout.copy(z = z))
+    }
+
     /** Removes a naplet from the board. Its source (document, tasks, file…) is not touched. */
     suspend fun removeNaplet(canvasId: String, naplet: CanvasNaplet) {
         send("DELETE", napletPath(canvasId, naplet.id), obj("expected_row_version" to JsonPrimitive(naplet.rowVersion)), canvasId)
@@ -175,7 +198,7 @@ class CanvasEditor(private val workspaceId: String, private val backend: CanvasE
      * One signed write. A refusal is classified for the screen; a stale version or lost access also brings the stored
      * board up to date so the user sees what changed.
      */
-    private suspend fun send(method: String, path: String, body: JsonObject, canvasId: String?): JsonObject {
+    internal suspend fun send(method: String, path: String, body: JsonObject, canvasId: String?): JsonObject {
         try { backend.requireSigner() } catch (e: CancellationException) { throw e } catch (e: Exception) { throw CanvasEditError.Locked }
         val result = try {
             backend.exchange(method, path, JsonFields.encodeBytes(body))
@@ -212,7 +235,7 @@ class CanvasEditor(private val workspaceId: String, private val backend: CanvasE
         backend.refreshCanvases()
     }
 
-    private suspend fun reloadSnapshot(canvasId: String) {
+    internal suspend fun reloadSnapshot(canvasId: String) {
         try {
             backend.reloadSnapshot(canvasId)
         } catch (e: CancellationException) {
@@ -225,6 +248,19 @@ class CanvasEditor(private val workspaceId: String, private val backend: CanvasE
         backend.refreshCanvas(canvasId)
     }
 }
+
+/** The id of the record a naplet shows (null when the viewer has no access or the type is unknown). */
+val CanvasNaplet.sourceId: String?
+    get() = when (val c = content) {
+        is CanvasNaplet.Content.Document -> c.docId
+        is CanvasNaplet.Content.TaskList -> c.channelId
+        is CanvasNaplet.Content.TaskTree -> c.channelId
+        is CanvasNaplet.Content.ChatThread -> c.threadId
+        is CanvasNaplet.Content.Html -> c.fileId
+        is CanvasNaplet.Content.Excalidraw -> c.board.fileId
+        is CanvasNaplet.Content.Canvas -> c.canvasId
+        is CanvasNaplet.Content.Unknown, CanvasNaplet.Content.Denied -> null
+    }
 
 sealed class CanvasEditError(message: String) : Exception(message) {
     data object Locked : CanvasEditError("Unlock to edit canvases.")

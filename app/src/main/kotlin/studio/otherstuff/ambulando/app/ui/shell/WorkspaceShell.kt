@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Search
@@ -38,6 +39,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -57,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import studio.otherstuff.ambulando.app.ui.nav.PersonAvatar
 import studio.otherstuff.ambulando.app.ui.nav.WorkRoute
+import studio.otherstuff.ambulando.app.ui.nav.fullScreen
 import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.core.profiles.PersonDisplay
 
@@ -78,6 +82,12 @@ class SectionStacks {
     fun clearAll() = stacks.values.forEach { it.clear() }
 }
 
+/**
+ * Leaves the record on top of the current section's stack (a full-screen record draws its own exit). Null where a
+ * screen is not shown from a section stack.
+ */
+val LocalRouteExit = staticCompositionLocalOf<(() -> Unit)?> { null }
+
 /** What the shell's chrome shows, read by the app model. */
 data class ShellChromeState(
     val section: AppSection,
@@ -94,6 +104,8 @@ data class ShellChromeState(
     val sample: Boolean,
     val sidebarOpen: Boolean,
     val syncError: String? = null,
+    /** Unread notifications for the bell (null: none to show). */
+    val notificationBadge: String? = null,
 )
 
 interface ShellActions {
@@ -104,6 +116,7 @@ interface ShellActions {
     fun chooseHome()
     fun toggleViewLock()
     fun search()
+    fun notifications()
     fun showBrowser()
     fun settings()
     fun unlock()
@@ -124,6 +137,7 @@ fun WorkspaceShell(
     sectionRoot: @Composable (AppSection) -> Unit,
     routeScreen: @Composable (AppSection, WorkRoute) -> Unit,
     overlay: @Composable () -> Unit = {},
+    pinControl: @Composable (WorkRoute?) -> Unit = {},
 ) {
     val amb = Amb.colors
     val opened = remember { mutableStateListOf<AppSection>() }
@@ -134,7 +148,7 @@ fun WorkspaceShell(
                 content = {
                     opened.forEach { section ->
                         Box(Modifier.fillMaxSize().then(if (section != chrome.section) Modifier.clearAndSetSemantics { } else Modifier)) {
-                            SectionStackView(section, chrome, actions, stacks, sectionRoot, routeScreen)
+                            SectionStackView(section, chrome, actions, stacks, sectionRoot, routeScreen, pinControl)
                         }
                     }
                 },
@@ -146,7 +160,10 @@ fun WorkspaceShell(
                     if (index >= 0) placeables[index].place(0, 0)
                 }
             }
-            SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect)
+            // A full-screen record (a canvas) replaces the global section bar with its own bottom controls.
+            if (stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
+                SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect)
+            }
         }
         overlay()
         AnimatedVisibility(chrome.sidebarOpen, enter = fadeIn(), exit = fadeOut()) {
@@ -171,11 +188,12 @@ private fun SectionStackView(
     stacks: SectionStacks,
     sectionRoot: @Composable (AppSection) -> Unit,
     routeScreen: @Composable (AppSection, WorkRoute) -> Unit,
+    pinControl: @Composable (WorkRoute?) -> Unit,
 ) {
     val stack = stacks.of(section)
     val top = stack.lastOrNull()
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        TopBar(section, chrome, actions, canGoBack = top != null, onBack = { stacks.pop(section) })
+        if (top?.fullScreen != true) TopBar(section, chrome, actions, canGoBack = top != null, route = top, pinControl = pinControl, onBack = { stacks.pop(section) })
         if (top == null && section != AppSection.TOOLBOX) {
             ContextBar(
                 workspaceLabel = chrome.workspaceLabel, scopeName = chrome.scopeName, channelLabel = chrome.channelLabel, isHome = chrome.isHome,
@@ -185,7 +203,9 @@ private fun SectionStackView(
         }
         Banners(chrome, actions)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (top == null) sectionRoot(section) else androidx.compose.runtime.key(stack.size, top) { routeScreen(section, top) }
+            if (top == null) sectionRoot(section) else androidx.compose.runtime.key(stack.size, top) {
+                CompositionLocalProvider(LocalRouteExit provides { stacks.pop(section) }) { routeScreen(section, top) }
+            }
         }
     }
     // Back pops this section's stack while it is the active one.
@@ -193,7 +213,7 @@ private fun SectionStackView(
 }
 
 @Composable
-private fun TopBar(section: AppSection, chrome: ShellChromeState, actions: ShellActions, canGoBack: Boolean, onBack: () -> Unit) {
+private fun TopBar(section: AppSection, chrome: ShellChromeState, actions: ShellActions, canGoBack: Boolean, route: WorkRoute?, pinControl: @Composable (WorkRoute?) -> Unit, onBack: () -> Unit) {
     val amb = Amb.colors
     Column(Modifier.fillMaxWidth().background(amb.background)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -204,6 +224,14 @@ private fun TopBar(section: AppSection, chrome: ShellChromeState, actions: Shell
             if (chrome.syncing) Icon(Icons.Outlined.CloudSync, contentDescription = "Syncing", tint = amb.mutedForeground,
                 modifier = Modifier.padding(horizontal = 6.dp).size(18.dp).testTag("sync.indicator"))
             IconButton(onClick = actions::search, modifier = Modifier.testTag("search")) { Icon(Icons.Outlined.Search, "Search") }
+            Box(contentAlignment = Alignment.TopEnd) {
+                IconButton(onClick = actions::notifications, modifier = Modifier.semantics { contentDescription = chrome.notificationBadge?.let { "Notifications, $it unread" } ?: "Notifications" }.testTag("notifications.open")) {
+                    Icon(Icons.Outlined.Notifications, null)
+                }
+                chrome.notificationBadge?.let { badge -> Text(badge, style = MaterialTheme.typography.labelSmall, color = amb.primaryForeground,
+                    modifier = Modifier.padding(top = 6.dp, end = 4.dp).background(amb.primary, CircleShape).padding(horizontal = 4.dp).testTag("notifications.badge")) }
+            }
+            pinControl(route)
             Box(contentAlignment = Alignment.TopEnd) {
                 IconButton(onClick = actions::showBrowser, modifier = Modifier.semantics { contentDescription = if (chrome.browserTabs > 0) "Browser, ${chrome.browserTabs} tabs" else "Browser" }.testTag("browser.open")) {
                     Icon(Icons.Outlined.Public, null)

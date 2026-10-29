@@ -8,6 +8,7 @@ import studio.otherstuff.ambulando.core.transport.CommentRecord
 import studio.otherstuff.ambulando.core.transport.DocRecord
 import studio.otherstuff.ambulando.core.transport.FileRecord
 import studio.otherstuff.ambulando.core.transport.MessageRecord
+import studio.otherstuff.ambulando.core.transport.NotificationItem
 import studio.otherstuff.ambulando.core.transport.ReactionRecord
 import studio.otherstuff.ambulando.core.transport.TaskRecord
 import studio.otherstuff.ambulando.core.transport.ViewStateRecord
@@ -37,7 +38,13 @@ enum class WriteKind(val wire: String) {
     VIEW_MARK("view.mark"),
     FILE_UPLOAD("file.upload"),
     /** Pin or unpin a thread, task, document or channel for this viewer (`PUT /me/pins/:type/:id`). */
-    PIN_SET("pin.set");
+    PIN_SET("pin.set"),
+    /** Versioned relative move through the existing personal pin order contract. */
+    PIN_ORDER("pin.order"),
+    /** One notification's read/dismissed/archived flags, checked against the row version the user saw (`PATCH .../notifications/items/:id`). */
+    NOTIFICATION_STATE("notification.state"),
+    /** "Mark all read" and friends, bounded by the change sequence the user observed (`POST .../notifications/bulk`). */
+    NOTIFICATION_BULK("notification.bulk");
 
     companion object {
         fun from(wire: String?): WriteKind? = entries.firstOrNull { it.wire == wire }
@@ -108,6 +115,12 @@ data class WriteAcknowledgement(
     val files: List<FileRecord> = emptyList(),
     val docs: List<DocRecord> = emptyList(),
     val pins: List<PinRecord> = emptyList(),
+    /** Tower's current notification items (the accepted write, or the item a conflict was reported against). */
+    val notifications: List<NotificationItem> = emptyList(),
+    /** Notification items whose optimistic overlay ends without a replacement row (an acknowledgement replay). */
+    val notificationOverlayClears: List<String> = emptyList(),
+    /** Notification items whose overlay Tower accepted without a replacement row (a bulk change): the overlay becomes the server flags. */
+    val notificationOverlayCommits: List<String> = emptyList(),
 )
 
 private const val WRITE_COLUMNS = """id, connection_id, origin, signer_npub, workspace_id, app_npub, kind, target_id, group_key, payload, request, state,
@@ -183,6 +196,13 @@ suspend fun StoreWriter.acknowledgeWrite(id: String, workspaceId: String, ack: W
                 emit(StoreTable.PINS, workspaceId)
             }
         }
+        if (ack.notifications.isNotEmpty() || ack.notificationOverlayClears.isNotEmpty() || ack.notificationOverlayCommits.isNotEmpty()) {
+            db.textValue("SELECT connection_id FROM writes WHERE id = ?", id)?.let { connection ->
+                for (item in ack.notifications) adoptNotificationItem(connection, workspaceId, item)
+                for (itemId in ack.notificationOverlayClears) clearNotificationOverlayTx(connection, workspaceId, itemId)
+                for (itemId in ack.notificationOverlayCommits) commitNotificationOverlayTx(connection, workspaceId, itemId)
+            }
+        }
         for (reaction in ack.removedReactionIds) {
             db.run("DELETE FROM reactions WHERE workspace_id = ? AND id = ?", workspaceId, reaction)
             emit(StoreTable.REACTIONS, workspaceId)
@@ -199,6 +219,13 @@ suspend fun StoreWriter.acknowledgeWrite(id: String, workspaceId: String, ack: W
 suspend fun StoreWriter.discardWrite(id: String) = write {
     val workspace = db.writeWorkspace(id)
     db.run("DELETE FROM writes WHERE id = ? AND state <> ?", id, WriteState.SENDING.wire)
+    workspace?.let { emit(StoreTable.WRITES, it) }
+}
+
+/** Removes a write the sender itself is finishing (including one it marked `SENDING`): rejected or superseded work. */
+suspend fun StoreWriter.finishWrite(id: String) = write {
+    val workspace = db.writeWorkspace(id)
+    db.run("DELETE FROM writes WHERE id = ?", id)
     workspace?.let { emit(StoreTable.WRITES, it) }
 }
 

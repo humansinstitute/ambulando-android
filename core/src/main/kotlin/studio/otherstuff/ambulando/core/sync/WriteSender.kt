@@ -39,6 +39,7 @@ import studio.otherstuff.ambulando.core.store.freezeWrite
 import studio.otherstuff.ambulando.core.store.markWrite
 import studio.otherstuff.ambulando.core.store.message
 import studio.otherstuff.ambulando.core.store.retryWrite
+import studio.otherstuff.ambulando.core.store.upsertPins
 import studio.otherstuff.ambulando.core.store.updateWritePayload
 import studio.otherstuff.ambulando.core.store.writeItem
 import studio.otherstuff.ambulando.core.store.writes
@@ -114,6 +115,14 @@ class WriteSender(
     val transfers: ObjectTransfers? = null,
     private val random: () -> Double = { Math.random() },
 ) {
+    /**
+     * Feedback the user should see about a notification action that did not apply as tapped (the item had changed, or
+     * Tower rejected the request). Not a record: delivered once to whoever is collecting (the app shows it as a notice
+     * and re-reads the item).
+     */
+    internal val notificationNoticeFlow = kotlinx.coroutines.flow.MutableSharedFlow<NotificationNotice>(extraBufferCapacity = 16)
+    val notificationNotices: kotlinx.coroutines.flow.SharedFlow<NotificationNotice> get() = notificationNoticeFlow
+
     companion object {
         fun key(connection: ConnectionRecord): String = "writes:${connection.id}"
 
@@ -183,6 +192,12 @@ class WriteSender(
                 else -> null
             }
             val channel = item.string("channel_id")
+            if ((item.kind == WriteKind.NOTIFICATION_STATE || item.kind == WriteKind.NOTIFICATION_BULK) &&
+                store.reader.workspaces(connection.id).any { it.id == item.workspaceId && it.accessRemoved }) {
+                // Nothing to keep for the user here: the inbox of a workspace they lost is purged, so the intent is dropped.
+                dropNotificationWrite(item)
+                continue
+            }
             if (store.reader.workspaces(connection.id).any { it.id == item.workspaceId && it.accessRemoved } ||
                 channel?.let { store.reader.isChannelAccessRemoved(item.workspaceId, it) } == true ||
                 (table != null && item.targetId?.let { store.reader.isAccessRemoved(item.workspaceId, table, it) } == true)) {
@@ -218,8 +233,13 @@ class WriteSender(
                     nextRetry = minOf(nextRetry ?: Int.MAX_VALUE, item.attempts + 1)
                 }
                 is WriteOutcome.Permanent -> {
-                    store.writer.markWrite(item.id, WriteState.FAILED, outcome.status, outcome.code, outcome.message, countAttempt = true)
-                    blocked.add(item.groupKey)
+                    if (item.kind == WriteKind.NOTIFICATION_STATE || item.kind == WriteKind.NOTIFICATION_BULK) {
+                        // Nothing to retry or resolve by hand: the item shows Tower's state again and the intent is dropped.
+                        dropNotificationWrite(item)
+                    } else {
+                        store.writer.markWrite(item.id, WriteState.FAILED, outcome.status, outcome.code, outcome.message, countAttempt = true)
+                        blocked.add(item.groupKey)
+                    }
                 }
                 is WriteOutcome.Conflict -> {
                     store.writer.markWrite(item.id, WriteState.CONFLICT, 409, "conflict", outcome.message, countAttempt = true)
@@ -270,6 +290,8 @@ class WriteSender(
                 )
                 p.string("description")?.takeIf { it.isNotEmpty() }?.let { o["description"] = JsonPrimitive(it) }
                 p.string("assigned_to_npub")?.takeIf { it.isNotEmpty() }?.let { o["assigned_to_npub"] = JsonPrimitive(it) }
+                p.string("thread_id")?.let { o["thread_id"] = JsonPrimitive(TowerAPI.uuid(it)) }
+                (p["metadata"] as? JsonObject)?.let { o["metadata"] = it }
                 val r = send("POST", base + "/channels/" + TowerAPI.uuid(channel) + "/tasks", JsonObject(o))
                 if (ok(r)) record(r.body, "task", TaskRecord::parse)?.let { return WriteOutcome.Done(WriteAcknowledgement(tasks = listOf(it))) }
                 if (r.status == 409) return WriteOutcome.Permanent(409, "idempotency_conflict", "Tower already has a different task with this request.")
@@ -464,7 +486,24 @@ class WriteSender(
                 return classify(r.status, r.body, attempts, "mark this read")
             }
 
+            WriteKind.PIN_ORDER -> {
+                val r = send("POST", base + "/me/pin-order", JsonObject(p.filterKeys { it in setOf("resource_type", "resource_id", "expected_row_version", "before", "mutation_id") }))
+                if (ok(r)) {
+                    // Refresh the whole set: moving one pin can renumber all positions.
+                    val latest = api.personalPins(w, app)
+                    store.writer.upsertPins(item.connectionId, w, latest.pins, complete = true)
+                    return WriteOutcome.Done(WriteAcknowledgement())
+                }
+                if (r.status == 409) {
+                    val latest = api.personalPins(w, app)
+                    store.writer.upsertPins(item.connectionId, w, latest.pins, complete = true)
+                    return WriteOutcome.Conflict("Pin order changed on another device. Latest order kept; discard this move and move again.")
+                }
+                return classify(r.status, r.body, attempts, "reorder pins")
+            }
             WriteKind.PIN_SET -> return setPin(item, api, ::send)
+            WriteKind.NOTIFICATION_STATE -> return performNotificationState(item, api, attempts)
+            WriteKind.NOTIFICATION_BULK -> return performNotificationBulk(item, api, attempts)
 
             WriteKind.FILE_UPLOAD, WriteKind.DOC_CREATE -> {
                 val channel = p.string("channel_id")

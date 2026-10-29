@@ -39,8 +39,10 @@ class TextAttachmentFlowTest {
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
             compose.runOnIdle { val ch = model.channels.first { it.id == SampleIds.GENERAL }; model.selectContext(ch.scopeId, ch.id); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT }
-            compose.waitUntil(20_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Send").assertIsNotEnabled()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            // Each test owns its draft; another integration flow may have left ordinary text here.
+            compose.onNodeWithTag("chat.composer").performTextReplacement("")
+            compose.onNodeWithTag("chat.send").assertIsNotEnabled()
 
             // 2500 code points stay in the composer; 2501 become a file and leave the composer untouched.
             compose.onNodeWithTag("chat.composer").performTextReplacement("a".repeat(PastedTextPolicy.PASTE_THRESHOLD))
@@ -138,7 +140,9 @@ class TextAttachmentFlowTest {
             // Unsaved modal text can be kept locally without publishing, then explicitly discarded separately.
             compose.onNodeWithTag("text.edit").performClick()
             compose.onNodeWithTag("text.editor").performTextInput("KEEP ON DEVICE ")
+            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("text.save") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("text.close").performClick()
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("text.keepLocalClose").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("text.keepLocalClose").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("text.filename")).fetchSemanticsNodes().isEmpty() }
             val local = service.edits.forAttachment(c.id, c.origin, w.id, sent[0].id, attachment.storageObjectId)!!
