@@ -1,3 +1,10 @@
+# 0.2.5 — Android build 12
+
+Pinned cards return to a compact resource icon, single-line title and independent Unpin button. Hold the main card
+content to drag before or after another pin, including the end of the list. Insertion feedback appears only during a
+drag. Move actions remain available through accessibility and Alt+Up/Down/Home/End on the focused card, without
+permanent arrangement controls. Existing durable ordering, version checks and synchronization are unchanged.
+
 # 0.2.4 — Android build 11
 
 Tap blank composer padding to focus the editor without replacing a saved draft or intercepting attachment/send controls.

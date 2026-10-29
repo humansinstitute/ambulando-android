@@ -1,14 +1,20 @@
 package studio.otherstuff.ambulando.app.ui.deck
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.DragHandle
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Tag
+import androidx.compose.material.icons.outlined.TaskAlt
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
@@ -23,7 +29,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.*
-import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -96,65 +101,125 @@ import studio.otherstuff.ambulando.core.store.LocalStore
             preview = pins.visibleItems
         }
     }
+    val bounds = remember { mutableMapOf<String, Rect>() }
+    var dragging by remember { mutableStateOf<String?>(null) }
+    var beforeId by remember { mutableStateOf<String?>(null) }
+    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
     DeckCardFrame("Pinned items", "pinned") {
-        error?.let { item { DeckNote(it) } }
-        pins.orderWrite?.let { write -> item {
-            if (write.isPending) DeckNote("Saving pin order…") else {
-                DeckNote(write.lastError ?: "Pin order not saved")
-                TextButton(onClick = { intents.discardPinWrite(write.id) }) { Text("Discard move") }
-            }
+        error?.let { message -> item {
+            DeckNote(message)
+            TextButton(onClick = { error = null }) { Text("Dismiss") }
+        } }
+        pins.orderWrite?.takeIf { !it.isPending }?.let { write -> item {
+            DeckNote(write.lastError ?: "Pin order not saved")
+            TextButton(onClick = { intents.retryPinWrite(write.id) }) { Text("Retry move") }
+            TextButton(onClick = { intents.discardPinWrite(write.id) }) { Text("Discard move") }
         } }
         items(preview, key = { it.id }) { row ->
             var distance by remember(row.id) { mutableFloatStateOf(0f) }
-            var height by remember(row.id) { mutableIntStateOf(64) }
-            androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().graphicsLayer { translationY = distance }.onSizeChanged { height = it.height }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                androidx.compose.material3.Icon(Icons.Outlined.DragHandle, "Drag to reorder ${row.title ?: "pin"}",
-                    Modifier.padding(12.dp).size(24.dp).testTag("pin.drag.${row.pin.resourceId}")
+            val contentTop = remember(row.id) { floatArrayOf(0f) }
+            fun moveBy(offset: Int): Boolean {
+                val index = currentRows.indexOfFirst { it.id == row.id }
+                val destination = (index + offset).coerceIn(0, currentRows.lastIndex)
+                if (!enabled || index < 0 || index == destination) return false
+                val reordered = currentRows.toMutableList().apply { add(destination, removeAt(index)) }
+                save(row, reordered.getOrNull(destination + 1))
+                return true
+            }
+            val isDragging = dragging == row.id
+            val insertionAbove = dragging != null && beforeId == row.id
+            val insertionBelow = dragging != null && beforeId == null && row.id == preview.lastOrNull()?.id
+            androidx.compose.foundation.layout.Row(
+                Modifier.fillMaxWidth().testTag("pin.row.${row.pin.resourceId}")
+                    .onGloballyPositioned { bounds[row.id] = it.boundsInRoot() }
+                    .zIndex(if (isDragging) 1f else 0f)
+                    .drawWithContent {
+                        drawContent()
+                        val y = if (insertionAbove) 0f else size.height
+                        if (insertionAbove || insertionBelow) drawLine(amb.primary.copy(alpha = .65f), androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 2.dp.toPx())
+                    }
+                    .graphicsLayer { translationY = distance; alpha = if (isDragging) .8f else 1f }
+                    .deckRow(amb),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                androidx.compose.foundation.layout.Row(
+                    Modifier.weight(1f).testTag("pin.drag.${row.pin.resourceId}")
+                        .onGloballyPositioned { contentTop[0] = it.boundsInRoot().top }
                         .semantics {
-                            customActions = listOf(
-                                CustomAccessibilityAction("Move up") {
-                                    val index = currentRows.indexOfFirst { it.id == row.id }
-                                    if (enabled && index > 0) { save(row, currentRows[index - 1]); true } else false
-                                },
-                                CustomAccessibilityAction("Move down") {
-                                    val index = currentRows.indexOfFirst { it.id == row.id }
-                                    if (enabled && index >= 0 && index < currentRows.lastIndex) { save(row, currentRows.getOrNull(index + 2)); true } else false
-                                })
+                            customActions = if (!enabled) emptyList() else listOf(
+                                CustomAccessibilityAction("Move up") { moveBy(-1) },
+                                CustomAccessibilityAction("Move down") { moveBy(1) },
+                                CustomAccessibilityAction("Move to start") { moveBy(-currentRows.size) },
+                                CustomAccessibilityAction("Move to end") { moveBy(currentRows.size) },
+                            )
                         }
-                        .pointerInput(row.id, enabled) {
-                            if (enabled) detectDragGestures(
-                                onDragStart = { distance = 0f },
-                                onDragCancel = { preview = pins.visibleItems; distance = 0f },
-                                onDragEnd = {
-                                    val index = currentRows.indexOfFirst { it.id == row.id }
-                                    val destination = (index + (distance / height.coerceAtLeast(1)).roundToInt()).coerceIn(0, currentRows.lastIndex)
-                                    if (index >= 0 && destination != index) {
-                                        val reordered = currentRows.toMutableList().apply { add(destination, removeAt(index)) }
-                                        preview = reordered
-                                        save(row, reordered.getOrNull(destination + 1))
-                                    }
-                                    distance = 0f
-                                },
-                                onDrag = { change, drag -> change.consume(); distance += drag.y })
-                        })
-                androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
-                    ActivityRow(row.title ?: "Pinned record", row.pin.resourceType.wire, row.accessRemoved) {
-                        val id = row.pin.resourceId
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown || !event.isAltPressed) false
+                            else when (event.key) {
+                                Key.DirectionUp -> moveBy(-1)
+                                Key.DirectionDown -> moveBy(1)
+                                Key.MoveHome -> moveBy(-currentRows.size)
+                                Key.MoveEnd -> moveBy(currentRows.size)
+                                else -> false
+                            }
+                        }
+                        .pointerInput(row, enabled) {
+                            if (enabled) {
+                                var fingerY = 0f
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { start ->
+                                        distance = 0f
+                                        fingerY = contentTop[0] + start.y
+                                        dragging = row.id
+                                        beforeId = currentRows.getOrNull(currentRows.indexOfFirst { it.id == row.id } + 1)?.id
+                                    },
+                                    onDragCancel = { dragging = null; distance = 0f },
+                                    onDragEnd = {
+                                        val anchor = currentRows.firstOrNull { it.id == beforeId }
+                                        val reordered = currentRows.filter { it.id != row.id }.toMutableList()
+                                        val destination = anchor?.let { reordered.indexOf(it) } ?: reordered.size
+                                        reordered.add(destination, row)
+                                        if (reordered != currentRows) { preview = reordered; save(row, anchor) }
+                                        dragging = null
+                                        distance = 0f
+                                    },
+                                    onDrag = { change, drag ->
+                                        change.consume()
+                                        distance += drag.y
+                                        fingerY += drag.y
+                                        beforeId = currentRows.firstOrNull { candidate ->
+                                            candidate.id != row.id && bounds[candidate.id]?.let { fingerY < it.center.y } == true
+                                        }?.id
+                                    },
+                                )
+                            }
+                        }
+                        .clickable {
+                            val id = row.pin.resourceId
+                            when (row.pin.resourceType.wire) {
+                                "task" -> services.open(WorkRoute.Task(screen.workspaceId, id))
+                                "document" -> services.open(WorkRoute.Doc(screen.workspaceId, id))
+                                "thread" -> services.open(WorkRoute.Thread(screen.workspaceId, row.channelId, id))
+                                "channel" -> intents.openInChat(id)
+                            }
+                        }.padding(vertical = 6.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.Icon(
                         when (row.pin.resourceType.wire) {
-                            "task" -> services.open(WorkRoute.Task(screen.workspaceId, id))
-                            "document" -> services.open(WorkRoute.Doc(screen.workspaceId, id))
-                            "thread" -> services.open(WorkRoute.Thread(screen.workspaceId, row.channelId, id))
-                            "channel" -> intents.openInChat(id)
-                        }
+                            "task" -> Icons.Outlined.TaskAlt
+                            "document" -> Icons.Outlined.Description
+                            "channel" -> Icons.Outlined.Tag
+                            else -> Icons.Outlined.ChatBubbleOutline
+                        }, null, Modifier.size(20.dp), tint = amb.mutedForeground,
+                    )
+                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                        Text(row.title ?: "Pinned record", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        if (row.accessRemoved) AccessRemovedNote()
                     }
                 }
-                // Also works with a keyboard and switch access; drag never opens or unpins a row.
-                androidx.compose.material3.IconButton(enabled = enabled && preview.indexOf(row) > 0, onClick = { save(row, preview[preview.indexOf(row) - 1]) }, modifier = Modifier.testTag("pin.up.${row.pin.resourceId}")) {
-                    androidx.compose.material3.Icon(Icons.Outlined.KeyboardArrowUp, "Move up")
-                }
-                androidx.compose.material3.IconButton(enabled = enabled && preview.indexOf(row) < preview.lastIndex, onClick = { save(row, preview.getOrNull(preview.indexOf(row) + 2)) }, modifier = Modifier.testTag("pin.down.${row.pin.resourceId}")) {
-                    androidx.compose.material3.Icon(Icons.Outlined.KeyboardArrowDown, "Move down")
-                }
+                PinButton(row.pin.resourceType, row.pin.resourceId, row.title ?: "Pinned record", pins,
+                    onSetPinned = { intents.setPinned(it, row.pin.resourceType, row.pin.resourceId) })
             }
         }
     }
