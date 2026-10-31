@@ -83,6 +83,10 @@ private data class InboxData(val rows: List<NotificationRow>, val categories: Li
         override fun setFilter(filter: NotificationFilter) { filterState.value = filter }
         override fun setRead(row: NotificationRow, read: Boolean) { model.changeNotification(row.id, NotificationPatch(read = read), row.observed()) }
         override fun dismiss(row: NotificationRow) { model.changeNotification(row.id, NotificationPatch(dismissed = true), row.observed()) }
+        override fun undismiss(row: NotificationRow) {
+            // The version the person sees now (the dismissal's own acknowledgement has moved it), never the one before.
+            model.act { model.store.reader.notificationRow(c.id, w.id, row.id)?.let { model.changeNotification(row.id, NotificationPatch(dismissed = false), it.observed()) } }
+        }
         override fun setArchived(row: NotificationRow, archived: Boolean) { model.changeNotification(row.id, NotificationPatch(archived = archived), row.observed()) }
         override fun markAllRead() { model.bulkNotifications(NotificationBulkOp.MARK_READ, current?.maxSeq ?: 0, filter.category) }
         override fun refresh() { model.refreshNotifications(force = true) }

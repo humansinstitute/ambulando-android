@@ -68,6 +68,24 @@ class WorkStoreTests {
         }
     }
 
+    @Test fun linkedFromListsSavedPagesThatLinkHereAcrossChannelsAndSkipsCodeAndRemovedPages() = runBlocking {
+        StoreFixtures.store().use { store ->
+            val target = "0a1b2c3d-0000-4000-8000-0000000000aa"
+            suspend fun save(id: String, title: String, text: String) =
+                store.writer.saveDocBody(DocBodyRecord(W, id, "obj-$id", "sha-$id", "text/markdown", 1, text.toByteArray(), at), doc(id, title), text)
+            save(target, "Target", "# Target")
+            save("link-b", "Beta", "See [Target](wiki:$target)")
+            save("link-a", "Alpha", "Also [Target](wiki:${target.uppercase()})")
+            save("code", "Code", "`[Target](wiki:$target)`")
+            save("plain", "Plain", "nothing here")
+            save("gone", "Gone", "[Target](wiki:$target)")
+            store.writer.markAccessRemoved(W, AccessTarget.Doc("gone"))
+            val links = store.reader.docBacklinks(W, target)
+            assertEquals(listOf("link-a", "link-b"), links.docs.map { it.id })
+            assertEquals("every saved page that is still readable was checked, including the target itself", 5, links.checked)
+        }
+    }
+
     @Test fun documentBodiesAreCachedNewestFirstAndIndexed() = runBlocking {
         StoreFixtures.store().use { store ->
             val d = doc("d1", "Plan", rowVersion = 2)

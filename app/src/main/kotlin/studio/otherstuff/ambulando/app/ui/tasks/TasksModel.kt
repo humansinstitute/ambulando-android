@@ -31,6 +31,8 @@ import studio.otherstuff.ambulando.core.store.liveQuery
 import studio.otherstuff.ambulando.core.store.people
 import studio.otherstuff.ambulando.core.store.task
 import studio.otherstuff.ambulando.core.store.tasks
+import studio.otherstuff.ambulando.core.store.channelTasks
+import studio.otherstuff.ambulando.core.surfaces.TaskHierarchy
 import studio.otherstuff.ambulando.core.store.workspaceWrites
 import studio.otherstuff.ambulando.core.transport.CommentRecord
 import studio.otherstuff.ambulando.core.transport.MemberRecord
@@ -113,6 +115,24 @@ object TaskWrites {
 
     fun comment(taskId: String, body: String): WriteIntent = WriteIntent(WriteKind.TASK_COMMENT, taskId, buildJsonObject { put("body", body) })
 
+    /**
+     * A new child of [parent], always in the parent's channel: the durable create queue with the web's relationship
+     * metadata (`parent_task_id`, no predecessors), so pending and failed additions stay visible under the parent.
+     */
+    fun subtask(parent: TaskRecord, title: String): WriteIntent = WriteIntent(WriteKind.TASK_CREATE, null, buildJsonObject {
+        put("channel_id", parent.channelId)
+        put("title", title.trim())
+        put("state", TaskState.NEW.wire)
+        put("priority", TaskPriority.SAND.wire)
+        put("metadata", buildJsonObject {
+            put("parent_task_id", parent.id)
+            put("predecessor_task_ids", kotlinx.serialization.json.JsonArray(emptyList()))
+        })
+    })
+
+    /** The parent a queued create names (null for an ordinary create). */
+    fun pendingParent(item: WriteItem): String? = item.payloadObject.obj("metadata")?.string("parent_task_id")?.lowercase()
+
     /** The edit sheet's patch: only fields that changed; null when nothing did. */
     fun edit(row: TaskRow, title: String, description: String): WriteIntent? {
         val fields = LinkedHashMap<String, String>()
@@ -151,6 +171,30 @@ interface TasksIntents : WriteActions {
     /** True also when nothing changed (the sheet just closes). */
     fun edit(row: TaskRow, title: String, description: String): Boolean = TaskWrites.edit(row, title, description)?.let(::submit) ?: true
     fun comment(taskId: String, body: String): Boolean = submit(TaskWrites.comment(taskId, body))
+
+    /** The `@` lookahead for comment fields: people, agents and records matching [query] from this workspace's local store. */
+    suspend fun mentionCandidates(query: String): List<studio.otherstuff.ambulando.core.store.MentionCandidate> = emptyList()
+
+    /** Adds a child under [parent]; false when the title is blank. */
+    fun addSubtask(parent: TaskRow, title: String): Boolean = title.isNotBlank() && submit(TaskWrites.subtask(parent.task, title))
+
+    /**
+     * Reads this task's authorized relationships from Tower (children and dependents, paged) into the store, so the child
+     * list reflects other devices. Never throws; the result says how complete the stored list is.
+     */
+    suspend fun loadRelationships(taskId: String): RelationshipStatus = RelationshipStatus.OFFLINE
+}
+
+/** How much of a task's child list this device could confirm. */
+enum class RelationshipStatus {
+    /** Every page was read. */
+    COMPLETE,
+    /** The read stopped at its budget or Tower reported some tasks unavailable: the list may be missing children. */
+    PARTIAL,
+    /** Tower refused the task: the list cannot be confirmed and no hidden children are implied. */
+    RESTRICTED,
+    /** Not read (locked, offline or failed): only saved tasks are shown. */
+    OFFLINE,
 }
 
 @Immutable
@@ -203,6 +247,14 @@ class TasksScreenState(store: LocalStore, scope: ScreenScope, coroutineScope: Co
 @Immutable
 data class TaskDetailSnapshot(
     val row: TaskRow? = null,
+    /** The stored parent task, when this task names one that is saved on this device. */
+    val parent: TaskRecord? = null,
+    /** The parent id this task names (even when that task is not saved here). */
+    val parentId: String? = null,
+    /** Direct children by parent id for this task and its descendants, oldest first, with pending changes applied. */
+    val children: Map<String, List<TaskRow>> = emptyMap(),
+    /** Queued or failed subtask creations by parent id (they are not Tower records yet). */
+    val creatingChildren: Map<String, List<WriteItem>> = emptyMap(),
     val comments: List<CommentRecord> = emptyList(),
     val pendingComments: List<WriteItem> = emptyList(),
     val members: List<MemberRecord> = emptyList(),
@@ -221,8 +273,26 @@ class TaskDetailState(store: LocalStore, scope: ScreenScope, val taskId: String,
         (key.workspaceId == w && key.table in TABLES) || key.table == StoreTable.PROFILES || key.table == StoreTable.ACCESS
     }) {
         val pending = store.reader.workspaceWrites(scope.connectionId, w, taskId)
+        val record = store.reader.task(w, taskId)
+        val everyWrite = if (record != null) store.reader.workspaceWrites(scope.connectionId, w) else emptyList()
+        val index = record?.let { TaskHierarchy.index(store.reader.channelTasks(w, it.channelId)) } ?: emptyMap()
+        // Only this task's subtree (cycle-safe, bounded), each child with its own pending changes applied.
+        val subtree = LinkedHashMap<String, List<TaskRow>>()
+        val queue = ArrayDeque(listOf(taskId.lowercase()))
+        while (queue.isNotEmpty() && subtree.size < 200) {
+            val parent = queue.removeFirst()
+            if (parent in subtree) continue
+            val direct = index[parent].orEmpty()
+            subtree[parent] = direct.map { TaskRow.of(it, everyWrite) }
+            direct.forEach { queue.add(it.id.lowercase()) }
+        }
+        val parentId = record?.let { TaskHierarchy.parentId(it) }
         TaskDetailSnapshot(
-            row = store.reader.task(w, taskId)?.let { TaskRow.of(it, pending.filter { p -> p.kind != WriteKind.TASK_COMMENT }) },
+            parent = parentId?.let { store.reader.task(w, it) },
+            parentId = parentId,
+            children = subtree,
+            creatingChildren = everyWrite.filter { it.kind == WriteKind.TASK_CREATE }.groupBy { TaskWrites.pendingParent(it) ?: "" }.filterKeys { it in subtree },
+            row = record?.let { TaskRow.of(it, pending.filter { p -> p.kind != WriteKind.TASK_COMMENT }) },
             comments = store.reader.comments(w, CommentRecord.Parent.TASK, taskId),
             pendingComments = pending.filter { it.kind == WriteKind.TASK_COMMENT },
             members = store.reader.directoryMembers(w),

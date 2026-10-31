@@ -7,6 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import studio.otherstuff.ambulando.app.background.BackgroundScheduler
 import studio.otherstuff.ambulando.app.ui.theme.AppearancePreference
@@ -38,6 +39,15 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
         NativeNotificationSettings(model)
         Row { Text("Show Agents", Modifier.weight(1f)); Switch(model.showAgents, { model.showAgents = it; model.act { model.store.writer.setState("settings.agents", it.toString()) } }) }
         Row { Text("Show Context", Modifier.weight(1f)); Switch(model.showContext, { model.showContext = it; model.act { model.store.writer.setState("settings.context", it.toString()) } }) }
+        Text("Documents", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Open documents in", Modifier.weight(1f))
+            listOf(false to "View", true to "Edit").forEach { (edit, label) ->
+                FilterChip(model.documentOpensInEdit == edit, { model.documentOpensInEdit = edit; model.act { model.store.writer.setState("settings.documentOpening", if (edit) "edit" else "view") } },
+                    { Text(label) }, Modifier.padding(start = 8.dp).testTag("settings.documentOpening.$label"))
+            }
+        }
+        Text("Choose how existing documents open. You can still switch between View and Edit inside a document.", style = MaterialTheme.typography.bodySmall)
         AppearancePreference.entries.forEach { value -> TextButton(onClick = { model.appearance = value; model.act { model.store.writer.setState("settings.appearance", value.name) } }) { Text(value.name) } }
         Row {
             Text("Background reads", Modifier.weight(1f))

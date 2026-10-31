@@ -11,8 +11,10 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import studio.otherstuff.ambulando.core.chat.BodySegment
 import studio.otherstuff.ambulando.core.chat.ComposerUploadError
 import studio.otherstuff.ambulando.core.chat.ComposerUploadException
+import studio.otherstuff.ambulando.core.chat.MentionCodec
 import studio.otherstuff.ambulando.core.chat.OutboxSender
 import studio.otherstuff.ambulando.core.chat.UploadToken
 import studio.otherstuff.ambulando.core.crypto.IdentityError
@@ -368,7 +370,12 @@ class WriteSender(
                     p.obj("metadata")?.forEach { (k, v) -> metadata.putIfAbsent(k, v) }
                     metadata["comment_status"] = JsonPrimitive("open")
                 }
-                val o = linkedMapOf<String, JsonElement>("body" to JsonPrimitive(text), "metadata" to JsonObject(metadata))
+                // Actor mentions are derived again from the durable body (never from a separate list), so a stale or removed
+                // entry cannot route invisibly; plain `@Name` and record-reference tokens create none.
+                val mentions = JsonArray(MentionCodec.segments(text).mapNotNull { (it as? BodySegment.MentionSegment)?.mention }
+                    .distinctBy { it.npub }.map { m -> JsonObject(m.requestObject.mapValues { (_, v) -> JsonPrimitive(v) }) })
+                metadata["mentions"] = mentions
+                val o = linkedMapOf<String, JsonElement>("body" to JsonPrimitive(text), "mentions" to mentions, "metadata" to JsonObject(metadata))
                 p.string("parent_comment_id")?.let { o["parent_comment_id"] = JsonPrimitive(it) }
                 val r = send("POST", base + (if (isTask) "/tasks/" else "/docs/") + TowerAPI.uuid(parent) + "/comments", JsonObject(o))
                 if (ok(r)) record(r.body, "comment") { CommentRecord.parse(it, parentType) }?.let { return WriteOutcome.Done(WriteAcknowledgement(comments = listOf(it))) }
@@ -439,7 +446,8 @@ class WriteSender(
 
             WriteKind.REACTION_ADD -> {
                 val target = item.targetId
-                val emoji = p.string("emoji")
+                // Writes queued by builds that sent the emoji character are sent by Tower's name, which is what Tower accepts.
+                val emoji = p.string("emoji")?.let { studio.otherstuff.ambulando.core.transport.ReactionEmoji.fromStored(it)?.wire ?: it }
                 val type = p.string("target_type")
                 if (target == null || emoji == null || type == null) return permanent("Missing reaction.")
                 if (ambiguous) {

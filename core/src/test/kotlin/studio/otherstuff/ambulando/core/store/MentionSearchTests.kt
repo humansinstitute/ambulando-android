@@ -104,4 +104,25 @@ class MentionSearchTests {
             assertEquals(4, store.reader.mentionCandidates(W, "topic 42").count { it.mention.type == MentionType.TASK })
         }
     }
+
+    @Test fun bareAtListsWhomThePersonTaggedMostRecentlyFirst() = runBlocking {
+        StoreFixtures.store().use { store ->
+            seed(store)
+            val me = "npub1viewer"
+            store.writer.upsertMessages(listOf(
+                message("r1", "ping @[Alex Rivera](mention:person:${TestKeys.NPUB})", "2026-10-03T00:00:00.000Z", sender = me),
+                message("r2", "ask @[Old Label](mention:agent:$agentNpub) and @[Gone](mention:person:npub1gone)", "2026-10-04T00:00:00.000Z", sender = me),
+                message("r3", "someone else tagged @[Alex Rivera](mention:person:${TestKeys.NPUB})", "2026-10-05T00:00:00.000Z", sender = "npub1other"),
+            ))
+            val bare = store.reader.mentionCandidates(W, "", viewerNpub = me)
+            // Newest message first; each identity once, under its current directory name; people no longer listed are not offered.
+            assertEquals(listOf(agentNpub, TestKeys.NPUB), bare.take(2).map { it.mention.npub })
+            assertEquals("Roadie", bare.first().mention.label)
+            assertTrue(bare.none { it.mention.npub == "npub1gone" })
+            assertEquals("each identity appears once", bare.size, bare.distinctBy { it.mention.type to it.mention.npub }.size)
+            // A typed query is unchanged, and without a viewer the bare list is the usual default.
+            assertEquals(listOf(MentionType.PERSON), store.reader.mentionCandidates(W, "alex", viewerNpub = me).map { it.mention.type })
+            assertEquals(store.reader.mentionCandidates(W, ""), store.reader.mentionCandidates(W, "", viewerNpub = "npub1nobody"))
+        }
+    }
 }

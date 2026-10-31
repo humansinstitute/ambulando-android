@@ -31,20 +31,52 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     val menu by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) {
         model.store.reader.threadMenu(w.id, threadId) to model.store.reader.thread(w.id, threadId)?.title
     } }.collectAsState(null)
+    val record by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.thread(w.id, threadId) } }.collectAsState(null)
+    var renaming by remember(threadId) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().testTag("thread.header"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         Text(menu?.second?.let(MentionCodec::plain) ?: "Conversation", maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.weight(1f).padding(start = 12.dp))
         MessageMenu(model, menu?.first?.root, menu?.first?.rootMessageId, menu?.first?.reference, menu?.first?.autopilotSource,
-            enabled, "thread", "Thread menu", conversationThreadId = threadId)
+            enabled, "thread", "Thread menu", conversationThreadId = threadId, onRename = if (record != null) ({ renaming = true }) else null)
         if (exit != null) IconButton(onClick = exit, modifier = Modifier.testTag("thread.close")) { Icon(Icons.Outlined.Close, "Close thread") }
     }
+    if (renaming) record?.let { RenameThreadDialog(model, it) { renaming = false } }
+}
+
+/**
+ * Renames the conversation online (Tower decides who may). The draft is kept in the field on any failure, with the
+ * reason beside it; success stores Tower's answer so the header and lists follow.
+ */
+@Composable private fun RenameThreadDialog(model: AppModel, thread: studio.otherstuff.ambulando.core.transport.ThreadRecord, dismiss: () -> Unit) {
+    val w = model.workspace ?: return; val c = model.connection ?: return
+    val services = LocalAppServices.current
+    // Fixed when the editor opens: a rename elsewhere is detected against this title and version, never overwritten.
+    val originalTitle = remember(thread.id) { thread.title }
+    val originalVersion = remember(thread.id) { thread.rowVersion }
+    var title by remember(thread.id) { mutableStateOf(thread.title?.let(MentionCodec::plain).orEmpty()) }
+    var working by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(onDismissRequest = { if (!working) dismiss() }, title = { Text("Rename thread") }, text = {
+        Column {
+            OutlinedTextField(title, { title = it; error = null }, singleLine = true, label = { Text("Title") }, modifier = Modifier.testTag("thread.rename.field"))
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("thread.rename.error")) }
+        }
+    }, confirmButton = { TextButton(enabled = !working && title.isNotBlank() && services.unlocked, modifier = Modifier.testTag("thread.rename.save"), onClick = {
+        working = true; error = null
+        model.act {
+            try {
+                model.sync.renameThread(c, w, thread.id, title, originalVersion, originalTitle)
+                dismiss()
+            } catch (e: ThreadRenameException) { error = e.message } finally { working = false }
+        }
+    }) { Text(if (working) "Saving…" else "Save") } }, dismissButton = { TextButton(enabled = !working, onClick = dismiss) { Text("Cancel") } })
 }
 
 /** Shared header/message menu; all mutation controls also respect local access loss and author identity. */
 @Composable internal fun MessageMenu(
     model: AppModel, message: MessageRecord?, rootId: String?, reference: String?, autopilot: MessageRecord?,
-    enabled: Boolean, prefix: String, label: String, conversationThreadId: String? = message?.threadId,
+    enabled: Boolean, prefix: String, label: String, conversationThreadId: String? = message?.threadId, onRename: (() -> Unit)? = null,
 ) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
@@ -59,7 +91,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     val writable = enabled && services.unlocked && message?.accessRemoved != true
     fun copy(text: String) { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(label, text)) }
     Box {
-        IconButton(onClick = { expanded = true }, enabled = message != null || reference != null || autopilot != null,
+        IconButton(onClick = { expanded = true }, enabled = message != null || reference != null || autopilot != null || onRename != null,
             modifier = Modifier.testTag("$prefix.actions")) { Icon(Icons.Outlined.MoreHoriz, label) }
         DropdownMenu(expanded, { expanded = false }) {
             if (message != null && !message.deleted && rootId != null) DropdownMenuItem({ Text("Get it done") }, enabled = writable,
@@ -88,6 +120,8 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
             }, modifier = Modifier.testTag("$prefix.menu.autopilot"))
             if (reference != null) DropdownMenuItem({ Text("FD Ref") }, onClick = { expanded = false; copy(reference) },
                 modifier = Modifier.testTag("$prefix.menu.ref"))
+            if (onRename != null) DropdownMenuItem({ Text("Rename thread") }, enabled = writable, onClick = { expanded = false; onRename() },
+                modifier = Modifier.testTag("$prefix.menu.rename"))
             if (message != null && !message.deleted && message.senderNpub == c.signerNpub) DropdownMenuItem({ Text("Delete message") }, enabled = writable,
                 onClick = { expanded = false; deleting = true }, modifier = Modifier.testTag("$prefix.menu.delete"))
         }

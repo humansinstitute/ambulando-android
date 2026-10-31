@@ -1,5 +1,7 @@
 package studio.otherstuff.ambulando.app
 
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -46,7 +48,27 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val browser = remember(model) { model.browser }
     val avatars = remember(model) { studio.otherstuff.ambulando.app.media.AvatarStore(java.io.File(androidContext.cacheDir, if (model.environment.isSample) "SampleAvatars" else "AmbulandoAvatars"), if (model.environment.isSample) studio.otherstuff.ambulando.app.media.AvatarTransport { _, _ -> throw java.io.IOException("Sample avatars are offline") } else studio.otherstuff.ambulando.app.media.OkHttpAvatarTransport()) }
-    val stacks = remember(model.workspace?.id) { SectionStacks() }
+    // Navigating to a document makes it eligible to open in the editor again when Edit is the default opening mode.
+    val stacks = remember(model.workspace?.id) { SectionStacks().also { it.onNavigate = { route -> if (route is WorkRoute.Doc) model.autoEditedDoc = null } } }
+    // Sections and open records survive the process ending: saved per connection and workspace, restored once at launch.
+    val navKey = model.workspace?.let { "nav-stacks:${model.connection?.id}:${it.id}" }
+    var navRestored by remember(navKey) { mutableStateOf(false) }
+    LaunchedEffect(navKey) {
+        val workspace = model.workspace
+        if (navKey != null && workspace != null && model.restoreNavigation) {
+            studio.otherstuff.ambulando.app.ui.nav.RouteState.decode(model.store.reader.state(navKey), workspace.id)?.let { saved ->
+                if (stacks.snapshot().values.all { it.isEmpty() }) {
+                    stacks.restore(saved.stacks)
+                    AppSection.entries.firstOrNull { it.key == saved.section }?.takeIf { model.section == AppSection.DECK }?.let { model.section = it }
+                }
+            }
+        }
+        navRestored = true
+    }
+    LaunchedEffect(navKey, navRestored) {
+        if (navKey != null && navRestored) androidx.compose.runtime.snapshotFlow { studio.otherstuff.ambulando.app.ui.nav.RouteState.encode(model.section.key, stacks.snapshot()) }
+            .distinctUntilChanged().collectLatest { encoded -> kotlinx.coroutines.delay(400); model.store.writer.setState(navKey, encoded) }
+    }
     var sidebar by remember { mutableStateOf(false) }
     var settings by remember { mutableStateOf(false) }
     var management by remember { mutableStateOf(false) }
@@ -178,6 +200,19 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             override fun submit(intent: WriteIntent) = model.submit(intent)
             override fun refresh(force: Boolean) { model.refresh() }
             override fun openTask(taskId: String, force: Boolean, markViewed: Boolean) { if (w != null) model.act { model.sync.refreshTask(c, w, taskId, force = force); if (markViewed) model.markViewed(studio.otherstuff.ambulando.core.transport.ViewStateRecord.ResourceType.TASK, taskId) } }
+            override suspend fun loadRelationships(taskId: String): studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus {
+                if (w == null || w.accessRemoved || model.identityState !is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked) return studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.OFFLINE
+                return try {
+                    val loaded = model.engine.perform("task-relationships:${w.id}:$taskId", studio.otherstuff.ambulando.core.sync.SyncPriority.VISIBLE) {
+                        studio.otherstuff.ambulando.core.surfaces.TaskTreeWrites(model.store, model.identity, model.transport).load(c, w, taskId)
+                    }
+                    if (loaded.partial || loaded.unavailable) studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.PARTIAL
+                    else studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.COMPLETE
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (e: studio.otherstuff.ambulando.core.surfaces.TaskTreeError.Unavailable) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.RESTRICTED
+                } catch (e: Exception) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.OFFLINE }
+            }
+            override suspend fun mentionCandidates(query: String) = if (w == null) emptyList() else model.store.reader.mentionCandidates(w.id, query, viewerNpub = c.signerNpub)
             override fun retryWrite(item: WriteItem) { model.act { model.writes.retry(item.id, c) } }
             override fun applyMine(item: WriteItem) { model.act { model.writes.retry(item.id, c, true) } }
             override fun discardWrite(item: WriteItem) { model.act { model.store.writer.discardWrite(item.id) } }

@@ -1,3 +1,29 @@
+# 0.3.0 — Android build 13
+
+Brings Android up to the current iPhone and Mac behaviour for chat, tasks, documents, search and management.
+
+Fixes. Reactions are now sent by Tower's names (thumbs up, heart, …) and the picker offers the web's seven; earlier builds
+sent the emoji character, which Tower does not accept. Editing a sent message keeps its @mentions (it used to drop them)
+and offers the same @ lookahead as the composer.
+
+Chat. Rename a conversation from its menu (a rename made elsewhere is reported, never overwritten). A bare @ lists the
+people and agents you tagged most recently first.
+
+Tasks. A task shows its parent, its subtasks with status, descendants that expand in place, whether the list is complete,
+and Add subtask. Task and document comments offer @ and send structured mentions.
+
+Documents. Settings can open documents in Edit by default. Comments show author photos, replies and the quoted selection.
+Comment on selected text from the editor. Links between documents open the page; Linked from lists the saved pages that
+link to a document. Move a document to another channel after reading what changes.
+
+Search groups results by kind, shows where each lives, and opens files. Notifications offer Undo after Dismiss.
+Management controls your role cannot use are hidden, and People and access shows members, groups and a channel's grants
+(read only). The section and records you had open return after Android ends the app, and the sidebar refreshes every
+minute while the app is in front.
+
+Not in this build: several workspaces at once, workspace/group/grant administration, [[ create-and-link, taking over
+another editor's document lease, three-way draft merge and Android push. See docs/parity-matrix.md.
+
 # 0.2.5 — Android build 12
 
 Pinned cards return to a compact resource icon, single-line title and independent Unpin button. Hold the main card

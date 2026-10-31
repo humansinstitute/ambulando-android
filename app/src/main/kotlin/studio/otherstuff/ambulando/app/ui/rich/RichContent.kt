@@ -61,6 +61,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.AmbColors
+import studio.otherstuff.ambulando.core.docs.WikiLinks
 import studio.otherstuff.ambulando.core.docs.InlineRun
 import studio.otherstuff.ambulando.core.docs.RenderBlock
 
@@ -324,6 +325,12 @@ object InlineText {
                     if (kind != null && id != null) {
                         withLink(LinkAnnotation.Clickable("mention:$kind:$id", TextLinkStyles(style)) { actions.openMention(kind, id) }) { append(run.text) }
                     } else withStyle(style) { append(run.text) }
+                }
+                // A stable document link opens that page by id; Tower decides whether this person may read it.
+                WikiLinks.targetId(run.link) != null -> {
+                    val target = WikiLinks.targetId(run.link)!!
+                    style = style.merge(SpanStyle(color = amb.primary, background = amb.accent, textDecoration = TextDecoration.Underline))
+                    withLink(LinkAnnotation.Clickable("wiki:$target", TextLinkStyles(style)) { actions.openMention("document", target) }) { append(run.text) }
                 }
                 run.link != null && (RichLinks.isSafeWeb(run.link!!) || RichLinks.storageObjectId(run.link!!) != null) -> {
                     val url = run.link!!

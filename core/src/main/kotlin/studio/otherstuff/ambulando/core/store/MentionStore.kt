@@ -1,5 +1,6 @@
 package studio.otherstuff.ambulando.core.store
 
+import studio.otherstuff.ambulando.core.chat.BodySegment
 import studio.otherstuff.ambulando.core.chat.Mention
 import studio.otherstuff.ambulando.core.chat.MentionCodec
 import studio.otherstuff.ambulando.core.chat.MentionType
@@ -20,6 +21,8 @@ object MentionSearch {
 
     /** Results for a bare `@` (the web's defaults plus recent threads). */
     const val DEFAULT_LIMIT = 10
+    /** Most recently tagged people and agents a bare `@` lists first. */
+    const val RECENT_LIMIT = 7
 
     private val prefixes = mapOf(
         "person" to MentionType.PERSON, "agent" to MentionType.AGENT, "doc" to MentionType.DOC, "document" to MentionType.DOC,
@@ -58,7 +61,7 @@ object MentionSearch {
  * profiles), used when a member has no workspace display name. Records no longer available to this identity, deleted
  * threads and archived documents are never offered.
  */
-suspend fun StoreReader.mentionCandidates(workspaceId: String, query: String, names: Map<String, String> = emptyMap()): List<MentionCandidate> = read {
+suspend fun StoreReader.mentionCandidates(workspaceId: String, query: String, names: Map<String, String> = emptyMap(), viewerNpub: String? = null): List<MentionCandidate> = read {
     val (only, needle) = MentionSearch.parse(query)
     val bare = needle.isEmpty() && only == null
     fun wants(type: MentionType) = only == null || only == type || (only == MentionType.PERSON && type == MentionType.AGENT)
@@ -68,10 +71,10 @@ suspend fun StoreReader.mentionCandidates(workspaceId: String, query: String, na
         else -> normal
     }
     val out = mutableListOf<MentionCandidate>()
+    val actors = LinkedHashMap<String, MentionCandidate>()
 
     // People and agents: workspace members plus the workspace's agents (agents can be addressed in every channel).
     if (wants(MentionType.PERSON) || wants(MentionType.AGENT)) {
-        val actors = LinkedHashMap<String, MentionCandidate>()
         for (member in memberRows(workspaceId)) {
             val type = if (member.isAgent) MentionType.AGENT else MentionType.PERSON
             val label = member.displayName?.takeIf { it.isNotBlank() } ?: names[member.npub] ?: member.label
@@ -125,6 +128,22 @@ suspend fun StoreReader.mentionCandidates(workspaceId: String, query: String, na
            ORDER BY instr(lower(name), ?2) <> 1, name COLLATE NOCASE LIMIT ?3""",
         workspaceId, needle, cap(MentionType.SCOPE, 2, 0),
     ) { MentionCandidate(Mention(MentionType.SCOPE, it.text(0)!!, it.text(1)!!), it.text(2)?.replaceFirstChar { c -> c.uppercase() } ?: "Scope") }
+
+    if (bare && viewerNpub != null) {
+        // A bare `@` lists whom this person tagged most recently first (newest message first), each once, under their current
+        // name and only while the directory still lists them; the usual defaults follow.
+        val recent = LinkedHashMap<String, MentionCandidate>()
+        for (body in query("SELECT body FROM messages WHERE workspace_id = ? AND sender_npub = ? AND deleted = 0 AND body LIKE '%(mention:%' ORDER BY created_at DESC, id DESC LIMIT 300",
+            workspaceId, viewerNpub) { it.text(0) ?: "" }) {
+            for (segment in MentionCodec.segments(body)) {
+                val mention = (segment as? BodySegment.MentionSegment)?.mention ?: continue
+                actors[mention.npub]?.let { recent.putIfAbsent(mention.npub, it) }
+            }
+            if (recent.size >= MentionSearch.RECENT_LIMIT) break
+        }
+        val rest = out.filter { c -> recent.values.none { it.mention.npub == c.mention.npub && it.mention.type == c.mention.type } }
+        return@read (recent.values.take(MentionSearch.RECENT_LIMIT) + rest).take(MentionSearch.DEFAULT_LIMIT + MentionSearch.RECENT_LIMIT)
+    }
 
     out.take(if (bare) MentionSearch.DEFAULT_LIMIT else MentionSearch.LIMIT)
 }

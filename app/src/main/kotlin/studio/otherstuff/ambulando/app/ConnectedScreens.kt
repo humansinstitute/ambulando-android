@@ -66,7 +66,7 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     val activeMention = field.value.selection.takeIf { it.collapsed }?.let { MentionCodec.activeQuery(field.value.text, it.end) }
         ?.takeIf { active -> mentions.none { field.value.text.startsWith(it.visible, active.start) } }
     val mentionResults by produceState<List<studio.otherstuff.ambulando.core.store.MentionCandidate>?>(null, w.id, activeMention?.query) {
-        value = activeMention?.let { model.store.reader.mentionCandidates(w.id, it.query) }
+        value = activeMention?.let { model.store.reader.mentionCandidates(w.id, it.query, viewerNpub = c.signerNpub) }
     }
     val uploadRows by model.uploads.items.collectAsState()
     val uploadHost = remember(target) { object : studio.otherstuff.ambulando.core.chat.UploadTokenHost {
@@ -246,9 +246,18 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
         val record by remember(w.id, docId) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.doc(w.id, docId) } }.collectAsState(null)
         val body by remember(w.id, docId) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.docBody(w.id, docId) } }.collectAsState(null)
         LaunchedEffect(w.id, docId) { model.sync.refreshDoc(model.connection!!, w, docId); model.markViewed(ViewStateRecord.ResourceType.DOCUMENT, docId) }
+        // Edit as the default opening mode: start editing once per visit when the document can be edited.
+        val editable = body != null && record?.accessRemoved == false && !w.accessRemoved
+        LaunchedEffect(docId, editable, model.documentOpensInEdit) {
+            if (model.documentOpensInEdit && editable && model.autoEditedDoc != docId) { model.autoEditedDoc = docId; model.editorDoc = docId }
+        }
         LazyColumn(contentPadding = PaddingValues(16.dp)) { item {
-            TextButton(onClick = { model.editorDoc = docId }, enabled = body != null && record?.accessRemoved == false && !w.accessRemoved) { Text("Edit") }
+            Row {
+                TextButton(onClick = { model.editorDoc = docId }, enabled = body != null && record?.accessRemoved == false && !w.accessRemoved) { Text("Edit") }
+                record?.let { MoveDocument(model, it, !it.accessRemoved && !w.accessRemoved) }
+            }
             body?.let { RichDocument(model, it, record?.accessRemoved == false) } ?: Text("Document body not cached yet")
+            LinkedFrom(model, docId)
             DocumentComments(model, docId, record?.accessRemoved == false && !w.accessRemoved)
         } }
     } else {
@@ -369,4 +378,24 @@ internal fun uploadPhase(phase: ComposerUpload.Phase): String = when (phase) {
     ComposerUpload.Phase.Uploading -> "Uploading"
     is ComposerUpload.Phase.Failed -> "Failed: ${phase.message}"
     is ComposerUpload.Phase.Done -> "Uploaded"
+}
+
+/** "Linked from": saved pages that link to this document, with how many saved pages could be checked on this device. */
+@Composable internal fun LinkedFrom(model: AppModel, docId: String) {
+    val w = model.workspace ?: return
+    val services = LocalAppServices.current
+    val links by remember(w.id, docId) { model.store.liveQuery({ it.workspaceId == w.id && (it.table == StoreTable.DOCS || it.table == StoreTable.DOC_BODIES) }) { model.store.reader.docBacklinks(w.id, docId) } }.collectAsState(null)
+    val found = links ?: return
+    Column(Modifier.padding(vertical = 8.dp).testTag("doc.linkedfrom")) {
+        Text("Linked from " + found.docs.size, style = MaterialTheme.typography.titleMedium)
+        found.docs.forEach { page ->
+            val place = model.channels.firstOrNull { it.id == page.channelId }?.let { channel ->
+                listOfNotNull(model.scopes.firstOrNull { it.id == channel.scopeId }?.name, "#" + channel.name).joinToString(" · ")
+            }
+            TextButton(onClick = { services.open(WorkRoute.Doc(w.id, page.id)) }, modifier = Modifier.testTag("doc.linkedfrom.${page.id}")) {
+                Column { Text(page.title); place?.let { Text(it, style = MaterialTheme.typography.labelSmall) } }
+            }
+        }
+        Text("Checked ${found.checked} saved page" + (if (found.checked == 1) "" else "s") + " on this device.", style = MaterialTheme.typography.labelSmall)
+    }
 }

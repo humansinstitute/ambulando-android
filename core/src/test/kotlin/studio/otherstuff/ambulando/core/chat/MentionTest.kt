@@ -63,4 +63,17 @@ class MentionTest {
         assertNull(MentionCodec.activeQuery("hello"))
         assertEquals("hello @Member Alpha ", MentionCodec.complete("hello @me", member))
     }
+
+    @Test fun editingASentBodyKeepsItsStructuredMentions() {
+        val sent = "Hi @[Member Alpha](mention:person:$vectorNpub), see @[Plan](mention:document:abc) and @[Agent](mention:agent:$agentNpub)"
+        val decoded = MentionCodec.decode(sent)
+        assertEquals(listOf(member, bot), decoded.mentions)
+        // Re-encoding unchanged text yields the original body and the same structured list (nothing dropped).
+        val again = MentionCodec.encode(decoded.text, decoded.mentions)
+        assertEquals(sent, again.body)
+        assertEquals(listOf(member, bot), again.mentions)
+        // A mention whose text was edited away is dropped; the other stays.
+        val trimmed = MentionCodec.encode(decoded.text.replace("@Member Alpha", "Member"), decoded.mentions)
+        assertEquals(listOf(bot), trimmed.mentions)
+    }
 }

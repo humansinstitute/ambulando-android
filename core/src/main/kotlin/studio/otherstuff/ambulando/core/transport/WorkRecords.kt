@@ -306,17 +306,21 @@ data class ViewStateRecord(
     }
 }
 
-/** The six reactions Tower accepts (`reactionEmojis`), with the glyph shown for each. */
+/** The seven reactions Tower accepts (the web's `REACTION_EMOJI_OPTIONS`), with the glyph shown for each. */
 enum class ReactionEmoji(val wire: String, val displayName: String, val glyph: String) {
     THUMBS_UP("thumbs_up", "Thumbs up", "👍"),
     SMILE("smile", "Smile", "😄"),
     HEART("heart", "Heart", "❤️"),
     EYES("eyes", "Eyes", "👀"),
     PARTY("party", "Party", "🎉"),
+    SHAKA("shaka", "Shaka", "🤙"),
     CHECK("white_check_mark", "Done", "✅");
 
     companion object {
         fun from(wire: String?): ReactionEmoji? = entries.firstOrNull { it.wire == wire }
+
+        /** A stored reaction's emoji by wire name, or by glyph for rows an earlier build recorded from the glyph. */
+        fun fromStored(stored: String?): ReactionEmoji? = from(stored) ?: entries.firstOrNull { it.glyph == stored }
     }
 }
 

@@ -6,7 +6,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 import studio.otherstuff.ambulando.core.chat.MentionCodec
 import studio.otherstuff.ambulando.core.docs.DocumentBody
 import studio.otherstuff.ambulando.core.nostr.Sha256Hex
@@ -340,6 +345,18 @@ class SampleTower(
                     ?: errorReply(404, "message_not_found")
             }
             (method == "PATCH" || method == "DELETE") && n == 2 && head == "messages" -> revise(request, w, rest[1], url, signer)
+            method == "PATCH" && n == 2 && head == "threads" -> synchronized(lock) {
+                val root = allMessages().firstOrNull { it["workspace_id"] == w && it["thread_id"] == rest[1] && it["id"] == it["thread_source_message_id"] }
+                    ?: return errorReply(404, "thread_not_found")
+                val body = request.body?.let { runCatching { Json.parseToJsonElement(it.toString(Charsets.UTF_8)).jsonObject }.getOrNull() }
+                    ?: return errorReply(400, "validation_error")
+                val title = (body["title"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: return errorReply(400, "validation_error")
+                val version = (body["row_version"] as? JsonPrimitive)?.longOrNull
+                val current = threadTitles[rest[1]]?.second ?: 1L
+                if (version != null && version != current) return errorReply(409, "stale_row_version")
+                threadTitles[rest[1]] = title to current + 1
+                200 to mapOf("thread" to threadOf(root))
+            }
             else -> errorReply(404, "not_found")
         }
     }
@@ -401,10 +418,17 @@ class SampleTower(
             .sortedWith(compareBy({ it["created_at"] as? String ?: "" }, { it["id"] as? String ?: "" }))
     }
 
-    private fun threadOf(root: Row): Row = linkedMapOf(
-        "id" to root["thread_id"], "workspace_id" to root["workspace_id"], "channel_id" to root["channel_id"], "source_message_id" to root["id"],
-        "title" to MentionCodec.plain(root["body"].asString() ?: ""), "record_state" to "active", "row_version" to 1L, "updated_at" to root["updated_at"],
-    )
+    /** Titles set by `PATCH /threads/:t`, with the row version they bring the thread to. */
+    private val threadTitles = HashMap<Any?, Pair<String, Long>>()
+
+    private fun threadOf(root: Row): Row {
+        val renamed = threadTitles[root["thread_id"]]
+        return linkedMapOf(
+            "id" to root["thread_id"], "workspace_id" to root["workspace_id"], "channel_id" to root["channel_id"], "source_message_id" to root["id"],
+            "title" to (renamed?.first ?: MentionCodec.plain(root["body"].asString() ?: "")), "record_state" to "active", "row_version" to (renamed?.second ?: 1L),
+            "updated_at" to root["updated_at"],
+        )
+    }
 
     private fun member(npub: String, name: String?, kind: String): Map<String, Any?> = mapOf(
         "actor" to linkedMapOf(

@@ -36,7 +36,26 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         foreground = active
         browser.updateLocked(!active || identityState !is IdentityState.Unlocked)
         browser.tabs.forEach { if (active) it.webView.onResume() else it.webView.onPause() }
+        runStructureTicker(active)
         if (active) { networkReturn.start(); startStream(); refresh() } else { networkReturn.stop(); stream.stop() }
+    }
+    private var structureTicker: kotlinx.coroutines.Job? = null
+    /**
+     * While the app is in front, the sidebar's scopes and channels are re-read every minute even when the event stream
+     * looks healthy, so a missed hint (a grant change, an archived channel) cannot leave the sidebar stale until restart.
+     */
+    private fun runStructureTicker(active: Boolean) {
+        structureTicker?.cancel(); structureTicker = null
+        if (!active) return
+        structureTicker = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(STRUCTURE_RECONCILE_MILLIS)
+                val c = connection; val w = workspace
+                if (foreground && c != null && w != null && !w.accessRemoved && identityState is IdentityState.Unlocked) {
+                    try { sync.refreshWorkspace(c, w, SyncPriority.BACKGROUND) } catch (e: CancellationException) { throw e } catch (_: Exception) { /* the next tick tries again */ }
+                }
+            }
+        }
     }
     private suspend fun startStream() {
         val c = connection ?: return; val w = workspace ?: return
@@ -84,6 +103,12 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var editorBoard by mutableStateOf<Pair<studio.otherstuff.ambulando.core.surfaces.BoardReference, String>?>(null)
     var editorDoc by mutableStateOf<String?>(null)
     var showAgents by mutableStateOf(false)
+    /** Set by the Activity at each start: whether the saved open section and record stacks are put back (see [AppEnvironment.restoresNavigation]). */
+    var restoreNavigation = true
+    /** The person's default for existing documents: View (the default) or Edit, which starts editing when one opens. */
+    var documentOpensInEdit by mutableStateOf(false)
+    /** The document whose automatic Edit already ran, so leaving the editor returns to its reader instead of re-entering. */
+    var autoEditedDoc: String? = null
     var showContext by mutableStateOf(false)
     var viewLocked by mutableStateOf(false)
     var appearance by mutableStateOf(studio.otherstuff.ambulando.app.ui.theme.AppearancePreference.SYSTEM)
@@ -232,6 +257,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     private suspend fun restore() {
         showAgents = store.reader.state("settings.agents") == "true"
         showContext = store.reader.state("settings.context") == "true"
+        documentOpensInEdit = store.reader.state("settings.documentOpening") == "edit"
         appearance = runCatching { studio.otherstuff.ambulando.app.ui.theme.AppearancePreference.valueOf(store.reader.state("settings.appearance") ?: "SYSTEM") }.getOrDefault(studio.otherstuff.ambulando.app.ui.theme.AppearancePreference.SYSTEM)
         connection = store.reader.connections().firstOrNull { it.signerNpub == identityState?.npub }
         connection?.let { observe(); if (identityState is IdentityState.Unlocked) sync.discover(it) }
@@ -330,3 +356,6 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         act { writes.submit(intent, c, w) }; return true
     }
 }
+
+/** How often the sidebar structure is re-read while the app is in front, whatever the event stream reports. */
+private const val STRUCTURE_RECONCILE_MILLIS = 60_000L

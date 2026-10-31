@@ -52,6 +52,7 @@ class NotificationsScreenTest {
         override fun setFilter(filter: NotificationFilter) { events += "filter:${filter.view.wire}:${filter.category}" }
         override fun setRead(row: NotificationRow, read: Boolean) { events += "read:${row.id.takeLast(3)}:$read" }
         override fun dismiss(row: NotificationRow) { events += "dismiss:${row.id.takeLast(3)}" }
+        override fun undismiss(row: NotificationRow) { events += "undismiss:${row.id.takeLast(3)}" }
         override fun setArchived(row: NotificationRow, archived: Boolean) { events += "archive:${row.id.takeLast(3)}:$archived" }
         override fun markAllRead() { events += "markAll" }
         override fun refresh() { events += "refresh" }
@@ -70,6 +71,18 @@ class NotificationsScreenTest {
         compose.onNodeWithText("Flight Deck · Mentions · 3 updates · 5 min ago").assertIsDisplayed()
         compose.onNodeWithTag("notification.${id(1)}").performClick()
         assertEquals(listOf("open:901"), a.events)
+    }
+
+    @Test fun dismissOffersUndoWhichBringsTheItemBack() {
+        val a = Recorder()
+        compose.setContent { AmbulandoTheme { NotificationsScreen(state(listOf(row(1))), a) } }
+        compose.onNodeWithTag("notifications.undoBar").assertDoesNotExist()
+        compose.onNodeWithTag("notification.${id(1)}.menu").performClick()
+        compose.onNodeWithTag("notification.${id(1)}.dismiss").performClick()
+        compose.onNodeWithTag("notifications.undoBar").assertIsDisplayed()
+        compose.onNodeWithTag("notifications.undo").performClick()
+        compose.onNodeWithTag("notifications.undoBar").assertDoesNotExist()
+        assertEquals(listOf("dismiss:901", "undismiss:901"), a.events)
     }
 
     @Test fun rowMenuMarksArchivesAndDismissesAndFiltersAreReported() {

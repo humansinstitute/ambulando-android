@@ -23,6 +23,12 @@ sealed class AppEnvironment(val baseDir: File, val aliasSuffix: String) {
     class Sample(context: Context) : AppEnvironment(File(context.cacheDir, AndroidStorage.SAMPLE_DIR), AndroidStorage.SAMPLE_ALIAS_SUFFIX)
 
     val isSample: Boolean get() = this is Sample
+
+    /**
+     * Whether a start puts back the open section and record stacks saved by the last run: always in production. Sample data
+     * starts the same way every time unless a debug test opts in with [RESTORE_NAVIGATION_EXTRA].
+     */
+    fun restoresNavigation(intent: Intent?): Boolean = !isSample || intent?.getBooleanExtra(RESTORE_NAVIGATION_EXTRA, false) == true
     val identityDir: File get() = File(baseDir, AndroidStorage.IDENTITY_DIR)
     val storeFile: File get() = File(File(baseDir, AndroidStorage.STORE_DIR), AndroidStorage.STORE_FILE)
 
@@ -39,6 +45,9 @@ sealed class AppEnvironment(val baseDir: File, val aliasSuffix: String) {
     companion object {
         /** Intent extra (or instrumentation argument) that starts sample-data mode in a debug build. */
         const val SAMPLE_EXTRA = "studio.otherstuff.ambulando.SAMPLE_DATA"
+
+        /** Debug sample data only: restore the saved screens at launch (otherwise sample data always starts at Deck). */
+        const val RESTORE_NAVIGATION_EXTRA = "studio.otherstuff.ambulando.RESTORE_NAVIGATION"
 
         fun select(context: Context, intent: Intent?, instrumentationFlag: Boolean = false): AppEnvironment {
             val wantsSample = intent?.getBooleanExtra(SAMPLE_EXTRA, false) == true || instrumentationFlag

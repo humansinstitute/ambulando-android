@@ -186,3 +186,27 @@ test('a paragraph the editor appends after a final table (trailing node) does no
   expect(out.content.slice(0, stored.content.length)).toEqual(stored.content);
   stored.content.forEach((node, i) => expect(out.content[i]).toBe(node));
 });
+
+// Selection comments: the vendored web anchor capture returns the web's `anchor_*` fields for the editor's selection.
+import { TextSelection } from '@tiptap/pm/state';
+import { captureRichEditorSelectionAnchor } from '../web/sol/docs/editor/comment-selection-anchor.js';
+
+test('captures the selected text as a web-compatible comment anchor', () => {
+  const doc = PMNode.fromJSON(baseSchema, {
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'First paragraph' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'Second paragraph here' }] },
+    ],
+  });
+  const from = 1 + 'First paragraph'.length + 2 + 'Second '.length; // inside the second paragraph, before "paragraph"
+  const state = EditorState.create({ doc, schema: baseSchema }).apply(
+    EditorState.create({ doc, schema: baseSchema }).tr.setSelection(TextSelection.create(doc, from, from + 'paragraph'.length)),
+  );
+  const anchor = captureRichEditorSelectionAnchor({ state });
+  expect(anchor.anchor_quote).toBe('paragraph');
+  expect(anchor.anchor_start_offset).toBe(from);
+  expect(anchor.anchor_end_offset).toBe(from + 'paragraph'.length);
+  expect(anchor.anchor_line_number).toBe(3); // Markdown lines: two paragraphs are separated by a blank line
+  expect(captureRichEditorSelectionAnchor({ state: EditorState.create({ doc, schema: baseSchema }) })).toBeNull();
+});

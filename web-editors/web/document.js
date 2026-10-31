@@ -5,11 +5,12 @@
 // document as JSON (rich documents) or Markdown (Markdown documents), which it saves through its own lease, draft and
 // version checks. Untouched content goes back exactly as stored (document-preserve.js).
 //
-// In:  window.ambulandoDocument.load / command / insertUploads / replaceUpload / setImage / setStyle / snapshot / focus
-// Out: webkit.messageHandlers.document.postMessage(JSON): ready, loaded, change, state, need-image, paste-files, error;
+// In:  window.ambulandoDocument.load / command / insertUploads / replaceUpload / setImage / setStyle / snapshot / captureAnchor / focus
+// Out: webkit.messageHandlers.document.postMessage(JSON): ready, loaded, change, state, anchor, need-image, paste-files, error;
 //      webkit.messageHandlers.documentFile.postMessage(`<index>\n<name>\n<type>\n<base64>`): one pasted file.
 import { Editor, getSchema } from '@tiptap/core';
 import { createFlightDeckTiptapExtensions } from './sol/docs/editor/prosemirror-flightdeck-schema.js';
+import { captureRichEditorSelectionAnchor } from './sol/docs/editor/comment-selection-anchor.js';
 import {
   KeptBlock, KeptInline, KEPT_BLOCK, KEPT_INLINE, scanDocument, preservingExtensions, reuseMap, restoreDocument, nodeTypes,
   markdownSource, markdownFromEditor,
@@ -303,6 +304,12 @@ Object.defineProperty(window, 'ambulandoDocument', {
       clearTimeout(changeTimer);
       changeTimer = null;
       return touched ? output() : null;
+    },
+    /// Posts the current selection as a comment anchor (the web's `anchor_*` fields: quote, offsets and lines), or null when
+    /// nothing is selected. It reads the editor state only; the selection survives native focus changes.
+    captureAnchor() {
+      post({ type: 'anchor', anchor: editor ? captureRichEditorSelectionAnchor(editor) : null });
+      return true;
     },
     focus() { editor?.commands.focus(); return true; },
   }),

@@ -75,6 +75,8 @@ interface NotificationsActions {
     fun setFilter(filter: NotificationFilter)
     fun setRead(row: NotificationRow, read: Boolean)
     fun dismiss(row: NotificationRow)
+    /** Brings back an item dismissed a moment ago (the Undo offered after Dismiss). */
+    fun undismiss(row: NotificationRow) {}
     fun setArchived(row: NotificationRow, archived: Boolean)
     /** Marks everything shown (that this device has seen) read; newer arrivals stay unread. */
     fun markAllRead()
@@ -84,8 +86,14 @@ interface NotificationsActions {
 }
 
 @Composable
-fun NotificationsScreen(state: NotificationsUiState, actions: NotificationsActions) {
+fun NotificationsScreen(state: NotificationsUiState, baseActions: NotificationsActions) {
     val amb = Amb.colors
+    // Dismiss offers Undo for a few seconds, as on iPhone and Mac.
+    var undo by remember { mutableStateOf<NotificationRow?>(null) }
+    androidx.compose.runtime.LaunchedEffect(undo) { if (undo != null) { kotlinx.coroutines.delay(6000); undo = null } }
+    val actions = remember(baseActions) { object : NotificationsActions by baseActions {
+        override fun dismiss(row: NotificationRow) { baseActions.dismiss(row); undo = row }
+    } }
     Column(Modifier.fillMaxSize().background(amb.canvas).statusBarsPadding().navigationBarsPadding().testTag("notifications.screen")) {
         Row(Modifier.fillMaxWidth().background(amb.background).padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -115,9 +123,15 @@ fun NotificationsScreen(state: NotificationsUiState, actions: NotificationsActio
         }
         if (!state.canChange) Text("Locked: you can read saved notifications. Unlock to mark, archive or dismiss them.",
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).testTag("notifications.locked"), style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
-        if (state.rows.isEmpty()) EmptyState(state.empty)
+        if (state.rows.isEmpty()) Box(Modifier.weight(1f)) { EmptyState(state.empty) }
         else LazyColumn(Modifier.weight(1f).testTag("notifications.list"), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.rows, key = { it.id }) { row -> NotificationCard(row, state, actions) }
+        }
+        undo?.let { row ->
+            Row(Modifier.fillMaxWidth().background(amb.card).padding(horizontal = 16.dp, vertical = 4.dp).testTag("notifications.undoBar"), verticalAlignment = Alignment.CenterVertically) {
+                Text("Dismissed", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                TextButton(onClick = { actions.undismiss(row); undo = null }, modifier = Modifier.testTag("notifications.undo")) { Text("Undo", fontWeight = FontWeight.SemiBold) }
+            }
         }
     }
 }

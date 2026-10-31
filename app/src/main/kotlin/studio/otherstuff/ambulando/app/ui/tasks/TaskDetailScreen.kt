@@ -69,7 +69,10 @@ import studio.otherstuff.ambulando.core.store.LiveQueryState
 import studio.otherstuff.ambulando.core.store.WriteItem
 import studio.otherstuff.ambulando.core.store.WriteKind
 import studio.otherstuff.ambulando.core.transport.TaskPriority
+import studio.otherstuff.ambulando.core.transport.authorNpub
 import studio.otherstuff.ambulando.core.transport.TaskState
+import studio.otherstuff.ambulando.core.surfaces.TaskHierarchy
+import studio.otherstuff.ambulando.app.ui.nav.WorkRoute
 
 /** One task: title, place, state / priority / assignee chips, pending changes, description, comments and a composer. */
 @Composable
@@ -104,6 +107,7 @@ fun TaskDetailContent(snapshot: LiveQueryState<TaskDetailSnapshot>, taskId: Stri
                         RichBlocks(DocumentRender.markdownBlocks(it), style = RichStyle.CHAT, muted = row.task.accessRemoved, actions = workRichActions())
                     }
                 }
+                Hierarchy(row, value, intents, editable)
                 Comments(value, scope, intents)
             } else if (snapshot.loaded) {
                 SyncNote(if (services.unlocked) "Loading task…" else "This task is not saved on this $DEVICE_NAME yet. Unlock to load it.")
@@ -163,7 +167,7 @@ private fun Comments(value: TaskDetailSnapshot, scope: ScreenScope, intents: Tas
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Comments", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = amb.primary)
         value.comments.forEach { c ->
-            CommentRow(c, personFor(value.people, c.senderNpub, scope.signerNpub, value.names), actions)
+            CommentRow(c, personFor(value.people, c.authorNpub(value.members), scope.signerNpub, value.names), actions)
         }
         value.pendingComments.forEach { item ->
             Column(Modifier.testTag("comment.pending"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -180,15 +184,16 @@ private fun Comments(value: TaskDetailSnapshot, scope: ScreenScope, intents: Tas
 @Composable
 private fun CommentComposer(taskId: String, intents: TasksIntents) {
     val amb = Amb.colors
-    var comment by rememberSaveable(taskId) { mutableStateOf("") }
-    val trimmed = comment.trim()
+    val draft = studio.otherstuff.ambulando.app.ui.work.rememberCommentDraft(taskId)
     Row(Modifier.fillMaxWidth().background(amb.card).imePadding().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ContentTextEntry(comment, { comment = it }, "Add a comment",
-            Modifier.weight(1f).background(amb.muted, RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 8.dp).testTag("comment.field"))
-        IconButton(onClick = { if (trimmed.isNotEmpty() && intents.comment(taskId, trimmed)) comment = "" }, enabled = trimmed.isNotEmpty(),
+        studio.otherstuff.ambulando.app.ui.work.MentionTextEntry(draft.text, { draft.text = it }, draft.mentions, { draft.mentions = it }, intents::mentionCandidates, "Add a comment",
+            Modifier.weight(1f), Modifier.fillMaxWidth().background(amb.muted, RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 8.dp).testTag("comment.field"))
+        IconButton(onClick = {
+            if (!draft.isBlank && intents.comment(taskId, draft.encoded().body)) draft.clear()
+        }, enabled = !draft.isBlank,
             modifier = Modifier.testTag("comment.send").semantics { contentDescription = "Send comment" }) {
-            Icon(Icons.Filled.ArrowCircleUp, contentDescription = null, tint = if (trimmed.isNotEmpty()) amb.primary else amb.mutedForeground, modifier = Modifier.size(30.dp))
+            Icon(Icons.Filled.ArrowCircleUp, contentDescription = null, tint = if (!draft.isBlank) amb.primary else amb.mutedForeground, modifier = Modifier.size(30.dp))
         }
     }
 }
@@ -198,4 +203,92 @@ private fun label(item: WriteItem): String = when (item.kind) {
     WriteKind.TASK_PATCH -> "Edit"
     WriteKind.TASK_ASSIGN -> "Assignment"
     else -> "Change"
+}
+
+/**
+ * The task's place in its tree: its parent (labelled unavailable rather than guessed), its direct children with status,
+ * descendants that expand in place, and Add subtask. The count is direct children including archived ones; a `+` means
+ * the list could not be confirmed complete.
+ */
+@Composable
+private fun Hierarchy(row: TaskRow, value: TaskDetailSnapshot, intents: TasksIntents, editable: Boolean) {
+    val amb = Amb.colors
+    val services = LocalAppServices.current
+    val workspaceId = row.task.workspaceId
+    var status by remember(row.id) { mutableStateOf<RelationshipStatus?>(null) }
+    var expanded by rememberSaveable(row.id) { mutableStateOf(listOf<String>()) }
+    var adding by remember(row.id) { mutableStateOf(false) }
+    var refresh by remember(row.id) { mutableStateOf(0) }
+    LaunchedEffect(row.id, refresh) { status = null; status = intents.loadRelationships(row.id) }
+    // Expanding a descendant reads that task's own direct list.
+    expanded.forEach { id -> LaunchedEffect(id) { intents.loadRelationships(id) } }
+    val direct = value.children[row.id.lowercase()].orEmpty()
+    val complete = status == RelationshipStatus.COMPLETE
+    Column(Modifier.testTag("task.hierarchy"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        value.parentId?.let { parentId ->
+            val parent = value.parent
+            Text(if (parent != null) "Subtask of ${parent.title}" else "Parent task unavailable",
+                style = MaterialTheme.typography.bodyMedium, color = if (parent != null) amb.primary else amb.mutedForeground,
+                modifier = Modifier.fillMaxWidth().clickable(enabled = parent != null) { services.open(WorkRoute.Task(workspaceId, parentId)) }.padding(vertical = 4.dp).testTag("task.parent"))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Subtasks " + TaskHierarchy.countLabel(direct.size, complete), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                color = amb.primary, modifier = Modifier.weight(1f).testTag("task.subtasks.count"))
+            TextButton(onClick = { adding = true }, enabled = editable, modifier = Modifier.testTag("task.subtask.add")) { Text("Add subtask") }
+        }
+        when (status) {
+            null -> Text("Checking for subtasks…", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
+            RelationshipStatus.PARTIAL -> Text("Showing the subtasks read so far; there may be more.", style = MaterialTheme.typography.bodySmall, color = amb.warning)
+            RelationshipStatus.RESTRICTED -> Text("Some subtasks may not be visible to you.", style = MaterialTheme.typography.bodySmall, color = amb.warning)
+            RelationshipStatus.OFFLINE -> Text("Showing saved subtasks. They update when this device is connected.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
+            RelationshipStatus.COMPLETE -> Unit
+        }
+        val creating = value.creatingChildren[row.id.lowercase()].orEmpty()
+        if (direct.isEmpty() && creating.isEmpty() && status != null) Text("No subtasks.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
+        SubtaskRows(direct, value, listOf(row.id.lowercase()), 0, expanded, { id -> expanded = if (id in expanded) expanded - id else expanded + id }, intents)
+        creating.forEach { item ->
+            Column(Modifier.testTag("task.subtask.pending")) {
+                Text(item.string("title") ?: "", style = MaterialTheme.typography.bodyMedium, color = amb.mutedForeground)
+                WriteStatusLine(item, "Subtask", intents)
+            }
+        }
+    }
+    if (adding) {
+        var title by remember { mutableStateOf("") }
+        androidx.compose.material3.AlertDialog(onDismissRequest = { adding = false }, title = { Text("Add subtask") }, text = {
+            androidx.compose.material3.OutlinedTextField(title, { title = it }, singleLine = true, label = { Text("Title") }, modifier = Modifier.fillMaxWidth().testTag("task.subtask.title"))
+        }, confirmButton = {
+            TextButton(enabled = title.isNotBlank(), onClick = { if (intents.addSubtask(row, title)) { adding = false; refresh += 1 } }, modifier = Modifier.testTag("task.subtask.create")) { Text("Add") }
+        }, dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun SubtaskRows(children: List<TaskRow>, value: TaskDetailSnapshot, path: List<String>, depth: Int, expanded: List<String>, toggle: (String) -> Unit, intents: TasksIntents) {
+    val amb = Amb.colors
+    val services = LocalAppServices.current
+    children.forEach { child ->
+        val id = child.id.lowercase()
+        val cycle = TaskHierarchy.closesCycle(path, id)
+        val open = id in expanded && !cycle
+        Column(Modifier.fillMaxWidth().padding(start = (depth * 16).dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (cycle) "·" else if (open) "▾" else "▸", color = amb.mutedForeground,
+                    modifier = Modifier.clickable(enabled = !cycle) { toggle(id) }.padding(horizontal = 10.dp, vertical = 10.dp).testTag("task.subtask.expand.$id")
+                        .semantics { contentDescription = if (open) "Collapse subtasks" else "Show subtasks" })
+                Column(Modifier.weight(1f).clickable { services.open(WorkRoute.Task(child.task.workspaceId, child.id)) }.testTag("task.subtask.$id")) {
+                    Text(child.title, style = MaterialTheme.typography.bodyMedium, color = amb.foreground, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text((child.taskState?.label ?: child.state) + if (cycle) " · already shown above" else "", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
+                }
+            }
+            child.pending.filter { it.kind != WriteKind.TASK_CREATE }.forEach { WriteStatusLine(it, label(it), intents) }
+            if (open) {
+                val nested = value.children[id].orEmpty()
+                val creating = value.creatingChildren[id].orEmpty()
+                if (nested.isEmpty() && creating.isEmpty()) Text("No subtasks.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground, modifier = Modifier.padding(start = 16.dp))
+                SubtaskRows(nested, value, path + id, depth + 1, expanded, toggle, intents)
+                creating.forEach { item -> WriteStatusLine(item, "Subtask ${item.string("title") ?: ""}".trim(), intents, Modifier.padding(start = 16.dp)) }
+            }
+        }
+    }
 }

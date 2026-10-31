@@ -60,6 +60,69 @@ suspend fun WorkspaceSync.branchThread(connection: ConnectionRecord, workspace: 
         created
     }
 
+/** Why a rename did not happen, worded for the person (the typed route's refusals, not raw HTTP). */
+class ThreadRenameException(message: String) : Exception(message)
+
+/** The title the web sends: whitespace collapsed and trimmed (up to [MAX] characters). */
+object ThreadTitle {
+    const val MAX = 120
+
+    fun normalized(value: String): String {
+        val title = value.split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+        if (title.isEmpty()) throw ThreadRenameException("Enter a thread title.")
+        if (studio.otherstuff.ambulando.core.docs.TextSupport.graphemeCount(title) > MAX) throw ThreadRenameException("Thread titles can be up to $MAX characters.")
+        return title
+    }
+}
+
+/**
+ * Renames a conversation like the web and iPhone: `PATCH /threads/:t` with the new `title` and the stored `row_version`.
+ * It is a confirmed online request, not queued; Tower decides who may rename. A stale version is refreshed from Tower once
+ * and retried only when the title is still the one the person started from, otherwise the other change is reported and
+ * nothing is overwritten.
+ */
+suspend fun WorkspaceSync.renameThread(connection: ConnectionRecord, workspace: WorkspaceRecord, threadId: String, rawTitle: String,
+    rowVersion: Long?, originalTitle: String?): ThreadRecord = engine.perform("rename-thread:${workspace.id}:$threadId", SyncPriority.USER) {
+    val title = ThreadTitle.normalized(rawTitle)
+    if (rowVersion == null || rowVersion <= 0) throw ThreadRenameException("The original thread version is unavailable. Reopen the thread to load it.")
+    if (workspace.accessRemoved || store.reader.isAccessRemoved(workspace.id, FlaggedTable.THREADS, threadId)) throw ThreadRenameException("This thread is no longer available to you.")
+    try { identity.requireSigner(connection.signerNpub) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { throw ThreadRenameException("Unlock to rename this thread.") }
+    val path = TowerAPI.base(workspace.id) + "/threads/" + TowerAPI.uuid(threadId)
+    val client = api(connection).client
+    suspend fun exchange(method: String, body: JsonObject?): Pair<Int, JsonObject?> = try {
+        val reply = client.exchange(method, path, workspace.appNpub, body?.let(::jsonBody))
+        reply.status to parseJsonObjectOrNull(reply.body)
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+        throw ThreadRenameException("Could not reach Tower. Check your connection and try again.")
+    }
+    fun stale(reply: Pair<Int, JsonObject?>) = reply.first == 409 && (reply.second?.string("code") ?: reply.second?.string("error")) == "stale_row_version"
+    fun refuse(status: Int): Nothing = throw ThreadRenameException(when (status) {
+        401, 403 -> "You don't have permission to rename this thread."
+        404 -> "This thread is no longer available."
+        else -> "Tower could not rename this thread (HTTP $status). Nothing was changed."
+    })
+    fun patch(version: Long) = buildJsonObject { put("title", title); put("row_version", version) }
+    var reply = exchange("PATCH", patch(rowVersion))
+    if (stale(reply)) {
+        val fresh = exchange("GET", null)
+        if (fresh.first !in 200..299) refuse(fresh.first)
+        val row = fresh.second?.obj("thread")
+        val version = (row?.get("row_version") as? JsonPrimitive)?.longOrNull?.takeIf { it > 0 }
+            ?: throw ThreadRenameException("Tower did not return the thread's current version. Nothing was changed.")
+        val current = ThreadRecord.parse(row)
+        store.writer.upsertThreads(workspace.id, listOf(current))
+        if (current.title != originalTitle) throw ThreadRenameException("This thread was renamed elsewhere. Current title: “${current.title ?: "Untitled"}”. Cancel and reopen to edit the current title.")
+        reply = exchange("PATCH", patch(version))
+        if (stale(reply)) throw ThreadRenameException("This thread was renamed elsewhere while you were saving. Reopen it and try again.")
+    }
+    if (reply.first !in 200..299) refuse(reply.first)
+    val row = reply.second?.obj("thread") ?: throw ThreadRenameException("Tower's answer had no thread.")
+    val thread = ThreadRecord.parse(row)
+    if (thread.workspaceId != workspace.id || thread.id != threadId.lowercase()) throw ThreadRenameException("Tower's answer was for a different thread. Nothing was changed.")
+    store.writer.upsertThreads(workspace.id, listOf(thread))
+    thread
+}
+
 object AutopilotSessionLink {
     fun sessionId(raw: JsonObject): String? {
         val metadata = raw["metadata"] as? JsonObject ?: return null

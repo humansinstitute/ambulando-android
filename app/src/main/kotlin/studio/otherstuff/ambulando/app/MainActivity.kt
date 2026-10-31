@@ -11,6 +11,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val environment = AppEnvironment.select(applicationContext, intent)
         val model = (application as AmbulandoApplication).model(environment)
+        model.restoreNavigation = environment.restoresNavigation(intent)
         lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
             override fun onStart(owner: androidx.lifecycle.LifecycleOwner) { model.foreground(true) }
             override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {

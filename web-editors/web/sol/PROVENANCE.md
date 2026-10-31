@@ -12,6 +12,7 @@ commit `c7fafcb34a7a35578e55e5f121dfa4c4ee75af3f` ("feat(canvas): add spatial bo
 | `board-scene.js` | `src/canvas/board-scene.js` |
 | `docs/editor/prosemirror-flightdeck-schema.js` | `src/docs/editor/prosemirror-flightdeck-schema.js` |
 | `docs/editor/wiki-extension.js` | `src/docs/editor/wiki-extension.js` |
+| `docs/editor/comment-selection-anchor.js` | `src/docs/editor/comment-selection-anchor.js` (added later, from commit `786ea8c5fd5b968a2c743370b1d2e4ae6bab2508`) |
 | `docs/editor/prosemirror-constants.js` | `src/docs/editor/prosemirror-constants.js` |
 | `docs/editor/markdown-to-prosemirror.js` | `src/docs/editor/markdown-to-prosemirror.js` |
 | `docs/editor/prosemirror-to-flightdeck.js` | `src/docs/editor/prosemirror-to-flightdeck.js` |

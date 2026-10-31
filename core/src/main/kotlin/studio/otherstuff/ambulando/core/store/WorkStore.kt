@@ -598,3 +598,45 @@ suspend fun StoreReader.deckCommentActivity(
         *binds.toTypedArray(),
     ) { it.text(0)!! to DeckActivity.CommentActivity(it.int(1), it.text(2)) }.toMap()
 }
+
+/** Every stored task of a channel including archived ones (the task detail's parent/child projection reads these). */
+suspend fun StoreReader.channelTasks(workspaceId: String, channelId: String, limit: Int = 2000): List<TaskRecord> =
+    tasks(workspaceId, channelId = channelId, includeArchived = true, limit = limit)
+
+/** Pages whose saved text links to one document, and how many saved pages could be checked. */
+data class DocBacklinks(val docs: List<DocRecord>, val checked: Int)
+
+/**
+ * "Linked from": pages saved on this device whose body links to [docId], in any channel or scope this device can read.
+ * Pages whose access was removed are not listed and the page itself is excluded. [DocBacklinks.checked] says how many saved
+ * pages were checked, so an empty list is not mistaken for proof that nothing links here.
+ */
+suspend fun StoreReader.docBacklinks(workspaceId: String, docId: String): DocBacklinks = read {
+    val needle = docId.lowercase().toByteArray()
+    val saved = longValue(
+        "SELECT COUNT(*) FROM doc_bodies b JOIN docs d ON d.workspace_id = b.workspace_id AND d.id = b.doc_id WHERE b.workspace_id = ? AND d.access_removed = 0",
+        workspaceId,
+    )?.toInt() ?: 0
+    // The stored id is matched as text first (cheap), then each candidate is parsed so code and other lookalikes do not count.
+    val candidates = query(
+        """SELECT b.doc_id, b.content_type, b.bytes FROM doc_bodies b JOIN docs d ON d.workspace_id = b.workspace_id AND d.id = b.doc_id
+           WHERE b.workspace_id = ? AND b.doc_id <> ? AND d.access_removed = 0 AND instr(lower(CAST(b.bytes AS TEXT)), ?) > 0
+           ORDER BY d.title COLLATE NOCASE, d.id""",
+        workspaceId, docId, String(needle),
+    ) { Triple(it.text(0)!!, it.text(1)!!, it.blob(2)) }
+    val linked = candidates.filter { (_, type, bytes) ->
+        runCatching { studio.otherstuff.ambulando.core.docs.WikiLinks.links(studio.otherstuff.ambulando.core.docs.DocumentBody(bytes, type), docId) }.getOrDefault(false)
+    }.mapNotNull { docRow(workspaceId, it.first) }
+    DocBacklinks(linked, saved)
+}
+
+/**
+ * Moves a draft's base version with the document (a move changes the row version, not the text). It is a compare-and-set
+ * on the draft as it is now, so an edit made while the move was in flight is never overwritten. False when the draft is
+ * gone or no longer based on [from].
+ */
+suspend fun StoreWriter.rebaseDocDraft(key: String, workspaceId: String, from: Int, to: Int): Boolean = write {
+    val changed = db.run("UPDATE doc_drafts SET base_row_version = ? WHERE key = ? AND base_row_version = ?", to, key, from) > 0
+    if (changed) emit(StoreTable.DOC_DRAFTS, workspaceId)
+    changed
+}

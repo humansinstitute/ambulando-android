@@ -152,4 +152,72 @@ class MessageFlowsTests {
             assertEquals(1, transport.recorded.size)
         } finally { engine.close(); store.close() }
     }
+
+    private fun threadRow(title: String, version: Int) = mapOf("id" to thread, "workspace_id" to w, "channel_id" to channel, "source_message_id" to root,
+        "title" to title, "row_version" to version, "updated_at" to "2026-10-27T00:00:00Z")
+
+    private suspend fun <T> withRenameFixture(handler: (HttpRequest) -> Pair<Int, Any?>, block: suspend (WorkspaceSync, ConnectionRecord, WorkspaceRecord, StubTransport, studio.otherstuff.ambulando.core.store.LocalStore) -> T): T {
+        val identity = makeIdentity()
+        val store = StoreFixtures.store()
+        val connection = StoreFixtures.connect(store)
+        val workspace = StoreFixtures.workspace(w, "Synthetic")
+        val engine = SyncEngine()
+        val transport = StubTransport(handler)
+        store.writer.upsertThreads(w, listOf(ThreadRecord(w, thread, channel, root, "Old", rowVersion = 3, updatedAt = "")))
+        try { return block(WorkspaceSync(store, engine, identity, transport), connection, workspace, transport, store) } finally { engine.close(); store.close() }
+    }
+
+    @Test fun renameSendsTheNormalizedTitleWithTheStoredVersionAndStoresTowersAnswer() = runBlocking {
+        withRenameFixture({ request ->
+            assertEquals("PATCH", request.method)
+            assertEquals("/api/v4/flightdeck-pg/workspaces/$w/threads/$thread", pathOf(request.url))
+            val body = JsonFieldsForTest(request.body!!)
+            assertEquals("New   name".split(Regex("\\s+")).joinToString(" "), body["title"]?.jsonPrimitive?.content)
+            assertEquals(3L, body["row_version"]?.jsonPrimitive?.long)
+            200 to mapOf("thread" to threadRow("New name", 4))
+        }) { sync, connection, workspace, transport, store ->
+            val renamed = sync.renameThread(connection, workspace, thread, "  New   name ", 3, "Old")
+            assertEquals("New name", renamed.title)
+            assertEquals("New name", store.reader.thread(w, thread)?.title)
+            assertEquals(1, transport.recorded.size)
+        }
+    }
+
+    @Test fun staleVersionRetriesOnlyWhenTheTitleIsStillTheOneBeingEdited() = runBlocking {
+        var patches = 0
+        withRenameFixture({ request ->
+            when (request.method) {
+                "PATCH" -> if (++patches == 1) 409 to mapOf("code" to "stale_row_version") else {
+                    assertEquals(9L, JsonFieldsForTest(request.body!!)["row_version"]?.jsonPrimitive?.long)
+                    200 to mapOf("thread" to threadRow("Mine", 10))
+                }
+                else -> 200 to mapOf("thread" to threadRow("Old", 9))
+            }
+        }) { sync, connection, workspace, _, _ ->
+            assertEquals("Mine", sync.renameThread(connection, workspace, thread, "Mine", 3, "Old").title)
+            assertEquals(2, patches)
+        }
+    }
+
+    @Test fun aRenameElsewhereIsReportedNotOverwritten() = runBlocking {
+        withRenameFixture({ request -> if (request.method == "PATCH") 409 to mapOf("code" to "stale_row_version") else 200 to mapOf("thread" to threadRow("Theirs", 9)) }) { sync, connection, workspace, transport, store ->
+            val failure = try { sync.renameThread(connection, workspace, thread, "Mine", 3, "Old"); null } catch (e: ThreadRenameException) { e }
+            assertTrue(failure!!.message!!.contains("Theirs"))
+            assertEquals(2, transport.recorded.size)
+            // The refreshed row is kept so the person sees the current title; their draft is untouched by this call.
+            assertEquals("Theirs", store.reader.thread(w, thread)?.title)
+        }
+    }
+
+    @Test fun refusalsAndBadTitlesAreWordedForThePerson() = runBlocking {
+        withRenameFixture({ 403 to mapOf("error" to "forbidden") }) { sync, connection, workspace, transport, _ ->
+            val denied = try { sync.renameThread(connection, workspace, thread, "Mine", 3, "Old"); null } catch (e: ThreadRenameException) { e }
+            assertEquals("You don't have permission to rename this thread.", denied!!.message)
+            for (bad in listOf("   ", "x".repeat(121))) {
+                try { sync.renameThread(connection, workspace, thread, bad, 3, "Old"); fail("bad title sent") } catch (_: ThreadRenameException) { }
+            }
+            try { sync.renameThread(connection, workspace, thread, "Mine", null, "Old"); fail("missing version sent") } catch (_: ThreadRenameException) { }
+            assertEquals(1, transport.recorded.size)
+        }
+    }
 }

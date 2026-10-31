@@ -32,7 +32,7 @@ Publish the verified APK and checksum as GitHub release assets. Keep `zapstore.y
 publisher npub, at the public default-branch HEAD. Use the official [zsp tool](https://github.com/zapstore/zsp) and
 [Zapstore publishing guide](https://zapstore.dev/docs/publish).
 
-An externally held signer can sign the unsigned events emitted by `SIGN_WITH=<public-npub>`. Do not export a private
+`zsp` is built from its pinned release into a Git-ignored directory (`GOBIN=<ignored dir> go install github.com/zapstore/zsp@v0.4.17`), never installed from an unverified download. `SIGN_WITH=<public-npub> zsp publish <config> --offline` emits the unsigned events and the upload manifest without any key. An externally held signer can sign the unsigned events emitted that way. Do not export a private
 identity, use an owner's identity as a substitute, or place a bunker secret in the repository. The app/release/asset
 events are kinds 32267/30063/3063; Blossom upload authorization uses 24242. Optional certificate linking uses 30509
 and needs its own signer authority.

@@ -470,6 +470,7 @@ class SampleWorkTower(
                 )
             }
             method == "PATCH" && n == 2 && head == "docs" -> patchDoc(p[1], o)
+            method == "POST" && n == 3 && head == "docs" && p[2] == "move" -> moveDoc(p[1], o)
             method == "GET" && n == 3 && head == "docs" && p[2] == "comments" -> {
                 if (state.row("docs", p[1]) == null) return errorReply(404, "doc_not_found")
                 indexPage(sortedByCreated(state.rows("doc_comments").filter { it["doc_id"] == p[1] }), "comments", url, mapOf("doc_id" to p[1]))
@@ -800,6 +801,20 @@ class SampleWorkTower(
         state.put("tasks", id, row)
         emitTask(row, "updated")
         return 200 to mapOf("task" to row)
+    }
+
+    /** `POST /docs/:d/move`: version-checked, to another channel of the workspace. */
+    private fun moveDoc(id: String, o: Row): Reply {
+        val row = state.row("docs", id) ?: return errorReply(404, "doc_not_found")
+        val channel = o["destination_channel_id"].asString() ?: return errorReply(400, "validation_error")
+        if (o["row_version"].asInt() != row["row_version"].asInt()) return errorReply(409, "stale_row_version")
+        if (row["channel_id"] == channel) return errorReply(409, "same_destination")
+        row["channel_id"] = channel
+        o["destination_scope_id"].asString()?.let { row["scope_id"] = it }
+        bump(row)
+        state.put("docs", id, row)
+        emitDoc(row, "updated")
+        return 200 to mapOf("doc" to docOut(row))
     }
 
     private fun patchDoc(id: String, o: Row): Reply {

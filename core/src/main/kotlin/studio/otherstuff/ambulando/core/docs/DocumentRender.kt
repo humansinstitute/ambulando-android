@@ -107,7 +107,8 @@ object DocumentRender {
                 run
             }
             "hardBreak" -> InlineRun(text = "\n")
-            "fdWikiLink" -> InlineRun(text = node["attrs"]?.get("title")?.stringValue ?: "Linked document", `object` = true)
+            "fdWikiLink" -> InlineRun(text = node["attrs"]?.get("title")?.stringValue ?: "Linked document",
+                link = node["attrs"]?.get("documentId")?.stringValue?.takeIf { it.isNotEmpty() }?.let { "wiki:$it" }, `object` = true)
             "fdStorageImage", "image" -> {
                 val attrs = node["attrs"]
                 InlineRun(text = attrs?.get("alt")?.stringValue ?: "", image = imageSource(attrs), `object` = true)

@@ -73,13 +73,26 @@ class SectionStacks {
     private val stacks = mutableStateMapOf<AppSection, SnapshotStateList<WorkRoute>>()
 
     fun of(section: AppSection): SnapshotStateList<WorkRoute> = stacks.getOrPut(section) { mutableStateListOf() }
-    fun push(section: AppSection, route: WorkRoute) { of(section).add(route) }
+    /** Told of every record the person navigates to (restoring saved stacks is not navigation and does not call it). */
+    var onNavigate: (WorkRoute) -> Unit = {}
+    fun push(section: AppSection, route: WorkRoute) { of(section).add(route); onNavigate(route) }
     fun pop(section: AppSection): Boolean = of(section).removeLastOrNull() != null
     fun popToRoot(section: AppSection) = of(section).clear()
 
     /** A new sidebar choice starts the context-bound sections over (an open record would belong to the old context). */
     fun resetContextBound() = AppSection.entries.filter { it.contextBound && it != AppSection.CHAT }.forEach { of(it).clear() }
     fun clearAll() = stacks.values.forEach { it.clear() }
+
+    /**
+     * Every section's stack by section key, read for saving. It only reads (never creates a stack), so it is safe inside a
+     * snapshot observer, and reading registers with Compose so changes can be observed.
+     */
+    fun snapshot(): Map<String, List<WorkRoute>> = AppSection.entries.associate { it.key to (stacks[it]?.toList() ?: emptyList()) }
+
+    /** Puts saved stacks back; sections that already hold a screen (opened since launch) are left as they are. */
+    fun restore(saved: Map<String, List<WorkRoute>>) {
+        AppSection.entries.forEach { section -> if (of(section).isEmpty()) saved[section.key]?.let { of(section).addAll(it) } }
+    }
 }
 
 /**

@@ -19,6 +19,8 @@ import studio.otherstuff.ambulando.app.web.EditorWebHost
 import studio.otherstuff.ambulando.core.docs.*
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.sync.downloadAttachment
+import androidx.compose.ui.platform.testTag
+import kotlinx.serialization.json.put
 
 /** The original bundled lossless editor, with device-persisted drafts and lease-checked saves. */
 @Composable internal fun DocumentEditor(model: AppModel, docId: String, close: () -> Unit) {
@@ -36,12 +38,17 @@ import studio.otherstuff.ambulando.core.sync.downloadAttachment
     var saving by remember(docId) { mutableStateOf(false) }
     var encodingFailed by remember(docId) { mutableStateOf(false) }
     var title by remember(docId) { mutableStateOf("") }
+    // A selection comment is anchored to the stored version, so it is offered while the draft still equals that version.
+    var hasSelection by remember(docId) { mutableStateOf(false) }
+    var edited by remember(docId) { mutableStateOf(false) }
+    var anchor by remember(docId) { mutableStateOf<JSONObject?>(null) }
     val inserted = remember(docId) { mutableStateListOf<String>() }
     val uploadTarget = remember(docId) { ChatTarget(c.id, w.id, "content-doc-$docId") }
     val uploadRows by model.uploads.items.collectAsState()
     val commands = remember(docId) { Channel<suspend () -> Unit>(Channel.UNLIMITED) }
     LaunchedEffect(commands) { for (command in commands) try { command() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = e.message } }
     fun changed(content: String) {
+        edited = true
         val decoded = base ?: return
         commands.trySend {
             val old = draft ?: return@trySend
@@ -113,6 +120,8 @@ import studio.otherstuff.ambulando.core.sync.downloadAttachment
             val decoded = withContext(Dispatchers.Default) { DocumentBody(initial.body, initial.contentType) }
             check(decoded.isEditable) { "This document format is read-only" }
             base = decoded; draft = initial; title = initial.title
+            // A restored draft that differs from the stored text is already an edit: its offsets would not match the stored version.
+            edited = previous != null && !previous.body.contentEquals(stored.bytes)
             model.store.writer.saveDocDraft(initial)
             runner.acquire(c, w, docId)
             payload = if (decoded.editorState != null) JSONObject().put("mode", "rich").put("state", JSONObject(decoded.editorState!!.serializedString())).toString()
@@ -141,6 +150,8 @@ import studio.otherstuff.ambulando.core.sync.downloadAttachment
                 when (event.optString("type")) {
                     "ready" -> ready = true
                     "change" -> changed(event.getString("content"))
+                    "state" -> hasSelection = event.optJSONObject("active")?.optBoolean("selection") == true
+                    "anchor" -> anchor = event.optJSONObject("anchor")
                     "need-image" -> scope.launch {
                         val id = event.optString("objectId")
                         if (studio.otherstuff.ambulando.core.transport.isUUID(id)) {
@@ -193,11 +204,43 @@ import studio.otherstuff.ambulando.core.sync.downloadAttachment
                 TextButton(enabled = ready && !saving, onClick = { host?.call("window.ambulandoDocument.command", command, "{}") }) { Text(label) }
             }
             TextButton(enabled = ready && !saving, onClick = { picker.launch(arrayOf("*/*")) }) { Text("Attach") }
+            TextButton(enabled = ready && !saving && hasSelection && !edited, onClick = { host?.call("window.ambulandoDocument.captureAnchor") },
+                modifier = Modifier.testTag("doc.editor.comment")) { Text("Comment") }
         }
         uploadRows.filter { it.target == uploadTarget && it.markdown == null }.forEach { upload -> Row { Text(upload.filename); if (upload.retryable) TextButton(onClick = { model.uploads.retry(upload.id) }) { Text("Retry") }; TextButton(onClick = { model.uploads.remove(upload.id); inserted.remove(upload.token) }) { Text("Remove") } } }
+        if (hasSelection && edited) Text("Save your changes before commenting on a selection.", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
         notice?.let { Text(it, Modifier.padding(12.dp)) }
+        anchor?.let { captured -> draft?.let { current -> SelectionCommentDialog(model, docId, captured, current.baseRowVersion) { anchor = null } } }
         if (payload == null) Text("Opening editor; your draft stays on this device.", Modifier.padding(12.dp))
         host?.failure?.let { Text(it) }
         host?.let { page -> AndroidView({ page.webView }, Modifier.weight(1f).fillMaxWidth()) }
     }
+}
+
+/**
+ * A comment on selected text: the editor's selection anchor (quote, offsets and lines, as the web writes them) bound to
+ * the stored document version, sent through the durable comment queue with the same mention handling as other comments.
+ */
+@Composable private fun SelectionCommentDialog(model: AppModel, docId: String, anchor: JSONObject, baseRowVersion: Int, dismiss: () -> Unit) {
+    val w = model.workspace ?: return
+    val draft = studio.otherstuff.ambulando.app.ui.work.rememberCommentDraft(docId, anchor.optString("anchor_quote"))
+    AlertDialog(onDismissRequest = dismiss, title = { Text("Comment on selection") }, text = {
+        Column {
+            Text("“" + anchor.optString("anchor_quote").take(160) + "”", style = MaterialTheme.typography.bodySmall, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+            studio.otherstuff.ambulando.app.ui.work.MentionTextEntry(draft.text, { draft.text = it }, draft.mentions, { draft.mentions = it },
+                { query -> model.store.reader.mentionCandidates(w.id, query, viewerNpub = model.connection?.signerNpub) }, "Add comment", Modifier.fillMaxWidth().padding(top = 8.dp), Modifier.fillMaxWidth().testTag("doc.selection.field"))
+        }
+    }, confirmButton = { TextButton(enabled = !draft.isBlank, modifier = Modifier.testTag("doc.selection.send"), onClick = {
+        val encoded = draft.encoded()
+        if (model.submit(WriteIntent(WriteKind.DOC_COMMENT, docId, kotlinx.serialization.json.buildJsonObject {
+            put("body", encoded.body)
+            put("metadata", kotlinx.serialization.json.buildJsonObject {
+                anchor.optString("anchor_quote").takeIf { it.isNotEmpty() }?.let { put("anchor_quote", it) }
+                listOf("anchor_line_number", "anchor_end_line_number", "anchor_start_offset", "anchor_end_offset").forEach { key ->
+                    if (anchor.has(key) && !anchor.isNull(key)) put(key, anchor.getInt(key))
+                }
+                put("anchor_doc_row_version", baseRowVersion)
+            })
+        }))) dismiss()
+    }) { Text("Comment") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
 }
