@@ -15,6 +15,9 @@ import java.io.File
 /** Retained session owner. UI observes SQLite; all requests use the bounded sync engine. */
 class AppModel(val environment: AppEnvironment, private val androidContext: android.content.Context) : studio.otherstuff.ambulando.app.background.BackgroundEntryPoint {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** Work that must finish even though the screen that asked for it is already gone (a recreated activity, for example). */
+    fun launchDetached(block: suspend () -> Unit) { viewModelScope.launch(kotlinx.coroutines.NonCancellable) { block() } }
     val browser by lazy { studio.otherstuff.ambulando.app.browser.BrowserModel(androidContext) }
     val identity = environment.identityService()
     val store = LocalStore(environment.storeFile.parentFile!!)
@@ -22,6 +25,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     val engine = SyncEngine(retryEvent = diagnostics::retry)
     private val sample = if (environment.isSample) SampleTower(File(environment.baseDir, "tower")) else null
     val transport = ObservedTransport(sample ?: OkHttpTransport(), diagnostics)
+    /** The in-process synthetic Tower of sample-data mode (null otherwise); connected tests move its documents as "someone else". */
+    internal val sampleTower: SampleTower? get() = sample
     val transfers = if (environment.isSample) null else File(environment.baseDir, "Transfers").let { directory ->
         BackgroundTransfers(directory, studio.otherstuff.ambulando.app.background.WorkTransferBackend(androidContext, directory)).also { it.activate() }
     }
@@ -88,6 +93,59 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     val textAttachments: TextAttachmentService get() = textAttachments(requireNotNull(connection), requireNotNull(workspace).id)
     fun towerAPI(c: ConnectionRecord) = TowerAPI(TowerClient(TowerOrigin(c.origin), transport, identity), transfers)
     val writes = WriteSender(store, engine, identity, transport, File(environment.baseDir, "uploads"), transfers)
+    /** Edit leases and document saves for every open editor (and background link binding), shared so one session keeps one lease. */
+    val documents = studio.otherstuff.ambulando.core.docs.DocumentSaveRunner(store, engine, identity, transport, transfers)
+    /** Bumped whenever the account or workspace in front changes, so a slow wiki step cannot act in the wrong place. */
+    var wikiContextEpoch = 0; private set
+    init { writes.afterWikiCreate = { c, item, created -> bindCreatedWikiPage(c, item, created) } }
+
+    /**
+     * A page made by "create and link" exists on Tower: its id goes into the document that asked for it, before the creation write
+     * is retired. An open editor on that document (of this account) receives the link itself and stores it as a durable draft;
+     * otherwise the link goes through the draft-first save path. Anything that leaves the link unrecorded throws, which keeps the
+     * write queued with the page's location; the retry finds the page already made and never makes a second one.
+     */
+    private suspend fun bindCreatedWikiPage(c: ConnectionRecord, item: WriteItem, created: DocRecord) {
+        val epoch = wikiContextEpoch
+        if (item.connectionId != c.id || item.origin != c.origin || item.signerNpub != c.signerNpub || created.workspaceId != item.workspaceId) {
+            throw studio.otherstuff.ambulando.core.docs.WikiBindError.NotReady
+        }
+        val source = item.string(studio.otherstuff.ambulando.core.docs.WikiCreate.SOURCE_KEY) ?: return
+        val title = item.string(studio.otherstuff.ambulando.core.docs.WikiCreate.TITLE_KEY) ?: return
+        val workspace = store.reader.workspaces(c.id).firstOrNull { it.id == item.workspaceId && it.appNpub == item.appNpub }
+            ?: throw studio.otherstuff.ambulando.core.docs.WikiBindError.NotReady
+        val payload = item.payloadObject
+        var changedBySomeoneElse = false
+        val editor = studio.otherstuff.ambulando.core.docs.WikiEditors.editor(c.id, workspace.id, source)
+        if (editor != null) {
+            // The editor's own thread owns its text; the binding runs there.
+            val outcome = withContext(Dispatchers.Main.immediate) {
+                editor.bindWiki(title, created.id, payload.flexInt(studio.otherstuff.ambulando.core.docs.WikiCreate.OCCURRENCE_KEY),
+                    payload.flexInt(studio.otherstuff.ambulando.core.docs.WikiCreate.EXPECTED_COUNT_KEY))
+            }
+            when (outcome) {
+                studio.otherstuff.ambulando.core.docs.WikiEditorBinding.BOUND, studio.otherstuff.ambulando.core.docs.WikiEditorBinding.NOTHING_TO_BIND -> {}
+                studio.otherstuff.ambulando.core.docs.WikiEditorBinding.NO_LONGER_REQUESTED -> changedBySomeoneElse = true
+                studio.otherstuff.ambulando.core.docs.WikiEditorBinding.FAILED -> throw studio.otherstuff.ambulando.core.docs.WikiBindError.NotReady
+            }
+        } else {
+            changedBySomeoneElse = studio.otherstuff.ambulando.core.docs.WikiBinder.complete(item, created, c, workspace, store,
+                studio.otherstuff.ambulando.core.docs.RunnerAuthority(documents, c, workspace)) == studio.otherstuff.ambulando.core.docs.WikiBindOutcome.NoLongerRequested
+        }
+        // An offscreen workspace may finish its durable binding, but cannot navigate or show notices in another.
+        if (epoch != wikiContextEpoch || connection?.id != c.id || workspace.id != this.workspace?.id || workspace.appNpub != this.workspace?.appNpub) return
+        if (changedBySomeoneElse) {
+            notice = "“$title” was created, but the text changed while it was being made, so the link was not changed automatically. Link it from the document."
+            return
+        }
+        // The request registry and the sheet it opens belong to the main thread; the write drain runs elsewhere.
+        withContext(Dispatchers.Main.immediate) {
+            studio.otherstuff.ambulando.core.docs.WikiRequests.created(payload.stringOrNull(studio.otherstuff.ambulando.core.docs.WikiCreate.REQUEST_KEY), created, c.id)
+        }
+    }
+
+    private fun kotlinx.serialization.json.JsonObject.flexInt(key: String): Int? = flexibleInt(this[key])
+    private fun kotlinx.serialization.json.JsonObject.stringOrNull(key: String): String? = (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
     var identityState by mutableStateOf<IdentityState?>(null); private set
     var connection by mutableStateOf<ConnectionRecord?>(null); private set
     var workspaces by mutableStateOf(emptyList<WorkspaceRecord>()); private set
@@ -102,6 +160,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     val chatPositions = HashMap<String, ChatPosition>()
     var editorBoard by mutableStateOf<Pair<studio.otherstuff.ambulando.core.surfaces.BoardReference, String>?>(null)
     var editorDoc by mutableStateOf<String?>(null)
+    /** A record the document editor asked to open on leaving (kind, id), consumed by the connected screen. */
+    var pendingRecordOpen by mutableStateOf<Pair<String, String>?>(null)
     var showAgents by mutableStateOf(false)
     /** Set by the Activity at each start: whether the saved open section and record stacks are put back (see [AppEnvironment.restoresNavigation]). */
     var restoreNavigation = true
@@ -216,14 +276,14 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     suspend fun import(nsec: String, pin: String) { identityState = identity.importIdentity(nsec, pin); restore() }
     suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); refresh() }
-    fun lock() = act { browser.updateLocked(true); browser.hide(); stream.stop(); engine.cancelAll(); identityState = identity.lock() }
+    fun lock() = act { browser.updateLocked(true); browser.hide(); stream.stop(); engine.cancelAll(); documents.forgetAll(); wikiContextEpoch++; identityState = identity.lock() }
     suspend fun descriptor(origin: String) = sync.checkDescriptor(TowerOrigin(origin))
     suspend fun connect(origin: String) {
         connection = sync.connect(TowerOrigin(origin)); observe(); sync.discover(connection!!)
     }
     fun removeIdentity() = act {
         browser.reset()
-        stream.stop(); engine.cancelAll()
+        stream.stop(); engine.cancelAll(); documents.forgetAll(); wikiContextEpoch++
         store.reader.connections().forEach { clearConnection(it) }
         identityState = identity.remove()
         connection = null; workspace = null; workspaces = emptyList(); observation?.cancel()
@@ -285,6 +345,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         }
     }
     fun selectWorkspace(w: WorkspaceRecord) = act {
+        // Open editors keep their drafts but lose authority; a slow wiki step cannot act in the workspace now in front.
+        documents.forgetAll(); wikiContextEpoch++
         workspace = w; context = WorkContext.HOME
         store.writer.setState("workspace:${connection!!.id}", w.id)
         observe(); refresh()

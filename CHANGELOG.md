@@ -1,3 +1,20 @@
+# 0.4.0 — Android build 14
+
+Documents. Android now keeps your unsaved page work when someone else changes the same page, and lets you review, merge or
+accept their version without losing yours. Nothing is replaced or published without your choice. A newer shared version
+opens Review changes with a line diff, Accept latest (asks first and keeps your copy under Preserved drafts), and Merge my
+changes over a verified common saved base, with Use local / Use latest for each overlap and an editable preview. Edit merged
+result makes a local draft that only an explicit Save publishes, even after the app is closed or its notes are lost.
+Drafts survive offline, relaunch, locking and lost access, and a save whose answer was lost is recognised on retry without a
+second version. Take over editing… (confirmed, after your changes are kept as a Tower recovery) works across people;
+Versions chooses a stored previous version against the head you reviewed. Type [[ or use Link to search pages (this
+channel first, every scope on request) and Create and link. Save keeps the editor open, and changed pages save by
+themselves each minute, as on iPhone.
+
+Not in this build: several workspaces at once, workspace/group/grant administration, durable task hierarchy tables and
+Android push. This package has been tested against a Tower stand-in and a synthetic emulator account, not a live Tower with
+a second real editor. See docs/parity-matrix.md and docs/document-reconciliation.md.
+
 # 0.3.0 — Android build 13
 
 Brings Android up to the current iPhone and Mac behaviour for chat, tasks, documents, search and management.

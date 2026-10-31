@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import studio.otherstuff.ambulando.app.ui.nav.LocalAppServices
 import studio.otherstuff.ambulando.app.ui.rich.RichActions
@@ -19,9 +20,11 @@ import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.sync.*
 import java.io.File
 
-@Composable internal fun storedRichActions(model: AppModel, allowRead: Boolean = true): RichActions {
+@Composable internal fun storedRichActions(model: AppModel, allowRead: Boolean = true, wiki: studio.otherstuff.ambulando.core.docs.WikiLinkController? = null): RichActions {
     val services = LocalAppServices.current
-    return RichActions(services.openMention, { url -> if (allowRead || !url.startsWith("storage://")) services.openUrl(url) }, { id, alt -> StoredImage(model, id, alt, allowRead) })
+    val scope = rememberCoroutineScope()
+    return RichActions(services.openMention, { url -> if (allowRead || !url.startsWith("storage://")) services.openUrl(url) }, { id, alt -> StoredImage(model, id, alt, allowRead) },
+        openWiki = wiki?.let { w -> { target -> scope.launch { w.activate(target) }; Unit } })
 }
 
 @Composable internal fun StoredImage(model: AppModel, id: String, alt: String, allowRead: Boolean) {
@@ -59,10 +62,18 @@ import java.io.File
 }
 
 /** Decode and project potentially large rich documents away from the input/render thread. */
-@Composable internal fun RichDocument(model: AppModel, body: studio.otherstuff.ambulando.core.transport.DocBodyRecord, allowRead: Boolean) {
+@Composable internal fun RichDocument(model: AppModel, body: studio.otherstuff.ambulando.core.transport.DocBodyRecord, allowRead: Boolean, wiki: studio.otherstuff.ambulando.core.docs.WikiLinkController? = null) {
     var blocks by remember(body) { mutableStateOf(emptyList<studio.otherstuff.ambulando.core.docs.RenderBlock>()) }
     LaunchedEffect(body) { blocks = withContext(Dispatchers.Default) {
         studio.otherstuff.ambulando.core.docs.DocumentRender.blocks(studio.otherstuff.ambulando.core.docs.DocumentBody(body.bytes, body.contentType))
     } }
-    studio.otherstuff.ambulando.app.ui.rich.RichBlocks(blocks, actions = storedRichActions(model, allowRead))
+    val state = wiki?.state?.collectAsState()?.value
+    LaunchedEffect(wiki, body) { wiki?.refresh() }
+    // Bound links show their page's current title (after a rename) while the stored text stays as written.
+    val shown = if (state != null) remember(blocks, state.context.docs) { studio.otherstuff.ambulando.core.docs.WikiLinks.retitled(blocks, state.context.docs) } else blocks
+    studio.otherstuff.ambulando.app.ui.rich.RichBlocks(shown, actions = storedRichActions(model, allowRead, wiki))
+    if (wiki != null && state != null) {
+        LaunchedEffect(state.pendingOpen) { if (state.pendingOpen != null) wiki.openPendingCreated() }
+        WikiSheets(wiki, state, rememberCoroutineScope())
+    }
 }

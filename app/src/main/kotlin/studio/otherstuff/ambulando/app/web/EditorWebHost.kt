@@ -38,7 +38,9 @@ class EditorWebHost private constructor(
     private val onMessage: (channel: String, body: String) -> Unit,
 ) {
     var failure by androidx.compose.runtime.mutableStateOf<String?>(null); private set
-    private var destroyed = false
+    @Volatile private var destroyed = false
+    /** Answers still awaited from the page (main thread only); a page that dies never calls them back, so [destroy] resolves them. */
+    private val pending = mutableSetOf<kotlinx.coroutines.CancellableContinuation<String?>>()
     val webView: WebView = WebView(context)
 
     private val assetLoader = WebViewAssetLoader.Builder()
@@ -95,14 +97,42 @@ class EditorWebHost private constructor(
         if (destroyed) return
         require(function.matches(Regex("[A-Za-z_.]{1,80}"))) { "Invalid function" }
         val encoded = args.joinToString(",") { it?.let(JSONObject::quote) ?: "null" }
-        webView.evaluateJavascript("(function(){try{$function($encoded)}catch(e){}})()", null)
+        onMain { if (!destroyed) webView.evaluateJavascript("(function(){try{$function($encoded)}catch(e){}})()", null) }
     }
 
-    fun evaluate(script: String, result: (String?) -> Unit) { if (destroyed) result(null) else webView.evaluateJavascript(script) { result(it) } }
+    /** WebView methods must run on the main thread; the editor controller may be resumed elsewhere. */
+    private fun onMain(block: () -> Unit) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) block() else webView.post(block)
+    }
+
+    /** Calls a page function and returns its result as the JSON text `evaluateJavascript` yields ("null" for nothing); null if the page is gone. */
+    suspend fun query(function: String, vararg args: String?): String? {
+        if (destroyed) return null
+        require(function.matches(Regex("[A-Za-z_.]{1,80}"))) { "Invalid function" }
+        val encoded = args.joinToString(",") { it?.let(JSONObject::quote) ?: "null" }
+        // Bounded: a page that stops answering must not hold up the draft, save or write queue that is waiting on it.
+        return kotlinx.coroutines.withTimeoutOrNull(QUERY_TIMEOUT_MILLIS) {
+            kotlinx.coroutines.suspendCancellableCoroutine<String?> { continuation ->
+                onMain {
+                    if (destroyed) { if (continuation.isActive) continuation.resumeWith(Result.success(null)); return@onMain }
+                    pending.add(continuation)
+                    continuation.invokeOnCancellation { onMain { pending.remove(continuation) } }
+                    webView.evaluateJavascript("(function(){try{return $function($encoded)}catch(e){return null}})()") {
+                        pending.remove(continuation)
+                        if (continuation.isActive) continuation.resumeWith(Result.success(it))
+                    }
+                }
+            }
+        }
+    }
+
+    fun evaluate(script: String, result: (String?) -> Unit) { if (destroyed) result(null) else onMain { webView.evaluateJavascript(script) { result(it) } } }
 
     fun destroy() {
         if (destroyed) return
         destroyed = true
+        pending.toList().forEach { if (it.isActive) it.resumeWith(Result.success(null)) }
+        pending.clear()
         webView.stopLoading()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.removeWebMessageListener(webView, LISTENER)
@@ -155,6 +185,7 @@ class EditorWebHost private constructor(
             ) throw WebSurfaceUnavailable(WebProfiles.UNSUPPORTED_MESSAGE)
         }
 
+        private const val QUERY_TIMEOUT_MILLIS = 8_000L
         const val ASSET_HOST = "appassets.androidplatform.net"
         const val ORIGIN = "https://$ASSET_HOST"
         private const val LISTENER = "ambulandoNative"

@@ -178,7 +178,15 @@ class StoreTests {
             store.writer.upsertScopes(W, listOf(scope(Fixtures.SCOPE_A, "Shared scope")), complete = true)
             store.writer.upsertScopes(W2, listOf(scope(Fixtures.SCOPE_A, "Private scope", W2)), complete = true)
             store.writer.saveDraft(ChatTarget(mine.id, W2, Fixtures.CHANNEL_1), Draft("draft", emptyList()))
+            val docKey = "${mine.id}:$W2:00000000-0000-4000-8000-0000000000d1"
+            val otherKey = "${other.id}:$W:00000000-0000-4000-8000-0000000000d2"
+            for (key in listOf(DocumentReviewCodec.key(docKey), DocumentReviewCodec.corruptKey(docKey), DocumentReviewCodec.UPLOAD_RECEIPT_PREFIX + docKey,
+                DocumentReviewCodec.key(otherKey))) store.writer.setState(key, "document text")
             store.writer.removeConnection(mine.id)
+            assertEquals("journals and receipts of the removed account are gone", null, store.reader.state(DocumentReviewCodec.key(docKey)))
+            assertEquals(null, store.reader.state(DocumentReviewCodec.corruptKey(docKey)))
+            assertEquals(null, store.reader.state(DocumentReviewCodec.UPLOAD_RECEIPT_PREFIX + docKey))
+            assertEquals("another account's journal is untouched", "document text", store.reader.state(DocumentReviewCodec.key(otherKey)))
             assertEquals(listOf("Shared scope"), store.reader.scopes(W).map { it.name })
             assertTrue(store.reader.scopes(W2).isEmpty())
             assertEquals(null, store.reader.draft(ChatTarget(mine.id, W2, Fixtures.CHANNEL_1)))

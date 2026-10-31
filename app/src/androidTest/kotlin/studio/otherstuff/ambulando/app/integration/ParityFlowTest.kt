@@ -110,6 +110,11 @@ class ParityFlowTest {
         assertTrue("Tasks and Documents headings", compose.onAllNodesWithText("Tasks").fetchSemanticsNodes().isNotEmpty() && compose.onAllNodesWithText("Documents").fetchSemanticsNodes().isNotEmpty())
         assertTrue("each hit says where it lives", compose.onAllNodes(hasText("Ambulando", substring = true) and hasText("#", substring = true)).fetchSemanticsNodes().isNotEmpty() ||
             compose.onAllNodes(hasText("#general", substring = true)).fetchSemanticsNodes().isNotEmpty())
+            // Opening a task result moves the shared context to the task's channel, as file and message results do.
+        compose.runOnIdle { model.selectContext(null, null) }
+        compose.onAllNodesWithText("Review the native inbox")[0].performClick()
+        compose.waitUntil(20_000) { model.context.channelId == SampleIds.GENERAL }
+        assertEquals(AppSection.TASKS, model.section)
     }
 
     @Test fun theDefaultDocumentOpeningModeIsSavedAndOpensDocumentsInTheEditor() = launch { model ->
@@ -134,14 +139,16 @@ class ParityFlowTest {
     @Test fun aDocumentMovesToAnotherChannelAfterTheConsequencesAreShown() = launch { model ->
         compose.runOnIdle { model.documentOpensInEdit = false; model.section = AppSection.DOCS }
         val doc = runBlocking { model.store.reader.docs(SampleIds.STUDIO).first { it.title == "Native app plan (sample)" } }
+        // The sample document stays where an earlier run moved it, so the destination is whichever channel it is not in.
+        val destination = if (doc.channelId == SampleIds.DESIGN) SampleIds.GENERAL else SampleIds.DESIGN
         compose.waitUntil(20_000) { compose.onAllNodesWithText("Native app plan (sample)").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Native app plan (sample)").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("doc.move").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("doc.move").performClick()
-        compose.onNodeWithTag("doc.move.dest.${SampleIds.DESIGN}").performClick()
+        compose.onNodeWithTag("doc.move.dest.$destination").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("The document moves; it is not copied.", substring = true).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("doc.move.confirm").performClick()
-        compose.waitUntil(20_000) { runBlocking { model.store.reader.doc(SampleIds.STUDIO, doc.id)?.channelId == SampleIds.DESIGN } }
+        compose.waitUntil(20_000) { runBlocking { model.store.reader.doc(SampleIds.STUDIO, doc.id)?.channelId == destination } }
         assertTrue(runBlocking { model.store.reader.doc(SampleIds.STUDIO, doc.id)!!.rowVersion } > doc.rowVersion)
     }
 

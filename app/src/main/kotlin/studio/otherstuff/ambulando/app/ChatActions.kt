@@ -48,10 +48,12 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
  * Reactions with a count (yours highlighted by its "✓") plus a picker of every reaction Tower accepts. Reactions are
  * sent by wire name (`thumbs_up`); rows an earlier build stored by glyph still count and toggle.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable private fun ReactionBar(reactions: List<ReactionRecord>, me: String?, enabled: Boolean, toggle: (ReactionEmoji, ReactionRecord?) -> Unit) {
     var picker by remember { mutableStateOf(false) }
     val live = reactions.filter { !it.deleted }
-    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+    // Wraps, so seven reactions never overflow a narrow screen.
+    FlowRow(verticalArrangement = Arrangement.Center) {
         ReactionEmoji.entries.forEach { emoji ->
             val count = live.count { ReactionEmoji.fromStored(it.emoji) == emoji }
             if (count == 0) return@forEach

@@ -65,7 +65,7 @@ suspend fun WorkspaceSync.moveDocument(
     if (draft != null && draft.baseRowVersion != rowVersion) {
         return@perform DocMoveResult.NotMoved("You have unsaved edits based on an older version of this document. Save or discard them, then move it.")
     }
-    if (draft != null && draft.state != DocDraft.State.EDITING && draft.state != DocDraft.State.FAILED) {
+    if (draft != null && draft.state != DocDraft.State.EDITING && draft.state != DocDraft.State.HELD && draft.state != DocDraft.State.FAILED) {
         return@perform DocMoveResult.NotMoved("This document has edits that still need attention. Resolve them, then move it.")
     }
     try {

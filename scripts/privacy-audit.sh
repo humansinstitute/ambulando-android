@@ -10,6 +10,7 @@
 #
 # Allowed on purpose: the public NIP-19 specification test vector, the publisher npub in zapstore.yaml, the GitHub
 # noreply commit address and example/invalid hosts. Exit status 1 if anything else matches.
+[ -n "${ZSH_VERSION:-}" ] || exec zsh "$0" "$@"  # zsh syntax below; bash/sh would fail with unbound-variable errors
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

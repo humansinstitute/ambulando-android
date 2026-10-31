@@ -86,6 +86,8 @@ class RichActions(
     val openUrl: (String) -> Unit = {},
     /** Draws a stored image (`storage://<uuid>`); screens without a workspace get a placeholder. */
     val storageImage: (@Composable (objectId: String, alt: String) -> Unit)? = null,
+    /** A wiki reference in document text: a bound page opens by id; a title-only one is resolved, chosen or created by the screen. */
+    val openWiki: ((studio.otherstuff.ambulando.core.docs.WikiTarget) -> Unit)? = null,
 )
 
 object RichLinks {
@@ -325,6 +327,14 @@ object InlineText {
                     if (kind != null && id != null) {
                         withLink(LinkAnnotation.Clickable("mention:$kind:$id", TextLinkStyles(style)) { actions.openMention(kind, id) }) { append(run.text) }
                     } else withStyle(style) { append(run.text) }
+                }
+                // A wiki reference opens inside the app: by id when bound (Tower decides access), otherwise resolved by title or created.
+                run.wiki != null -> {
+                    val target = run.wiki!!
+                    val bound = target.documentId != null
+                    style = style.merge(SpanStyle(color = amb.primary, background = amb.accent, textDecoration = TextDecoration.Underline, fontStyle = if (bound) style.fontStyle else FontStyle.Italic))
+                    val open = { actions.openWiki?.invoke(target) ?: target.documentId?.let { actions.openMention("document", it) } ; Unit }
+                    withLink(LinkAnnotation.Clickable("wiki:" + (target.documentId ?: target.title), TextLinkStyles(style)) { open() }) { append(run.text) }
                 }
                 // A stable document link opens that page by id; Tower decides whether this person may read it.
                 WikiLinks.targetId(run.link) != null -> {

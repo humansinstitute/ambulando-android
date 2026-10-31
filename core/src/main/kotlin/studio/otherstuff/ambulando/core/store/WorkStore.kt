@@ -190,11 +190,22 @@ suspend fun StoreWriter.deleteDocDraft(key: String, workspaceId: String) = write
 }
 
 /** The local persistence [studio.otherstuff.ambulando.core.docs.DocumentSaver] needs, over this writer. */
-fun StoreWriter.docDraftStore(): DocDraftStore {
+fun StoreWriter.docDraftStore(reader: StoreReader? = null): DocDraftStore {
     val writer = this
     return object : DocDraftStore {
         override suspend fun saveDocDraft(draft: DocDraft) = writer.saveDocDraft(draft)
         override suspend fun deleteDocDraft(key: String, workspaceId: String) = writer.deleteDocDraft(key, workspaceId)
+        override suspend fun currentDraft(key: String): DocDraft? = reader?.docDraft(key)
+        override suspend fun replaceIfUnchanged(expected: DocDraft, next: DocDraft): Boolean = writer.replaceDocDraftIfUnchanged(expected, next)
+        override suspend fun insertIfAbsent(draft: DocDraft): Boolean = writer.insertDocDraftIfAbsent(draft)
+        override suspend fun finishSave(submitted: DocDraft, saved: SavedDocBody) =
+            writer.finishDocDraftSave(submitted, saved.docRowVersion, saved.sha256, saved.storageObjectId)
+        override suspend fun cachedBody(workspaceId: String, docId: String): DocBodyRecord? = reader?.docBody(workspaceId, docId)
+        override suspend fun saveHead(head: studio.otherstuff.ambulando.core.docs.DocHead, searchText: String) {
+            writer.saveDocBody(head.body, head.doc, searchText)
+        }
+        override suspend fun receipt(key: String): String? = reader?.state(key)
+        override suspend fun setReceipt(key: String, value: String?) = writer.setState(key, value)
         override suspend fun saveDocBody(body: SavedDocBody, doc: SavedDocument, searchText: String) {
             val record = runCatching { DocRecord.parse(doc.raw) }.getOrNull()?.takeIf { it.workspaceId == body.workspaceId && it.id == body.docId }
             writer.saveDocBody(
@@ -639,4 +650,68 @@ suspend fun StoreWriter.rebaseDocDraft(key: String, workspaceId: String, from: I
     val changed = db.run("UPDATE doc_drafts SET base_row_version = ? WHERE key = ? AND base_row_version = ?", to, key, from) > 0
     if (changed) emit(StoreTable.DOC_DRAFTS, workspaceId)
     changed
+}
+
+// MARK: Writer — document drafts, compare-and-set
+// A draft is claimed, replaced or retired only while it is still exactly what the caller read, in one statement, so a later
+// edit made while a caller awaited the network is never overwritten by an older snapshot.
+
+/** Replaces a draft only if it still matches [expected] (body, title, content type, full base identity and state). False: it changed; nothing written. */
+suspend fun StoreWriter.replaceDocDraftIfUnchanged(expected: DocDraft, next: DocDraft): Boolean = write {
+    val changed = db.run(
+        """UPDATE doc_drafts SET title = ?, body = ?, content_type = ?, base_row_version = ?, base_sha256 = ?, base_storage_object_id = ?, state = ?,
+             last_error = ?, recovery_id = ?, updated_at = ?
+           WHERE key = ? AND body = ? AND base_row_version = ? AND base_sha256 = ? AND state = ? AND title = ? AND content_type = ? AND base_storage_object_id = ?""",
+        next.title, next.body, next.contentType, next.baseRowVersion, next.baseSha256, next.baseStorageObjectId, next.state.raw, next.lastError,
+        next.recoveryId, StoreTime.now(),
+        expected.key, expected.body, expected.baseRowVersion, expected.baseSha256, expected.state.raw, expected.title, expected.contentType,
+        expected.baseStorageObjectId,
+    ) > 0
+    if (changed) emit(StoreTable.DOC_DRAFTS, next.workspaceId)
+    changed
+}
+
+/** Stores a draft only when none exists yet (a clean document's first draft). False: another draft appeared first. */
+suspend fun StoreWriter.insertDocDraftIfAbsent(draft: DocDraft): Boolean = write {
+    val changed = db.run(
+        """INSERT INTO doc_drafts(key, connection_id, workspace_id, doc_id, title, body, content_type, base_row_version, base_sha256,
+                                  base_storage_object_id, state, last_error, recovery_id, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(key) DO NOTHING""",
+        draft.key, draft.connectionId, draft.workspaceId, draft.docId, draft.title, draft.body, draft.contentType, draft.baseRowVersion,
+        draft.baseSha256, draft.baseStorageObjectId, draft.state.raw, draft.lastError, draft.recoveryId, StoreTime.now(),
+    ) > 0
+    if (changed) emit(StoreTable.DOC_DRAFTS, draft.workspaceId)
+    changed
+}
+
+/** Removes a draft only if it is still exactly [expected] (the one the person deliberately replaced). */
+suspend fun StoreWriter.deleteDocDraftIfUnchanged(expected: DocDraft): Boolean = write {
+    val changed = db.run(
+        """DELETE FROM doc_drafts WHERE key = ? AND body = ? AND title = ? AND content_type = ?
+             AND base_row_version = ? AND base_sha256 = ? AND base_storage_object_id = ? AND state = ?""",
+        expected.key, expected.body, expected.title, expected.contentType, expected.baseRowVersion, expected.baseSha256,
+        expected.baseStorageObjectId, expected.state.raw,
+    ) > 0
+    if (changed) emit(StoreTable.DOC_DRAFTS, expected.workspaceId)
+    changed
+}
+
+/**
+ * Completes only the submitted snapshot. Typing persisted during the request keeps its body and title and advances to the
+ * accepted base, so its next save cannot conflict with this device's own successful save.
+ */
+suspend fun StoreWriter.finishDocDraftSave(submitted: DocDraft, savedRowVersion: Int, savedSha256: String, savedStorageObjectId: String): Unit = write {
+    db.run(
+        """DELETE FROM doc_drafts WHERE key = ? AND body = ? AND title = ? AND content_type = ?
+             AND base_row_version = ? AND base_sha256 = ? AND base_storage_object_id = ? AND state = ?""",
+        submitted.key, submitted.body, submitted.title, submitted.contentType, submitted.baseRowVersion, submitted.baseSha256,
+        submitted.baseStorageObjectId, submitted.state.raw,
+    )
+    db.run(
+        """UPDATE doc_drafts SET base_row_version = ?, base_sha256 = ?, base_storage_object_id = ?, updated_at = ?
+           WHERE key = ? AND base_row_version = ? AND base_sha256 = ? AND base_storage_object_id = ?""",
+        savedRowVersion, savedSha256, savedStorageObjectId, StoreTime.now(),
+        submitted.key, submitted.baseRowVersion, submitted.baseSha256, submitted.baseStorageObjectId,
+    )
+    emit(StoreTable.DOC_DRAFTS, submitted.workspaceId)
 }

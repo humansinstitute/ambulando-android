@@ -32,6 +32,10 @@ suspend fun StoreWriter.removeConnection(id: String) = write {
     val ids = db.query("SELECT workspace_id FROM workspaces WHERE connection_id = ?", id) { it.text(0)!! }
     db.run("DELETE FROM connections WHERE id = ?", id)
     db.run("DELETE FROM app_state WHERE key = ?", WorkspaceSelection.listedKey(id))
+    // Review journals (copies of document text) and upload receipts are keyed by connection id and would otherwise outlive the account.
+    for (prefix in listOf(DocumentReviewCodec.key(""), DocumentReviewCodec.corruptKey(""), DocumentReviewCodec.UPLOAD_RECEIPT_PREFIX)) {
+        db.run("DELETE FROM app_state WHERE key LIKE ?", "$prefix$id:%") // ids are UUIDs; the prefixes have no wildcard characters
+    }
     for (w in ids) if (!db.workspaceStillReferenced(w)) deleteWorkspaceRows(w)
     for (t in StoreTable.entries) emit(t)
 }

@@ -256,7 +256,16 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                 TextButton(onClick = { model.editorDoc = docId }, enabled = body != null && record?.accessRemoved == false && !w.accessRemoved) { Text("Edit") }
                 record?.let { MoveDocument(model, it, !it.accessRemoved && !w.accessRemoved) }
             }
-            body?.let { RichDocument(model, it, record?.accessRemoved == false) } ?: Text("Document body not cached yet")
+            val c = model.connection
+            val readerScope = rememberCoroutineScope()
+            val epoch = remember(docId) { mutableIntStateOf(0) }
+            val readerWiki = if (c != null) remember(docId, c.id, w.id) {
+                studio.otherstuff.ambulando.core.docs.WikiLinkController(docId, appWikiEnvironment(model, c, w, docId,
+                    visit = { studio.otherstuff.ambulando.core.docs.WikiVisit(model.connection?.id, model.workspace?.id ?: "", true, epoch.intValue, c.signerNpub, model.wikiContextEpoch) },
+                    beforeLeaving = { true }, navigate = { id -> services.openMention("document", id) }))
+            } else null
+            DisposableEffect(docId) { onDispose { epoch.intValue++ } }
+            body?.let { RichDocument(model, it, record?.accessRemoved == false, readerWiki) } ?: Text("Document body not cached yet")
             LinkedFrom(model, docId)
             DocumentComments(model, docId, record?.accessRemoved == false && !w.accessRemoved)
         } }

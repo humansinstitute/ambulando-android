@@ -17,6 +17,11 @@ data class InlineRun(
     val image: String? = null,
     /** An inline object shown as a label (wiki link, image, file). */
     val `object`: Boolean = false,
+    /**
+     * A wiki reference in a document: bound to a document id, or title-only until a page is chosen or created. Kept apart
+     * from [link] so it is routed inside the app and never treated as a web address.
+     */
+    val wiki: WikiTarget? = null,
 )
 
 /**
@@ -39,11 +44,32 @@ sealed class RenderBlock {
 }
 
 object DocumentRender {
-    /** Blocks for any decoded body. */
+    /**
+     * Blocks for any decoded body. Document text only: canonical `[Title](wiki:<id>)` links and literal `[[Title]]` become
+     * wiki references (numbered among same-title references in reading order); code stays literal. Chat renders through
+     * [markdownBlocks] directly and is not affected.
+     */
     fun blocks(body: DocumentBody): List<RenderBlock> {
         val state = body.editorState
-        if (state != null) return (state["content"]?.arrayValue ?: emptyList()).map { block(it) }
-        return markdownBlocks(body.markdown)
+        if (state != null) return WikiLinks.numbered(wikified((state["content"]?.arrayValue ?: emptyList()).map { block(it) }))
+        return WikiLinks.numbered(wikified(markdownBlocks(body.markdown)))
+    }
+
+    internal fun wikified(blocks: List<RenderBlock>): List<RenderBlock> {
+        fun runs(list: List<InlineRun>): List<InlineRun> = WikiLinks.expandLiterals(list.map { run ->
+            val id = if (run.wiki == null && !run.code) WikiLinks.targetId(run.link) else null
+            if (id != null) run.copy(link = null, wiki = WikiTarget(documentId = id, title = run.text)) else run
+        })
+        return blocks.map { block ->
+            when (block) {
+                is RenderBlock.Heading -> block.copy(runs = runs(block.runs))
+                is RenderBlock.Paragraph -> block.copy(runs = runs(block.runs))
+                is RenderBlock.Quote -> RenderBlock.Quote(wikified(block.blocks))
+                is RenderBlock.ListBlock -> block.copy(items = block.items.map { it.copy(blocks = wikified(it.blocks)) })
+                is RenderBlock.Table -> RenderBlock.Table(block.rows.map { row -> row.map { runs(it) } })
+                else -> block
+            }
+        }
     }
 
     // ProseMirror
@@ -107,8 +133,12 @@ object DocumentRender {
                 run
             }
             "hardBreak" -> InlineRun(text = "\n")
-            "fdWikiLink" -> InlineRun(text = node["attrs"]?.get("title")?.stringValue ?: "Linked document",
-                link = node["attrs"]?.get("documentId")?.stringValue?.takeIf { it.isNotEmpty() }?.let { "wiki:$it" }, `object` = true)
+            "fdWikiLink" -> {
+                val attrs = node["attrs"]
+                val title = attrs?.get("title")?.stringValue ?: "Linked document"
+                InlineRun(text = title, `object` = true,
+                    wiki = WikiTarget(documentId = attrs?.get("documentId")?.stringValue?.takeIf { it.isNotEmpty() }, title = title))
+            }
             "fdStorageImage", "image" -> {
                 val attrs = node["attrs"]
                 InlineRun(text = attrs?.get("alt")?.stringValue ?: "", image = imageSource(attrs), `object` = true)

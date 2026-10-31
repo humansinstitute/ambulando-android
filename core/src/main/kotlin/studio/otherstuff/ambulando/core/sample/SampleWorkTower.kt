@@ -50,7 +50,7 @@ class SampleWorkTower(
     companion object {
         val COLLECTIONS = listOf(
             "tasks", "task_comments", "docs", "doc_comments", "objects", "files", "folders", "view_states", "reactions", "leases", "requests",
-            "recoveries", "file_versions",
+            "recoveries", "file_versions", "fenced_sessions",
         )
 
         /** Whether a route under `/workspaces/:w/` belongs to this stand-in. */
@@ -230,6 +230,15 @@ class SampleWorkTower(
     }
 
     fun releaseHeldLease(doc: String) = mutate { state.put("leases", "held-$doc", null) }
+
+    /** Test seam: nobody holds the document and no recovery copies of it remain (the sample state persists between runs). */
+    fun resetEditing(doc: String) = mutate {
+        state.rows("leases").filter { it["entity_id"] == doc }.forEach { lease ->
+            state.put("leases", lease["id"] as String, null)
+        }
+        state.put("leases", "held-$doc", null)
+        state.rows("recoveries").filter { it["doc_id"] == doc }.forEach { state.put("recoveries", it["id"] as String, null) }
+    }
 
     fun seedFile(channel: String, scope: String, name: String, bytes: ByteArray, contentType: String, folder: String? = null): String = mutate {
         val objectId = storeObject(bytes, contentType, name)
@@ -469,6 +478,38 @@ class SampleWorkTower(
                     ),
                 )
             }
+            method == "GET" && n == 3 && head == "docs" && p[2] == "recoveries" ->
+                indexPage(state.rows("recoveries").filter { it["doc_id"] == p[1] }.map { recoveryOut(it) }.reversed(), "recoveries", url)
+            method == "GET" && n == 5 && head == "docs" && p[2] == "recoveries" && p[4] == "body" -> {
+                val r = state.row("recoveries", p[3]) ?: return errorReply(404, "recovery_not_found")
+                val obj = state.row("objects", r["storage_object_id"].asString() ?: "") ?: return errorReply(404, "recovery_body_not_found")
+                200 to linkedMapOf(
+                    "recovery" to recoveryOut(r),
+                    "body" to linkedMapOf(
+                        "object_id" to r["storage_object_id"], "encoding" to "base64", "base64_data" to obj["bytes"], "sha256_hex" to obj["sha256_hex"],
+                        "content_type" to (obj["content_type"] ?: ""),
+                    ),
+                )
+            }
+            method == "POST" && n == 5 && head == "docs" && p[2] == "recoveries" && p[4] == "discard" -> {
+                if (state.row("recoveries", p[3]) == null) return errorReply(404, "recovery_not_found")
+                state.put("recoveries", p[3], null)
+                200 to mapOf("discarded" to true)
+            }
+            method == "POST" && n == 5 && head == "docs" && p[2] == "recoveries" && p[4] == "promote" -> {
+                val doc = state.row("docs", p[1]) ?: return errorReply(404, "doc_not_found")
+                val r = state.row("recoveries", p[3]) ?: return errorReply(404, "recovery_not_found")
+                val head0 = state.row("objects", doc["storage_object_id"].asString() ?: "") ?: LinkedHashMap()
+                // A promotion names the exact head the person reviewed and needs a live lease; a stale choice keeps both versions.
+                if (o["row_version"].asInt() != doc["row_version"].asInt() || o["base_body_sha256_hex"].asString() != head0["sha256_hex"].asString()) return errorReply(409, "stale_row_version")
+                if (state.rows("leases").none { it["entity_id"] == p[1] && it["token"] == o["lease_token"].asString() && it["holder"] == actor }) return errorReply(409, "lease_required")
+                doc["storage_object_id"] = r["storage_object_id"]
+                bump(doc)
+                state.put("docs", p[1], doc)
+                state.put("recoveries", p[3], null)
+                emitDoc(doc, "updated")
+                200 to mapOf("doc" to docOut(doc))
+            }
             method == "PATCH" && n == 2 && head == "docs" -> patchDoc(p[1], o)
             method == "POST" && n == 3 && head == "docs" && p[2] == "move" -> moveDoc(p[1], o)
             method == "GET" && n == 3 && head == "docs" && p[2] == "comments" -> {
@@ -504,18 +545,42 @@ class SampleWorkTower(
                 200 to mapOf("comment" to c)
             }
 
+            // Who may edit now (an older Tower answers 404 here, which the app treats as "not inspectable").
+            method == "GET" && n == 1 && head == "edit-leases" -> {
+                val entity = url.query("entity_id") ?: return errorReply(400, "validation_error")
+                val current = state.rows("leases").firstOrNull { it["entity_id"] == entity }
+                200 to linkedMapOf(
+                    "document_edit_protocol" to "document_edit_session_v1",
+                    "lease" to current?.let { linkedMapOf("id" to it["id"], "entity_id" to entity, "holder_actor_npub" to it["holder"], "expires_at" to "2026-10-24T11:00:00.000Z") },
+                )
+            }
             method == "POST" && n == 2 && head == "edit-leases" && p[1] == "acquire" -> {
                 val entity = o["entity_id"].asString() ?: ""
-                state.row("leases", "held-$entity")?.let { held ->
-                    return errorReply(409, "edit_lease_held", mapOf("details" to mapOf("holder_actor_npub" to (held["holder"] ?: ""), "expires_at" to "later")))
+                val session = o["editor_session_id"].asString()
+                val takeover = o["takeover"] == true
+                val expected = o["expected_lease_id"].asString()
+                if (session != null && state.rows("fenced_sessions").any { it["session"] == session }) return errorReply(409, "editor_superseded")
+                val existing = state.rows("leases").firstOrNull { it["entity_id"] == entity }
+                if (takeover) {
+                    // Explicit takeover of exactly the lease the person inspected; Tower authorizes the actor, not the holder's identity.
+                    if (existing == null || existing["id"] != expected) return errorReply(409, "takeover_lease_changed")
+                    (existing["session"] as? String)?.let { state.put("fenced_sessions", it, linkedMapOf("session" to it)) }
+                    state.put("leases", state.rows("leases").first { it["entity_id"] == entity }["id"] as String, null)
+                    state.put("leases", "held-$entity", null)
+                    // The authority barrier: same text, new row version.
+                    state.row("docs", entity)?.let { doc -> bump(doc); state.put("docs", entity, doc); emitDoc(doc, "updated") }
+                } else if (existing != null && !(session != null && existing["session"] == session && existing["holder"] == actor)) {
+                    return errorReply(409, "edit_lease_held", mapOf("details" to mapOf("holder_actor_npub" to (existing["holder"] ?: ""), "expires_at" to "later")))
                 }
-                val id = newUUID()
-                val token = newUUID()
-                state.put("leases", id, linkedMapOf("id" to id, "entity_id" to entity, "holder" to actor, "token" to token))
-                201 to mapOf(
+                val reuse = if (takeover) null else existing
+                val id = (reuse?.get("id") as? String) ?: newUUID()
+                val token = (reuse?.get("token") as? String) ?: newUUID()
+                state.put("leases", id, linkedMapOf("id" to id, "entity_id" to entity, "holder" to actor, "token" to token, "session" to session))
+                201 to linkedMapOf(
+                    "document_edit_protocol" to if (session != null) "document_edit_session_v1" else null,
                     "lease" to linkedMapOf(
                         "id" to id, "entity_type" to "document", "entity_id" to entity, "field_path" to null, "lease_token" to token,
-                        "holder_actor_npub" to actor, "expires_at" to "2026-10-24T11:00:00.000Z",
+                        "holder_actor_npub" to actor, "expires_at" to "2026-10-24T11:00:00.000Z", "editor_session_id" to session,
                     ),
                 )
             }
@@ -730,6 +795,11 @@ class SampleWorkTower(
         }
     }
 
+    private fun recoveryOut(r: Row): Row = linkedMapOf(
+        "id" to r["id"], "workspace_id" to workspaceId, "doc_id" to r["doc_id"], "submitted_body" to mapOf("storage_object_id" to r["storage_object_id"]),
+        "submitted_patch" to mapOf("title" to r["title"]), "provenance" to mapOf("created_at" to (r["created_at"] ?: "2026-10-24T10:00:00.000Z")),
+    )
+
     private fun docOut(row: Row): Row {
         val out = LinkedHashMap(row)
         out["body"] = linkedMapOf("object_id" to row["storage_object_id"], "route" to "/api/v4/flightdeck-pg/workspaces/$workspaceId/docs/${row["id"]}/body")
@@ -837,11 +907,11 @@ class SampleWorkTower(
             state.put("docs", id, row)
         }
         val head = state.row("objects", row["storage_object_id"].asString() ?: "") ?: LinkedHashMap()
-        val stale = o["row_version"].asInt() == null || o["row_version"].asInt() != row["row_version"].asInt() ||
+        val stale = o["base_available"] == false || o["row_version"].asInt() == null || o["row_version"].asInt() != row["row_version"].asInt() ||
             o["base_body_sha256_hex"].asString() != head["sha256_hex"].asString()
         if (stale) {
             val recovery = newUUID()
-            state.put("recoveries", recovery, linkedMapOf("id" to recovery, "doc_id" to id, "storage_object_id" to objectId))
+            state.put("recoveries", recovery, linkedMapOf("id" to recovery, "doc_id" to id, "storage_object_id" to objectId, "title" to (o["title"] ?: row["title"]), "created_at" to now()))
             return errorReply(409, "document_recovery_created", mapOf("recovery" to mapOf("id" to recovery), "canonical_advanced" to false))
         }
         val token = o["lease_token"].asString()

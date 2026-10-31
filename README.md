@@ -15,7 +15,7 @@ Updates signed with the same release certificate retain the identity, connection
   per-conversation drafts and a durable retrying outbox. Large pasted text becomes a `.txt` attachment with a paged
   editor, offline recovery and sent-file version history.
 - Task lists/boards, creation, state/priority/assignee changes, comments and conflict handling.
-- Native rich-document reading, bundled lossless editing with edit leases and durable drafts, comments and recovery.
+- Native rich-document reading, bundled lossless editing with edit leases and durable drafts, comments, preserved drafts with reviewable three-way merges, explicit takeover, saved versions, and `[[` wiki linking with create-and-link ([reconciliation](docs/document-reconciliation.md), [wiki links](docs/wiki-links.md)).
 - Files and folders, uploads, hash-verified downloads, local previews and Android sharing.
 - Notification inbox shared with other Ambulando apps: unread badge, filters, read/dismiss/archive, tap-through, offline reading.
 - Local search; Deck activity, personal pins, recent channels, canvases and WApp/agent launchers.

@@ -13,80 +13,141 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import org.json.JSONObject
 import studio.otherstuff.ambulando.app.web.EditorWebHost
 import studio.otherstuff.ambulando.core.docs.*
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.sync.downloadAttachment
+import studio.otherstuff.ambulando.core.transport.ConnectionFailure
 import androidx.compose.ui.platform.testTag
 import kotlinx.serialization.json.put
 
-/** The original bundled lossless editor, with device-persisted drafts and lease-checked saves. */
+/** Drives the bundled editor page for [DocumentEditController]. Results come back as the JSON text `evaluateJavascript` yields. */
+internal class WebDocumentPage(private val host: () -> EditorWebHost?) : DocumentPage {
+    private fun unquote(raw: String?): String? {
+        if (raw == null || raw == "null") return null
+        return runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull()
+    }
+
+    override suspend fun snapshot(): String? = unquote(host()?.query("window.ambulandoDocument.snapshot"))
+    override fun load(payload: String) { host()?.call("window.ambulandoDocument.load", payload) }
+    override fun setEditable(editable: Boolean) { host()?.call("window.ambulandoDocument.setEditable", editable.toString()) }
+
+    override suspend fun wikiBind(title: String, documentId: String, occurrence: Int?, expectedCount: Int?): Int? {
+        val request = JSONObject().put("title", title).put("documentId", documentId)
+            .put("occurrence", occurrence ?: JSONObject.NULL).put("expectedCount", expectedCount ?: JSONObject.NULL)
+        return host()?.query("window.ambulandoDocument.wikiBind", request.toString())?.toIntOrNull()
+    }
+
+    override suspend fun wikiInsert(documentId: String?, title: String, range: WikiRange?): WikiPlacement? {
+        val request = JSONObject().put("documentId", documentId ?: JSONObject.NULL).put("title", title)
+        range?.let { request.put("from", it.from).put("to", it.to) }
+        val placed = unquote(host()?.query("window.ambulandoDocument.wikiInsert", request.toString())) ?: return null
+        val o = runCatching { JSONObject(placed) }.getOrNull() ?: return null
+        return WikiPlacement(o.optInt("occurrence", 0), o.optInt("count", 0))
+    }
+
+    override suspend fun wikiSelection(): WikiSelection? {
+        val raw = unquote(host()?.query("window.ambulandoDocument.wikiSelection")) ?: return null
+        val o = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        return WikiSelection(WikiRange(o.optInt("from"), o.optInt("to")), o.optString("text"))
+    }
+
+    override fun wikiTitles(titles: Map<String, String>) { host()?.call("window.ambulandoDocument.wikiTitles", JSONObject(titles).toString()) }
+}
+
+/** The original bundled lossless editor, with device-persisted drafts, preserved reviewable reconciliation and lease-checked saves. */
 @Composable internal fun DocumentEditor(model: AppModel, docId: String, close: () -> Unit) {
     val c = model.connection ?: return
     val w = model.workspace ?: return
+    val loaded by produceState<Pair<Boolean, studio.otherstuff.ambulando.core.transport.DocRecord?>>(false to null, c.id, w.id, docId) {
+        value = true to model.store.reader.doc(w.id, docId)
+    }
+    val record = loaded.second
+    if (record == null) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+            TextButton(onClick = close) { Text("Back") }
+            Text(if (loaded.first) "Document not cached. Go back, unlock and open it again." else "Opening editor; your draft stays on this device.", Modifier.padding(12.dp))
+        }
+        return
+    }
+    DocumentEditorBody(model, c, w, record, close)
+}
+
+@Composable private fun DocumentEditorBody(
+    model: AppModel, c: ConnectionRecord, w: studio.otherstuff.ambulando.core.transport.WorkspaceRecord, record: studio.otherstuff.ambulando.core.transport.DocRecord, close: () -> Unit,
+) {
+    val docId = record.id
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val runner = remember(model) { DocumentSaveRunner(model.store, model.engine, model.identity, model.transport) }
     var host by remember(docId) { mutableStateOf<EditorWebHost?>(null) }
+    val page = remember(docId) { WebDocumentPage { host } }
     var notice by remember(docId) { mutableStateOf<String?>(null) }
-    var draft by remember(docId) { mutableStateOf<DocDraft?>(null) }
-    var base by remember(docId) { mutableStateOf<DocumentBody?>(null) }
-    var payload by remember(docId) { mutableStateOf<String?>(null) }
     var ready by remember(docId) { mutableStateOf(false) }
-    var saving by remember(docId) { mutableStateOf(false) }
-    var encodingFailed by remember(docId) { mutableStateOf(false) }
-    var title by remember(docId) { mutableStateOf("") }
-    // A selection comment is anchored to the stored version, so it is offered while the draft still equals that version.
     var hasSelection by remember(docId) { mutableStateOf(false) }
-    var edited by remember(docId) { mutableStateOf(false) }
     var anchor by remember(docId) { mutableStateOf<JSONObject?>(null) }
+    var showReview by remember(docId) { mutableStateOf(false) }
+    var showTakeover by remember(docId) { mutableStateOf(false) }
+    var showVersions by remember(docId) { mutableStateOf(false) }
+    var closing by remember(docId) { mutableStateOf(false) }
     val inserted = remember(docId) { mutableStateListOf<String>() }
     val uploadTarget = remember(docId) { ChatTarget(c.id, w.id, "content-doc-$docId") }
     val uploadRows by model.uploads.items.collectAsState()
-    val commands = remember(docId) { Channel<suspend () -> Unit>(Channel.UNLIMITED) }
-    LaunchedEffect(commands) { for (command in commands) try { command() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = e.message } }
-    fun changed(content: String) {
-        edited = true
-        val decoded = base ?: return
-        commands.trySend {
-            val old = draft ?: return@trySend
-            val encoded = try { withContext(Dispatchers.Default) {
-                if (decoded.editing == DocumentBody.Editing.ProseMirror) {
-                    val state = JsonValue.parseOrNull(content.toByteArray()) ?: error("Invalid editor state")
-                    DocumentBody.checkEdited(state, decoded.editorState)
-                    decoded.encoded(state)
-                } else decoded.encoded(content)
-            } } catch (e: Exception) { encodingFailed = true; throw e }
-            encodingFailed = false
-            val next = DocDraft(c.id, w.id, docId, title.ifBlank { old.title }, encoded.bytes, encoded.contentType, old.baseRowVersion, old.baseSha256, old.baseStorageObjectId, DocDraft.State.EDITING)
-            model.store.writer.saveDocDraft(next); draft = next
-        }
+    var visitEpoch by remember(docId) { mutableIntStateOf(0) }
+    var visible by remember(docId) { mutableStateOf(true) }
+
+    val controller = remember(docId, c.id, w.id) {
+        lateinit var self: DocumentEditController
+        self = DocumentEditController(
+            record, c, w, model.store, RunnerAuthority(model.documents, c, w), scope,
+            isUnlocked = { model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked },
+            uploadsPending = { inserted.isNotEmpty() || UploadToken.containsAny(self.currentContent) },
+        )
+        self
     }
-    fun snapshotThen(action: suspend () -> Unit) {
-        val page = host ?: run { commands.trySend(action); return }
-        page.evaluate("window.ambulandoDocument.snapshot()") { result ->
-            if (result != null && result != "null") {
-                val content = org.json.JSONTokener(result).nextValue() as? String
-                content?.let(::changed)
-            }
-            commands.trySend { if (!encodingFailed) action() else saving = false }
-        }
+    val s by controller.state.collectAsState()
+
+    // Wiki behaviour for this screen: it reads the local store, keeps the draft safe before leaving and binds through the editor.
+    val wiki = remember(controller) {
+        WikiLinkController(docId, appWikiEnvironment(model, c, w, docId,
+            visit = { WikiVisit(model.connection?.id, model.workspace?.id ?: "", visible && !closing, visitEpoch, c.signerNpub, model.wikiContextEpoch) },
+            beforeLeaving = { controller.checkpoint() && controller.persistReview() },
+            navigate = { documentId ->
+                // The draft is stored; leave the editor (releasing its lease) and open the linked page. Returning later resumes the draft.
+                scope.launch {
+                    closing = true
+                    try { controller.close() } finally { model.editorDoc = null; model.pendingRecordOpen = "document" to documentId }
+                }
+            }))
     }
+    wiki.editor = controller
+    val wikiState by wiki.state.collectAsState()
+    LaunchedEffect(wikiState.pendingOpen) { if (wikiState.pendingOpen != null) wiki.openPendingCreated() }
+    val titles = remember(wikiState.context) { wikiState.context.docs.associate { it.id to it.title } }
+    LaunchedEffect(titles, ready) { if (ready && titles.isNotEmpty()) page.wikiTitles(titles) }
+
     val uploadHost = remember(docId) { object : UploadTokenHost {
         override val uploadTarget = uploadTarget
-        override val uploadText get() = (draft?.body?.toString(Charsets.UTF_8) ?: "") + inserted.joinToString("\n")
+        override val uploadText get() = controller.currentContent + inserted.joinToString("\n")
         override fun replaceUploadToken(token: String, replacement: String): Boolean {
             if (!uploadText.contains(token)) return false
             host?.call("window.ambulandoDocument.replaceUpload", token, editorUploadNode(replacement)) ?: return false
             inserted.remove(token)
-            snapshotThen { }
+            scope.launch { controller.checkpoint() }
             return true
         }
     } }
-    LaunchedEffect(ready, payload) { if (ready && payload != null) model.uploads.attach(uploadHost) }
+    LaunchedEffect(ready) { if (ready) model.uploads.attach(uploadHost) }
     DisposableEffect(uploadHost) { onDispose { model.uploads.detach(uploadHost) } }
+    DisposableEffect(controller) {
+        WikiEditors.register(controller)
+        onDispose {
+            WikiEditors.unregister(controller)
+            // Android can recreate the activity (rotation, theme, font size) without Back: the draft is stored and the lease released, so the
+            // reopened editor takes over its own document instead of waiting out the old session's lease.
+            if (!closing) model.launchDetached { runCatching { controller.checkpoint(); controller.persistReview() }; controller.close() }
+        }
+    }
     fun paste(item: PastedItem) {
         val tokens = model.uploads.paste(listOf(item), uploadTarget, w.appNpub, "doc-rich")
         inserted.addAll(tokens)
@@ -103,31 +164,34 @@ import kotlinx.serialization.json.put
         }
     }
     val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    DisposableEffect(owner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event -> if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) snapshotThen { } }
+    DisposableEffect(owner, controller) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                // Android may end the process right after stop: local durability first, then a best-effort cloud flush.
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> { visible = false; visitEpoch++; scope.launch { controller.setActive(false) } }
+                androidx.lifecycle.Lifecycle.Event.ON_START -> { visible = true; visitEpoch++; scope.launch { controller.setActive(true) } }
+                else -> {}
+            }
+        }
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
-    fun finish() { snapshotThen { try { runner.release(c, w, docId) } finally { close() } } }
+    fun finish() {
+        if (closing) return
+        closing = true
+        // Nothing is thrown away on the way out: the page's last text is stored as the draft and the review work is kept.
+        scope.launch(NonCancellable) {
+            try { controller.checkpoint(); controller.persistReview(); controller.close() } finally { close() }
+        }
+    }
     BackHandler { finish() }
-    LaunchedEffect(c.id, w.id, docId) {
+
+    LaunchedEffect(controller) {
         try {
-            val doc = model.store.reader.doc(w.id, docId) ?: error("Document not cached")
-            check(!doc.accessRemoved && !w.accessRemoved) { "No longer available to you" }
-            val stored = model.store.reader.docBody(w.id, docId) ?: error("Download the document before editing")
-            val previous = model.store.reader.docDraft(DocDraft.key(c.id, w.id, docId))
-            val initial = previous ?: DocDraft(c.id, w.id, docId, doc.title, stored.bytes, stored.contentType, doc.rowVersion.toInt(), stored.sha256, stored.storageObjectId, DocDraft.State.EDITING)
-            val decoded = withContext(Dispatchers.Default) { DocumentBody(initial.body, initial.contentType) }
-            check(decoded.isEditable) { "This document format is read-only" }
-            base = decoded; draft = initial; title = initial.title
-            // A restored draft that differs from the stored text is already an edit: its offsets would not match the stored version.
-            edited = previous != null && !previous.body.contentEquals(stored.bytes)
-            model.store.writer.saveDocDraft(initial)
-            runner.acquire(c, w, docId)
-            payload = if (decoded.editorState != null) JSONObject().put("mode", "rich").put("state", JSONObject(decoded.editorState!!.serializedString())).toString()
-                else JSONObject().put("mode", "markdown").put("markdown", decoded.markdown).toString()
-            while (isActive) { delay(30_000); runner.renew(c, w, docId) }
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = e.message }
+            controller.load()
+            if (controller.mode is DocumentEditController.Mode.Unavailable) notice = (controller.mode as DocumentEditController.Mode.Unavailable).reason
+            else if (controller.prepareOpening()) controller.holdLease()
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = (e as? UserFacingError)?.userMessage ?: ConnectionFailure.userMessage(e) }
     }
     DisposableEffect(docId) {
         val made = EditorWebHost.create(context, "document.html", setOf("document", "documentFile"), 45 * 1024 * 1024) { channel, raw ->
@@ -148,10 +212,18 @@ import kotlinx.serialization.json.put
             } else scope.launch { try {
                 val event = withContext(Dispatchers.Default) { JSONObject(raw) }
                 when (event.optString("type")) {
-                    "ready" -> ready = true
-                    "change" -> changed(event.getString("content"))
+                    "ready" -> { ready = true; controller.pageAttached(page) }
+                    "change" -> controller.pageChanged(event.getString("content"))
                     "state" -> hasSelection = event.optJSONObject("active")?.optBoolean("selection") == true
                     "anchor" -> anchor = event.optJSONObject("anchor")
+                    "wiki" -> {
+                        val from = if (event.has("from") && !event.isNull("from")) event.getInt("from") else null
+                        val to = if (event.has("to") && !event.isNull("to")) event.getInt("to") else null
+                        wiki.pageWiki(event.optString("action"), event.optString("documentId").takeIf { it.isNotEmpty() && it != "null" }, event.optString("title"),
+                            event.optInt("occurrence", 0), event.optInt("count", 0), if (from != null && to != null) WikiRange(from, to) else null, event.optString("message").takeIf { it.isNotEmpty() })
+                    }
+                    "wiki-query" -> wiki.pageWikiQuery(event.optBoolean("active"), event.optString("query"),
+                        if (event.has("from")) event.optInt("from") else null, if (event.has("to")) event.optInt("to") else null)
                     "need-image" -> scope.launch {
                         val id = event.optString("objectId")
                         if (studio.otherstuff.ambulando.core.transport.isUUID(id)) {
@@ -168,53 +240,70 @@ import kotlinx.serialization.json.put
                             }
                         }
                     }
-                    "error" -> notice = event.optString("message")
-                    "loaded" -> if (!event.optBoolean("ok")) notice = event.optString("message")
+                    "error" -> controller.pageError(event.optString("message"))
+                    "loaded" -> controller.pageLoaded(event.optBoolean("ok"), event.optString("message").takeIf { it.isNotEmpty() })
                 }
             } catch (e: CancellationException) { throw e } catch (_: Exception) { notice = "Editor message could not be read; the previous draft is preserved." } }
         }
         made.onSuccess { host = it; it.load() }.onFailure { notice = it.message }
-        onDispose { made.getOrNull()?.destroy(); commands.close() }
+        onDispose { made.getOrNull()?.destroy(); host = null }
     }
-    LaunchedEffect(ready, payload) { if (ready) payload?.let { host?.call("window.ambulandoDocument.load", it) } }
+
+    val saving = s.saving
+    val canType = ready && !saving && !s.followingRemote && !s.permissionDenied && !closing
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         if (model.environment.isSample) Text("Sample data", style = MaterialTheme.typography.labelSmall)
-        Row {
-            TextButton(onClick = ::finish, enabled = !saving) { Text("Back") }
-            TextButton(enabled = !saving && payload != null && ready && host?.failure == null && inserted.isEmpty(), onClick = {
-                saving = true
-                snapshotThen {
-                    try {
-                        val current = draft ?: error("No draft")
-                        val savingDraft = DocDraft(c.id, w.id, docId, title.ifBlank { current.title }, current.body, current.contentType, current.baseRowVersion, current.baseSha256, current.baseStorageObjectId, current.state)
-                        val result = runner.save(savingDraft, c, w)
-                        when (result) {
-                            is DocSaveResult.Saved -> { try { runner.release(c, w, docId) } finally { close() } }
-                            is DocSaveResult.NotSaved -> notice = result.message
-                            is DocSaveResult.Recovery -> notice = result.message
-                            is DocSaveResult.LeaseHeld -> notice = result.message
-                        }
-                    } finally { saving = false }
-                }
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            TextButton(onClick = ::finish, enabled = !saving, modifier = Modifier.testTag("doc.editor.back")) { Text("Back") }
+            TextButton(enabled = !saving && ready && host?.failure == null && inserted.isEmpty() && !s.permissionDenied && !closing, modifier = Modifier.testTag("doc.editor.save"), onClick = {
+                scope.launch { controller.save() }
             }) { Text(if (saving) "Saving…" else "Save") }
+            Spacer(Modifier.weight(1f))
+            TextButton(enabled = ready && !saving && !s.permissionDenied, modifier = Modifier.testTag("doc.editor.versions"), onClick = { showVersions = true }) { Text("Versions") }
         }
-        OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(s.title, { controller.setTitle(it) }, label = { Text("Title") }, enabled = !s.followingRemote && !s.permissionDenied, modifier = Modifier.fillMaxWidth().testTag("doc.editor.title"))
         Row(Modifier.horizontalScroll(rememberScrollState())) {
             listOf("bold" to "Bold", "italic" to "Italic", "heading" to "Heading", "bulletList" to "Bullets", "orderedList" to "Numbered", "taskList" to "Checklist", "blockquote" to "Quote", "codeBlock" to "Code", "undo" to "Undo", "redo" to "Redo").forEach { (command, label) ->
-                TextButton(enabled = ready && !saving, onClick = { host?.call("window.ambulandoDocument.command", command, "{}") }) { Text(label) }
+                TextButton(enabled = canType, onClick = { host?.call("window.ambulandoDocument.command", command, "{}") }) { Text(label) }
             }
-            TextButton(enabled = ready && !saving, onClick = { picker.launch(arrayOf("*/*")) }) { Text("Attach") }
-            TextButton(enabled = ready && !saving && hasSelection && !edited, onClick = { host?.call("window.ambulandoDocument.captureAnchor") },
+            TextButton(enabled = canType, onClick = { picker.launch(arrayOf("*/*")) }) { Text("Attach") }
+            TextButton(enabled = canType, onClick = { scope.launch { wiki.openToolbarPicker() } }, modifier = Modifier.testTag("doc.editor.link")) { Text("Link") }
+            TextButton(enabled = canType && hasSelection && !s.dirty, onClick = { host?.call("window.ambulandoDocument.captureAnchor") },
                 modifier = Modifier.testTag("doc.editor.comment")) { Text("Comment") }
         }
         uploadRows.filter { it.target == uploadTarget && it.markdown == null }.forEach { upload -> Row { Text(upload.filename); if (upload.retryable) TextButton(onClick = { model.uploads.retry(upload.id) }) { Text("Retry") }; TextButton(onClick = { model.uploads.remove(upload.id); inserted.remove(upload.token) }) { Text("Remove") } } }
-        if (hasSelection && edited) Text("Save your changes before commenting on a selection.", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
+        if (hasSelection && s.dirty) Text("Save your changes before commenting on a selection.", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
+
+        // Authority: who may type, and the explicit way to take over from another editor.
+        if (s.authorityLost || s.permissionDenied) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("doc.editor.authority")) {
+                Text(if (s.permissionDenied) s.leaseState.takeIf { it.startsWith("Read only") } ?: "Read only. Your local work remains on this device." else s.leaseState, style = MaterialTheme.typography.bodySmall)
+                if (s.canTakeover && !s.permissionDenied) TextButton(onClick = { showTakeover = true }, modifier = Modifier.testTag("doc.editor.takeover")) { Text("Take over editing…") }
+            }
+        } else if (s.concurrentEditing) Text("Others can edit this document at the same time; newer versions are offered for review.", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
+
+        // A newer shared version never replaces the working copy; review is explicit.
+        if (s.remoteVersion != null || s.hasReviewWork && (s.mergeReady || s.pendingMergedSave)) {
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(if (s.remoteVersion != null) "Newer version available" else "Merge in progress", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = { scope.launch { if (controller.openReview()) showReview = true } }, modifier = Modifier.testTag("doc.editor.review")) { Text("Review changes") }
+            }
+        } else if (s.hasReviewWork) TextButton(onClick = { scope.launch { if (controller.openReview()) showReview = true } }, modifier = Modifier.testTag("doc.editor.preserved")) { Text("Preserved drafts") }
+
+        s.status?.let { Text(it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("doc.editor.status"),
+            color = when (s.tone) { DocumentEditController.Tone.ERROR -> MaterialTheme.colorScheme.error; DocumentEditController.Tone.WARNING -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.onSurfaceVariant },
+            style = MaterialTheme.typography.bodySmall) }
         notice?.let { Text(it, Modifier.padding(12.dp)) }
-        anchor?.let { captured -> draft?.let { current -> SelectionCommentDialog(model, docId, captured, current.baseRowVersion) { anchor = null } } }
-        if (payload == null) Text("Opening editor; your draft stays on this device.", Modifier.padding(12.dp))
+        WikiSheets(wiki, wikiState, scope)
+        WikiQueryPanel(wiki, wikiState, scope)
+        anchor?.let { captured -> SelectionCommentDialog(model, docId, captured, s.localBaseVersion ?: record.rowVersion.toInt()) { anchor = null } }
+        if (s.mode == DocumentEditController.Mode.Loading) Text("Opening editor; your draft stays on this device.", Modifier.padding(12.dp))
         host?.failure?.let { Text(it) }
-        host?.let { page -> AndroidView({ page.webView }, Modifier.weight(1f).fillMaxWidth()) }
+        host?.let { webHost -> AndroidView({ webHost.webView }, Modifier.weight(1f).fillMaxWidth()) }
     }
+    if (showReview) DocumentReviewDialog(controller) { showReview = false }
+    if (showTakeover) TakeoverDialog(controller) { showTakeover = false }
+    if (showVersions) SavedVersionsDialog(controller) { showVersions = false }
 }
 
 /**

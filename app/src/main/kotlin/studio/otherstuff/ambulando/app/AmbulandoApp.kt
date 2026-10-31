@@ -161,6 +161,8 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         }
     }, true, model.environment.isSample, viewImage = { id, title -> viewingImage = id to title })
     if (browser.presented) { BrowserScreen(browser); return }
+    // A page opened from the document editor (the editor is shown outside the services provider and leaves its draft stored).
+    LaunchedEffect(model.pendingRecordOpen) { model.pendingRecordOpen?.let { (kind, id) -> model.pendingRecordOpen = null; services.openMention(kind, id) } }
     CompositionLocalProvider(LocalAppServices provides services, LocalAvatars provides avatars) {
         model.notice?.let { message -> AlertDialog(onDismissRequest = model::clearNotice, title = { Text("Not completed") }, text = { Text(message) }, confirmButton = { TextButton(onClick = model::clearNotice) { Text("Dismiss") } }) }
         viewingImage?.let { (id, title) -> StoredImageViewer(model, id, title, onShare = { shareStorage(id) }) { viewingImage = null } }

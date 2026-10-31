@@ -4,6 +4,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import studio.otherstuff.ambulando.core.nostr.Sha256Hex
 import java.time.Instant
@@ -196,8 +197,14 @@ suspend fun TowerAPI.reactions(workspaceId: String, appNpub: String, targetType:
 
 // MARK: Edit leases
 
-/** An edit lease Tower granted for one record. */
-data class EditLease(val id: String, val token: String, val expiresAt: String)
+/** An edit lease Tower granted for one record. Document leases also carry the protocol Tower acknowledged and the editor session. */
+data class EditLease(
+    val id: String,
+    val token: String,
+    val expiresAt: String,
+    val documentEditProtocol: String? = null,
+    val editorSessionId: String? = null,
+)
 
 sealed class LeaseError(message: String) : Exception(message, null, false, false) {
     data class Held(val by: String?, val until: String?) : LeaseError(
@@ -208,8 +215,60 @@ sealed class LeaseError(message: String) : Exception(message, null, false, false
 
 const val LEASE_SECONDS = 120
 
-suspend fun TowerAPI.acquireLease(workspaceId: String, appNpub: String, entityType: String, entityId: String): EditLease {
-    val body = jsonBody(jsonObjectOf("entity_type" to entityType, "entity_id" to TowerAPI.uuid(entityId), "ttl_seconds" to LEASE_SECONDS))
+/** The exclusive-lease document protocol (explicit takeover, fenced previous tokens). */
+const val DOCUMENT_EDIT_PROTOCOL = "document_edit_session_v1"
+
+/** The concurrent protocol: several editor sessions at once, each save checked against its base. Selected only when advertised. */
+const val CONCURRENT_DOCUMENT_EDIT_PROTOCOL = "document_concurrent_edit_v1"
+
+/**
+ * What Tower says about who may edit a document now. Never exposes another editor's token, only the lease identity the
+ * explicit takeover is checked against.
+ */
+data class DocumentEditInspection(
+    val supported: Boolean,
+    val leaseId: String?,
+    val holderNpub: String?,
+    val concurrentSupported: Boolean = false,
+)
+
+/** `GET …/edit-leases?entity_type=document&entity_id=…`. A server without the route answers 404, which callers treat as "not inspectable". */
+suspend fun TowerAPI.inspectDocumentEdit(workspaceId: String, appNpub: String, docId: String): DocumentEditInspection {
+    val reply = client.request(
+        path = TowerAPI.base(workspaceId) + "/edit-leases",
+        query = listOf("entity_type" to "document", "entity_id" to TowerAPI.uuid(docId)),
+        appNpub = appNpub,
+    )
+    val o = obj(reply, "document edit authority")
+    val lease = o.obj("lease")
+    val protocols = (o["document_edit_protocols"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+    return DocumentEditInspection(
+        supported = o.string("document_edit_protocol") == DOCUMENT_EDIT_PROTOCOL,
+        leaseId = lease?.string("id"),
+        holderNpub = lease?.string("holder_actor_npub"),
+        concurrentSupported = protocols?.contains(CONCURRENT_DOCUMENT_EDIT_PROTOCOL) == true,
+    )
+}
+
+suspend fun TowerAPI.acquireLease(
+    workspaceId: String,
+    appNpub: String,
+    entityType: String,
+    entityId: String,
+    editorSessionId: String? = null,
+    takeoverLeaseId: String? = null,
+    documentProtocol: String = DOCUMENT_EDIT_PROTOCOL,
+): EditLease {
+    val fields = linkedMapOf<String, Any>("entity_type" to entityType, "entity_id" to TowerAPI.uuid(entityId), "ttl_seconds" to LEASE_SECONDS)
+    if (entityType == "document" && editorSessionId != null) {
+        fields["document_edit_protocol"] = documentProtocol
+        fields["editor_session_id"] = TowerAPI.uuid(editorSessionId)
+    }
+    if (takeoverLeaseId != null) {
+        fields["takeover"] = true
+        fields["expected_lease_id"] = TowerAPI.uuid(takeoverLeaseId)
+    }
+    val body = jsonBody(jsonObjectOf(*fields.map { it.key to it.value }.toTypedArray()))
     val reply = client.exchange("POST", TowerAPI.base(workspaceId) + "/edit-leases/acquire", appNpub, body)
     val o = parseJsonObjectOrNull(reply.body)
     if (reply.status == 409) {
@@ -223,7 +282,14 @@ suspend fun TowerAPI.acquireLease(workspaceId: String, appNpub: String, entityTy
     if (lease == null || id == null || token == null || lease.string("entity_id")?.lowercase() != entityId.lowercase()) {
         throw TowerError.Malformed("edit lease")
     }
-    return EditLease(id, token, lease.string("expires_at") ?: "")
+    val marker = o.string("document_edit_protocol")
+    // A concurrent acquire is only real when Tower echoes the protocol and this exact session; never silently downgraded.
+    if (documentProtocol == CONCURRENT_DOCUMENT_EDIT_PROTOCOL &&
+        (marker != documentProtocol || lease.string("editor_session_id")?.lowercase() != editorSessionId?.lowercase())) {
+        throw LeaseError.Invalid("concurrent_protocol_not_acknowledged")
+    }
+    if (takeoverLeaseId != null && marker != DOCUMENT_EDIT_PROTOCOL) throw LeaseError.Invalid("takeover_not_supported")
+    return EditLease(id, token, lease.string("expires_at") ?: "", marker, lease.string("editor_session_id"))
 }
 
 suspend fun TowerAPI.renewLease(workspaceId: String, appNpub: String, lease: EditLease): EditLease {
@@ -233,7 +299,12 @@ suspend fun TowerAPI.renewLease(workspaceId: String, appNpub: String, lease: Edi
     if (reply.status == 409) throw LeaseError.Invalid(o?.string("code") ?: "expired")
     val next = o?.obj("lease")
     if (reply.status !in 200..299 || next == null) throw TowerError.Http(reply.status, o?.string("code"), "edit lease")
-    return EditLease(lease.id, next.string("lease_token") ?: lease.token, next.string("expires_at") ?: lease.expiresAt)
+    if (lease.documentEditProtocol == CONCURRENT_DOCUMENT_EDIT_PROTOCOL &&
+        (o.string("document_edit_protocol") != lease.documentEditProtocol || next.string("editor_session_id")?.lowercase() != lease.editorSessionId?.lowercase())) {
+        throw LeaseError.Invalid("concurrent_protocol_not_acknowledged")
+    }
+    return EditLease(lease.id, next.string("lease_token") ?: lease.token, next.string("expires_at") ?: lease.expiresAt,
+        lease.documentEditProtocol, lease.editorSessionId)
 }
 
 suspend fun TowerAPI.releaseLease(workspaceId: String, appNpub: String, lease: EditLease) {

@@ -24,6 +24,8 @@ import studio.otherstuff.ambulando.core.crypto.MessageInstructionSignature
 import studio.otherstuff.ambulando.core.docs.DocumentBody
 import studio.otherstuff.ambulando.core.docs.DocumentEditError
 import studio.otherstuff.ambulando.core.docs.LeaseException
+import studio.otherstuff.ambulando.core.docs.UserFacingError
+import studio.otherstuff.ambulando.core.docs.WikiCreate
 import studio.otherstuff.ambulando.core.store.ConnectionRecord
 import studio.otherstuff.ambulando.core.store.LocalStore
 import studio.otherstuff.ambulando.core.store.workspaces
@@ -67,6 +69,7 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
 import studio.otherstuff.ambulando.core.transport.WorkspaceRecord
 import studio.otherstuff.ambulando.core.transport.bool
 import studio.otherstuff.ambulando.core.transport.channelDocs
+import studio.otherstuff.ambulando.core.transport.doc
 import studio.otherstuff.ambulando.core.transport.channelFiles
 import studio.otherstuff.ambulando.core.transport.docComments
 import studio.otherstuff.ambulando.core.transport.flexibleLong
@@ -117,6 +120,13 @@ class WriteSender(
     val transfers: ObjectTransfers? = null,
     private val random: () -> Double = { Math.random() },
 ) {
+    /**
+     * Called when Tower accepted a "create and link" document, before the write is retired: whoever owns the source document puts
+     * the new page's id into its link. Throwing keeps the write queued (the page's location is kept on it), and the retry finds
+     * the already created page, so a source that could not be updated yet never loses the link or creates a second page.
+     */
+    @Volatile var afterWikiCreate: (suspend (ConnectionRecord, WriteItem, DocRecord) -> Unit)? = null
+
     /**
      * Feedback the user should see about a notification action that did not apply as tapped (the item had changed, or
      * Tower rejected the request). Not a record: delivered once to whoever is collecting (the app shows it as a notice
@@ -226,6 +236,26 @@ class WriteSender(
             }
             when (outcome) {
                 is WriteOutcome.Done -> {
+                    val created = outcome.ack.docs.firstOrNull()
+                    val bind = afterWikiCreate
+                    if (item.kind == WriteKind.DOC_CREATE && item.string(WikiCreate.SOURCE_KEY) != null && item.payloadObject.bool(WikiCreate.BOUND_KEY) != true &&
+                        created != null && bind != null) {
+                        // Where the page is, kept on the write so a link that cannot be added yet can still be reached.
+                        runCatching { store.writer.updateWritePayload(item.id, mapOf(WikiCreate.CREATED_KEY to JsonPrimitive(created.id))) }
+                        try {
+                            bind(connection, item, created)
+                            runCatching { store.writer.updateWritePayload(item.id, mapOf(WikiCreate.BOUND_KEY to JsonPrimitive(true))) }
+                        } catch (e: Throwable) {
+                            if (e is CancellationException || !currentCoroutineContext().isActive) throw e
+                            val reason = (e as? UserFacingError)?.userMessage ?: "The link will be added on the next attempt."
+                            // The retry must find this page rather than make another.
+                            runCatching { store.writer.updateWritePayload(item.id, AMBIGUOUS) }
+                            store.writer.markWrite(item.id, WriteState.RETRYING, null, "wiki_link_pending", "The page was created. $reason", countAttempt = true)
+                            blocked.add(item.groupKey)
+                            nextRetry = minOf(nextRetry ?: Int.MAX_VALUE, item.attempts + 1)
+                            continue
+                        }
+                    }
                     store.writer.acknowledgeWrite(item.id, item.workspaceId, outcome.ack)
                     if (item.kind == WriteKind.FILE_UPLOAD || item.kind == WriteKind.DOC_CREATE) item.string("staged")?.let { stagedFile(it)?.delete() }
                 }
@@ -519,6 +549,11 @@ class WriteSender(
                 val contentType = p.string("content_type")
                 val name = p.string("file_name")
                 if (channel == null || staged == null || contentType == null || name == null) return permanent("Missing upload.")
+                // A creation Tower already answered (the page exists; only its link back was pending) is looked up by id, never made again.
+                if (item.kind == WriteKind.DOC_CREATE) p.string(WikiCreate.CREATED_KEY)?.let { id ->
+                    val created = try { api.doc(w, app, id) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+                    if (created != null) return WriteOutcome.Done(WriteAcknowledgement(docs = listOf(created)))
+                }
                 val file = stagedFile(staged)?.takeIf { it.isFile } ?: return permanent("The file to upload is no longer on this device.")
                 val bytes = file.readBytes()
                 val previous = p.string("prepared_object_id")?.let { id -> p.string("prepared_upload_url")?.let { PreparedObject(id, it) } }

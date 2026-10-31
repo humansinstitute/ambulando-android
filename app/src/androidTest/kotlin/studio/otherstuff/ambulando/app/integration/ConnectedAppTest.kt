@@ -62,6 +62,9 @@ class ConnectedAppTest {
             compose.runOnIdle { model.editorDoc = doc.id }
             compose.waitUntil(20_000) { compose.onAllNodes(hasText("Save") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Save").performClick()
+            // Nothing changed, so nothing is published; the editor stays open and says so (Save no longer closes it).
+            compose.waitUntil(20_000) { compose.onAllNodes(hasText("No changes to save.")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("doc.editor.back").performClick()
             compose.waitUntil(20_000) { model.editorDoc == null }
             val after = runBlocking { model.store.reader.docBody(SampleIds.STUDIO, doc.id)!!.bytes }
             assertArrayEquals(before, after)

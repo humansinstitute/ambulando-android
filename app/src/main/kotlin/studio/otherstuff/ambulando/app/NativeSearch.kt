@@ -36,8 +36,17 @@ import studio.otherstuff.ambulando.core.store.*
             item(key = "header:$title") { Text(title, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 12.dp)) }
             items(rows, key = { it.id }) { hit -> TextButton(modifier = Modifier.testTag("search.hit"), onClick = {
                 when (hit.kind) {
-                    SearchHit.Kind.TASK -> { model.section = AppSection.TASKS; services.open(WorkRoute.Task(w.id, hit.recordId)) }
-                    SearchHit.Kind.DOC -> { model.section = AppSection.DOCS; services.open(WorkRoute.Doc(w.id, hit.recordId)) }
+                    // Every result moves the shared scope/channel to where the record lives, then opens it.
+                    SearchHit.Kind.TASK -> {
+                        model.section = AppSection.TASKS
+                        hit.channelId?.let { id -> model.channels.firstOrNull { it.id == id }?.let { model.selectContext(it.scopeId, id) } }
+                        services.open(WorkRoute.Task(w.id, hit.recordId))
+                    }
+                    SearchHit.Kind.DOC -> {
+                        model.section = AppSection.DOCS
+                        hit.channelId?.let { id -> model.channels.firstOrNull { it.id == id }?.let { model.selectContext(it.scopeId, id) } }
+                        services.open(WorkRoute.Doc(w.id, hit.recordId))
+                    }
                     SearchHit.Kind.FILE -> {
                         model.section = AppSection.FILES
                         hit.channelId?.let { id -> model.channels.firstOrNull { it.id == id }?.let { model.selectContext(it.scopeId, id) } }
