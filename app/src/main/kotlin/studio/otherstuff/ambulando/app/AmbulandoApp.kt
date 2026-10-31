@@ -94,7 +94,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     }
     var sidebar by remember { mutableStateOf(false) }
     var settings by remember { mutableStateOf(false) }
-    var management by remember { mutableStateOf(false) }
+    var management by remember { mutableStateOf<ManagementTarget?>(null) }
     var search by remember { mutableStateOf(false) }
     var notifications by remember { mutableStateOf(false) }
     var person by remember { mutableStateOf<String?>(null) }
@@ -190,7 +190,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         viewingImage?.let { (id, title) -> StoredImageViewer(model, id, title, onShare = { shareStorage(id) }) { viewingImage = null } }
         if (chooser) { studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceChooser(model) { chooser = false }; return@CompositionLocalProvider }
         if (settings) { NativeSettings(model) { settings = false }; return@CompositionLocalProvider }
-        if (management) { WorkspaceManagement(model) { management = false }; return@CompositionLocalProvider }
+        management?.let { target -> WorkspaceManagement(model, target) { management = null }; return@CompositionLocalProvider }
         if (search) { NativeSearch(model) { search = false }; return@CompositionLocalProvider }
         if (notifications) { NativeNotifications(model) { notifications = false }; return@CompositionLocalProvider }
         val notificationUnread by remember(c.id, w?.id) { model.store.liveQuery({ it.table == StoreTable.NOTIFICATIONS }) { w?.let { model.store.reader.notificationCounts(c.id, it.id).unread } ?: 0 } }.collectAsState(0)
@@ -269,9 +269,10 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 override fun chooseScope(scopeId: String) { choose(scopeId, null) }
                 override fun chooseChannel(scopeId: String, channelId: String) { choose(scopeId, channelId) }
                 override fun toggleCollapsed(scopeId: String) { model.activeEntry?.let { model.toggleScopeCollapsed(it, scopeId) } }
-                override fun newChannel(scope: studio.otherstuff.ambulando.core.context.NavScope) { model.selectContext(scope.id, null); management = true }
-                override fun channelSettings(channel: studio.otherstuff.ambulando.core.context.NavChannel) { model.selectContext(channel.scopeId, channel.id); management = true }
-                override fun manageScopes() { management = true }
+                override fun newChannel(scope: studio.otherstuff.ambulando.core.context.NavScope) { model.selectContext(scope.id, null); management = ManagementTarget(AdminRoute.Section(AdminSection.SCOPES)) }
+                override fun channelSettings(channel: studio.otherstuff.ambulando.core.context.NavChannel) { model.selectContext(channel.scopeId, channel.id); management = ManagementTarget(AdminRoute.Section(AdminSection.SCOPES)) }
+                override fun manageScopes() { management = ManagementTarget(AdminRoute.Home) }
+                override fun manageWorkspace(id: String) { model.entries.firstOrNull { it.id == id }?.let { stacks.resetContextBound(); model.openWorkspace(it, null, null); management = ManagementTarget(AdminRoute.Home, it.id); sidebar = false } }
                 override fun selectWorkspace(workspaceId: String) { model.workspaces.firstOrNull { it.id == workspaceId }?.let { model.selectWorkspace(it) }; sidebar = false }
                 override fun retry() { model.retryConnection() }
                 override fun close() { sidebar = false }

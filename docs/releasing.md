@@ -43,3 +43,14 @@ publication evidence separate from product source.
 
 Release builds exclude Android generated VCS metadata so private development revisions stay local.
 The APK signing certificate SHA-256 is `95ae1a491e106931a25296797a6e99a9efe95a9e935609e98403afb8e91b816d`.
+
+## Zapstore specifics learned in practice
+
+- `zsp publish --offline` accepts only a local APK path (remote GitHub sources make network calls and are refused). Emit the
+  unsigned events from the local APK, then replace the asset's `url` tag with the immutable GitHub release asset URL before
+  signing; the `x` hash and `size` tags keep describing the same bytes. Verify the download hash and size before publishing.
+- Sign the asset event first, then the release naming the signed asset's real id, then the app event. The release event
+  should carry an `a` tag naming the app (`32267:<publisher pubkey>:<app id>`), as the first accepted release did; `zsp`
+  0.4.17 does not emit it.
+- The relay may answer `pending: the listing will be saved once its checks pass`. Acceptance and relay read-back are not store
+  visibility: check the public listing separately and report it as it is.

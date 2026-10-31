@@ -68,6 +68,14 @@ class BoundaryGuardTransport(private val base: HttpTransport, private val bounda
     internal fun check(url: String, appHeader: String?, method: String = "GET") {
         val uri = runCatching { URI(url) }.getOrNull() ?: throw BoundaryViolation("unreadable URL")
         val path = uri.rawPath ?: ""
+        // The only Autopilot calls a runtime may make are the two exact activation operations; the host is checked by the activation guard,
+        // which knows the origin the person confirmed. Any other path under /api/wapps/ is refused here.
+        if (path.startsWith("/api/wapps/")) {
+            val exact = (method == "GET" && path == "/api/wapps/activation-catalog") || (method == "POST" && path == "/api/wapps/install-intents/process")
+            // Never over plain HTTP, never with credentials in the URL, and never carrying Tower's application header to another host.
+            if (!exact || uri.rawQuery != null || uri.rawFragment != null || uri.scheme != "https" || uri.rawUserInfo != null || appHeader != null) throw BoundaryViolation("autopilot path")
+            return
+        }
         if (!path.startsWith("/api/v4/")) return
         if (uri.host?.lowercase() != origin.host || (uri.port.takeIf { it >= 0 && it != 443 }) != origin.port) throw BoundaryViolation("origin")
         // Revalidating access is the one read of the whole list; it names no other boundary and writes nothing.
@@ -220,6 +228,18 @@ class WorkspaceRuntime(
                 // resume, refresh or network return repeats.
             }
         }
+    }
+
+    /**
+     * Workspace administration bound to exactly this runtime: its boundary, partition, read transport, write-gated direct
+     * transport and scoped scheduler. Each opened screen takes its own and closes it when it leaves; a closed runtime hands out none.
+     */
+    fun administrator(stillInFront: () -> Boolean = { true }): studio.otherstuff.ambulando.core.management.WorkspaceAdministrator {
+        if (closed) throw BoundaryViolation("closed workspace")
+        return studio.otherstuff.ambulando.core.management.WorkspaceAdministrator(
+            boundary, connection, workspace, store, env.identity, readTransport, directTransport, engine,
+            workspaceChanged = { env.discovery.discover(connection, SyncPriority.USER, true) }, stillInFront = stillInFront,
+        )
     }
 
     /** Waits for the latest [start] to finish (background windows and tests). */

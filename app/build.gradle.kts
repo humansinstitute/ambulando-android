@@ -15,8 +15,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.6.0"
+        versionCode = 18
+        versionName = "0.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
         ndk { abiFilters += "arm64-v8a" }
@@ -86,6 +86,8 @@ dependencies {
     debugImplementation(libs.compose.ui.test.manifest)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    // The JVM secp256k1 binding, so JVM tests can sign real NIP-98 events (the Android binding only loads on a device).
+    testImplementation(libs.secp256k1.jni.jvm)
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.androidx.test.junit)

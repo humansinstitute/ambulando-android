@@ -40,7 +40,13 @@ import studio.otherstuff.ambulando.core.transport.stringOrNull
  */
 
 enum class ManagementOperation {
-    READ_PERMISSIONS, CREATE_CHANNEL, MANAGE_CHANNEL, CREATE_SCOPE, MANAGE_SCOPE, SCOPE_ORDER;
+    READ_PERMISSIONS, CREATE_CHANNEL, MANAGE_CHANNEL, CREATE_SCOPE, MANAGE_SCOPE, SCOPE_ORDER,
+    /** Workspace administration: members, groups, delegations, publishing, workspace profile. */
+    ADMINISTER,
+    /** Channel grants: needs the channel's own grant-management authority, not workspace administration. */
+    MANAGE_GRANTS,
+    /** An installation reconcile or revoke: administrators or an active delegation for that exact installation. */
+    MANAGE_INSTALLATION;
 
     val permissionSentence: String
         get() = when (this) {
@@ -50,6 +56,9 @@ enum class ManagementOperation {
             CREATE_SCOPE -> "You don't have permission to create scopes in this workspace."
             MANAGE_SCOPE -> "You need Manage access on this scope."
             SCOPE_ORDER -> "Your scope order couldn't be saved for this workspace."
+            ADMINISTER -> "Workspace administrator access is required for this change."
+            MANAGE_GRANTS -> "You need grant-management access on this channel."
+            MANAGE_INSTALLATION -> "An administrator or an active delegation for this exact installation is required."
         }
 }
 
@@ -75,6 +84,9 @@ sealed class ManagementError(message: String) : Exception(message, null, false, 
         fun classify(status: Int, body: JsonObject, operation: ManagementOperation): ManagementError {
             val code = body.string("code") ?: body.string("error") ?: ""
             return when {
+                // The owner's additional approval is a refusal, never something the app escalates on its own.
+                status == 403 && (code == "step_up_required" || code == "owner_step_up_required") ->
+                    Forbidden("Tower needs the workspace owner's additional approval for this change. Nothing was changed.")
                 status == 403 -> Forbidden(operation.permissionSentence)
                 status == 404 -> NotFound(
                     if (operation == ManagementOperation.CREATE_CHANNEL) "This scope is no longer available."
@@ -102,6 +114,13 @@ data class WorkspaceMembership(val role: String? = null, val permissions: Set<St
     /** Workspace owners and admins (the web's `canAdminWorkspace`). */
     val isAdmin: Boolean get() = (role?.lowercase() ?: "") in setOf("owner", "admin")
 
+    /**
+     * Who may use workspace administration: owners and admins, or anyone Tower grants `workspace.manage` (the web's
+     * `canAdminWorkspace` and the iPhone's administrator check). Only a fresh `/me` may be passed in here; a cached one
+     * never authorises a write.
+     */
+    val canAdminister: Boolean get() = isAdmin || "workspace.manage" in permissions
+
     companion object {
         fun parse(o: JsonObject): WorkspaceMembership = WorkspaceMembership(
             role = o.obj("membership")?.string("role"),
@@ -120,7 +139,7 @@ object ManagementPermissions {
 
     fun canCreateChannel(scope: ScopeRecord, membership: WorkspaceMembership?): Boolean {
         if (isDirectMessageScope(scope)) return true
-        if (membership?.isAdmin == true || scope.canManage == true) return true
+        if (membership?.canAdminister == true || scope.canManage == true) return true
         if (scope.canManage == false) return false
         return membership?.permissions?.contains("channel.create") == true
     }
@@ -129,14 +148,14 @@ object ManagementPermissions {
     fun canManage(channel: ChannelRecord, membership: WorkspaceMembership?, isDirectMessageChannel: Boolean): Boolean {
         if (isDirectMessageChannel || channel.kind?.lowercase() == "system") return false
         membership ?: return false
-        return membership.isAdmin || "channel.manage" in membership.permissions
+        return membership.canAdminister || "channel.manage" in membership.permissions
     }
 
-    fun canManage(scope: ScopeRecord, membership: WorkspaceMembership?): Boolean = scope.canManage ?: (membership?.isAdmin == true)
+    fun canManage(scope: ScopeRecord, membership: WorkspaceMembership?): Boolean = scope.canManage ?: (membership?.canAdminister == true)
 
     fun canCreateScope(membership: WorkspaceMembership?): Boolean {
         membership ?: return false
-        return membership.isAdmin || "scope.create" in membership.permissions
+        return membership.canAdminister || "scope.create" in membership.permissions
     }
 
     /** Scopes that take part in the personal order (not DM or system scopes). */
@@ -177,6 +196,29 @@ val ScopeRecord.canManage: Boolean? get() = raw.bool("can_manage")
 /** One management request: method, exact path and JSON body, plus the operation used to classify a refusal. */
 data class ManagementRequest(val method: String, val path: String, val body: JsonObject?, val operation: ManagementOperation)
 
+/**
+ * Explicit access submitted with channel creation and authorised atomically by Tower. An empty list leaves the creator alone;
+ * scope roles and group ownership never silently widen a channel's audience.
+ */
+data class InitialChannelGrant(val principalType: String, val principalId: String, val access: String = "view") {
+    val key: String get() = "$normalizedType:${principalId.lowercase()}"
+    val normalizedType: String get() = if (principalType == "person") "actor" else principalType
+
+    companion object {
+        /** Wire rows; refuses an unknown type, level or id, and a recipient chosen twice. */
+        fun payloads(grants: List<InitialChannelGrant>): List<JsonObject> {
+            val seen = HashSet<String>()
+            return grants.map { g ->
+                if (g.normalizedType != "actor" && g.normalizedType != "group" || g.access !in listOf("view", "contribute", "manage") || !seen.add(g.key)) {
+                    throw ManagementError.Invalid("Choose each person or group once and select an access level.")
+                }
+                if (!isUUID(g.principalId)) throw ManagementError.Invalid("Choose each person or group once and select an access level.")
+                jsonObjectOf("principal_type" to g.normalizedType, "principal_id" to g.principalId.lowercase(), "access_level" to g.access)
+            }
+        }
+    }
+}
+
 /** The member's personal scope order and its row version (`GET /me/scope-order`). */
 data class ScopeOrder(val scopeIds: List<String>, val rowVersion: Long)
 
@@ -190,12 +232,16 @@ object ScopeChannelRequests {
     fun membership(workspaceId: String) = ManagementRequest("GET", base(workspaceId) + "/me", null, ManagementOperation.READ_PERMISSIONS)
 
     /** A named channel in [scopeId] (optional description and channel context prompt, as the web form). */
-    fun createChannel(workspaceId: String, scopeId: String, name: String, description: String?, contextPrompt: String?): ManagementRequest {
+    fun createChannel(
+        workspaceId: String, scopeId: String, name: String, description: String?, contextPrompt: String?,
+        grants: List<InitialChannelGrant> = emptyList(),
+    ): ManagementRequest {
         val trimmed = required(name, "Channel")
         val body = LinkedHashMap<String, Any?>()
         body["name"] = trimmed
         body["kind"] = "channel"
         body["metadata"] = AgentChatConfig.write(JsonObject(emptyMap()), contextPrompt ?: "")
+        body["grants"] = InitialChannelGrant.payloads(grants)
         description?.trim()?.takeIf { it.isNotEmpty() }?.let { body["description"] = it }
         return ManagementRequest(
             "POST", base(workspaceId) + "/scopes/" + TowerAPI.uuid(scopeId) + "/channels", jsonObjectOf(*body.toList().toTypedArray()),
@@ -305,8 +351,20 @@ class ScopeChannelApi(
     /** The member's role and granted permission names, used to decide which controls to show. */
     suspend fun membership(): WorkspaceMembership = WorkspaceMembership.parse(send(ScopeChannelRequests.membership(workspace.id)))
 
-    suspend fun createChannel(scopeId: String, name: String, description: String?, contextPrompt: String?): ChannelRecord =
-        channel(send(ScopeChannelRequests.createChannel(workspace.id, scopeId, name, description, contextPrompt)))
+    /**
+     * With any explicit person grant, `/me` is read again and a grant naming the creator is dropped, so Tower's creator recovery
+     * bundle is never replaced by a picker entry. An unknown creator actor refuses the creation.
+     */
+    suspend fun createChannel(scopeId: String, name: String, description: String?, contextPrompt: String?, grants: List<InitialChannelGrant> = emptyList()): ChannelRecord {
+        InitialChannelGrant.payloads(grants)
+        var effective = grants
+        if (grants.any { it.normalizedType == "actor" }) {
+            val actorId = membership().actorId?.lowercase()
+                ?: throw ManagementError.Unexpected("Tower did not identify the channel creator. Refresh before creating the channel.")
+            effective = grants.filterNot { it.normalizedType == "actor" && it.principalId.lowercase() == actorId }
+        }
+        return channel(send(ScopeChannelRequests.createChannel(workspace.id, scopeId, name, description, contextPrompt, effective)))
+    }
 
     suspend fun createDirectMessage(scopeId: String, participantNpub: String): ChannelRecord =
         channel(send(ScopeChannelRequests.createDirectMessage(workspace.id, scopeId, signerNpub, participantNpub)))

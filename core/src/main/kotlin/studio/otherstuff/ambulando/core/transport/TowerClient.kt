@@ -57,9 +57,17 @@ class TowerOrigin(value: String) {
         if (url.toHttpUrlOrNull() == null) throw TowerError.UnsafeOrigin
     }
 
+    companion object {
+        /**
+         * The only two non-Tower paths a signed request may name: managed-app activation against the HTTPS Autopilot origin the
+         * person typed and confirmed (catalog read, then processing of one saved install intent). Exact matches, never a prefix.
+         */
+        val AUTOPILOT_ACTIVATION_PATHS = setOf("/api/wapps/activation-catalog", "/api/wapps/install-intents/process")
+    }
+
     /** Absolute URL for an exact API path plus optional query items (encoded once, here). */
     fun url(path: String, query: List<Pair<String, String>> = emptyList()): String {
-        if (!(path.startsWith("/api/v4/") || path == "/.well-known/nstack.json") || path.contains("..") || path.contains("?") ||
+        if (!(path.startsWith("/api/v4/") || path == "/.well-known/nstack.json" || path in AUTOPILOT_ACTIVATION_PATHS) || path.contains("..") || path.contains("?") ||
             path.contains("#")
         ) throw TowerError.UnsafePath
         val builder = HttpUrl.Builder().scheme("https").host(host).port(port ?: 443)

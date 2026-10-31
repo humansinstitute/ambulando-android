@@ -143,3 +143,21 @@ every consuming app). Android reads it through the same single sync owner as eve
   row; a 403 purges stored notification text for that workspace; a missing route (older Tower) is reported as unsupported.
 - **Not offered.** Alerts, phone push, quiet hours and per-device settings (not implemented by Tower; no push provider is
   configured) are described as unavailable rather than shown as controls.
+
+## 9. Workspace administration
+
+Members, groups, channel and scope access, app delegations, installations, managed-app activation and publishing grants are
+managed from Manage Workspace through the same typed Tower routes the iPhone and web clients use (see
+[workspace-administration.md](workspace-administration.md)); nothing new is added to the backend.
+
+- **Online and confirmed.** Administration requests are never queued, replayed or retried automatically. A form's entries are kept per
+  boundary on the device and are written before a request is sent.
+- **Fresh, exact authority.** Every write re-reads `/me`; anyone who is not an administrator is checked against the exact resource just
+  read (the channel's grants, the scope's `can_manage` and revision with its edit lease, the installation's delegations). Cached lists draw
+  screens and are never authority; a failed read leaves controls off.
+- **One boundary per screen.** A `WorkspaceAdministrator` belongs to one workspace runtime: its guarded read and write-gated transports,
+  scoped scheduler and partition. It asks whether its boundary is still in front before each step and again before sending, so a
+  workspace switch stops a write and a late reply changes no other workspace's screen.
+- **Autopilot activation.** The only non-Tower hosts a signed request may reach are the HTTPS Autopilot origin the person types and
+  confirms, and only at two exact paths (`/api/wapps/activation-catalog`, `/api/wapps/install-intents/process`).
+

@@ -272,6 +272,9 @@ class ManagementTests {
         assertFalse(ManagementPermissions.canManage(beta, membership))
         assertFalse(ManagementPermissions.canCreateScope(membership))
         assertTrue(ManagementPermissions.canCreateScope(WorkspaceMembership(role = "admin")))
+        // As on the iPhone, `workspace.manage` makes someone an administrator for which controls are offered (Tower still decides).
+        val manager = WorkspaceMembership(role = "member", permissions = setOf("workspace.manage"))
+        assertTrue(ManagementPermissions.canCreateScope(manager)); assertTrue(ManagementPermissions.canCreateChannel(beta, manager))
         val dm = ChannelRecord(Fixtures.WORKSPACE_ID, Fixtures.newId(), Fixtures.SCOPE_A, "dm", kind = "dm", updatedAt = "")
         assertFalse("DMs are never managed here", ManagementPermissions.canManage(dm, WorkspaceMembership(role = "owner"), isDirectMessageChannel = true))
         val system = ChannelRecord(Fixtures.WORKSPACE_ID, Fixtures.newId(), Fixtures.SCOPE_A, "sys", kind = "system", updatedAt = "")

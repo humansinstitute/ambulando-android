@@ -53,9 +53,10 @@ class ScopeChannelManager(
 
     suspend fun createChannel(
         connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String, name: String, description: String?, contextPrompt: String?,
+        grants: List<InitialChannelGrant> = emptyList(),
     ): ChannelRecord {
         refuseUnresolved(description, contextPrompt)
-        return storeChannel(api(connection, workspace).createChannel(scopeId, name, description, contextPrompt), workspace)
+        return storeChannel(api(connection, workspace).createChannel(scopeId, name, description, contextPrompt, grants), workspace)
     }
 
     suspend fun createDirectMessage(connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String, participantNpub: String): ChannelRecord =
@@ -150,5 +151,25 @@ class ScopeChannelManager(
 
     private suspend fun storeScopeOrder(ids: List<String>, workspace: WorkspaceRecord) {
         store.writer.setState(StoreStateKeys.scopeOrder(workspace.id), JsonArray(ids.map(::JsonPrimitive)).toString())
+    }
+
+    // MARK: Scope setup support
+
+    /** The current channel names of [scopeId] as Tower lists them (stored too), so setup creates only the missing ones. */
+    suspend fun setupChannelNames(connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String): Set<String> {
+        val channels = try {
+            TowerAPI(client(connection)).channels(workspace.id, scopeId, workspace.appNpub)
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { throw ManagementError.Offline(e.message ?: e.toString()) }
+        store.writer.upsertChannels(workspace.id, scopeId, channels, complete = true)
+        return channels.map { it.name.lowercase() }.toSet()
+    }
+
+    /** A scope of this workspace with [name] (case-insensitive) as Tower lists it now, for recovering an interrupted create. */
+    suspend fun scopeSetupCandidate(connection: ConnectionRecord, workspace: WorkspaceRecord, name: String): ScopeRecord? {
+        val scopes = try {
+            TowerAPI(client(connection)).scopes(workspace.id, workspace.appNpub)
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { throw ManagementError.Offline(e.message ?: e.toString()) }
+        store.writer.upsertScopes(workspace.id, scopes, complete = true)
+        return scopes.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
     }
 }

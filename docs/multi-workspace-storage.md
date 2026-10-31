@@ -19,7 +19,7 @@ The *connection namespace* (origin and signer only) groups the workspaces of one
   preferences (enabled set, order, collapse, colour), the workspace in front, global settings and the background report. It
   never serves content, drafts, the outbox or the write queue after the upgrade.
 - `Store/Workspaces/<boundary-id>/ambulando.sqlite` is one **partition** per boundary, using the same schema as before. It
-  holds that workspace's cached content, drafts (message and document), outbox, write queue, event cursor, navigation
+  holds that workspace's cached content, drafts (message and document, and administration forms), outbox, write queue, event cursor, navigation
   and route state, pins, notifications, profiles and its own connection and workspace rows. Reads, writes and change
   notifications cannot cross partitions because they never share a store instance.
 - Staged attachment/upload bytes live in shared directories under unique ids referenced from partition rows. Downloaded

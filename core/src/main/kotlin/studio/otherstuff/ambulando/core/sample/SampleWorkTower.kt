@@ -759,6 +759,15 @@ class SampleWorkTower(
     }
 
     private fun storage(p: List<String>, method: String, o: Row): Reply {
+        if (method == "POST" && p == listOf("prepare")) {
+            // The global public-object contract the workspace avatar uses: owner, metadata and an explicit public flag.
+            if (o["is_public"] != true || o["content_type"].asString().isNullOrEmpty() || o["owner_npub"].asString().isNullOrEmpty()) return errorReply(400, "validation_error")
+            val newId = newUUID()
+            state.put("objects", newId, linkedMapOf("id" to newId, "content_type" to o["content_type"], "file_name" to o["file_name"], "size_bytes" to null, "sha256_hex" to null,
+                "is_public" to true, "completed_at" to null, "owner_npub" to o["owner_npub"], "metadata" to o["metadata"]))
+            val presigned = if (state.data["fallback_uploads"] == true) "$towerOrigin/api/v4/storage/$newId" else "https://$objectHost/bucket/$newId?X-Amz-Signature=sample"
+            return 201 to linkedMapOf("object_id" to newId, "is_public" to true, "upload_url" to presigned, "content_type" to o["content_type"])
+        }
         val id = p.firstOrNull()
         val row = id?.let { state.row("objects", it) } ?: return 404 to mapOf("error" to "storage object not found")
         return when {

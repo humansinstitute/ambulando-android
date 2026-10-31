@@ -1,3 +1,32 @@
+# 0.7.0 — Android build 18
+
+Manage Workspace. A new **Manage workspace** entry in the sidebar (and in each workspace's own menu when several are enabled)
+opens native screens for the workspace's name, address, description and a public avatar image (shown with an explicit consent that
+it becomes publicly readable, metadata removed); deleting a workspace asks for its typed name. Members can be added and renamed;
+groups can be created, nested and detached; a person outside the workspace can be enrolled into a group in one atomic step that never
+changes an existing role. Channel access can be granted, changed and revoked, a new channel can be created and shared only with the
+people and groups you tick, and scope roles are managed under the scope's edit lease and revision (a changed revision is reported,
+never overwritten). App delegations, installation reconcile/revoke, managed-app activation and publishing installations (add, edit,
+disable, revoke, rotate the public key) are included, as is a staged new-scope setup with the product template.
+
+Every change is a confirmed online request and nothing is queued. Before each write the app re-reads your access: an administrator, or
+exactly the grant you hold on that channel, scope or installation, with revoked and expired delegations refused; a saved list is never
+permission. Managed-app activation signs only to the HTTPS Autopilot origin you type and confirm, only for its catalog read and its one
+claim; redirects and any other path are refused, and the saved intent is tied to that origin and workspace so a retry never creates a
+second installation. Entries are kept after a refusal or a lost connection, and an old draft cannot undo someone else's change.
+
+Found in independent review before release: after adding a publishing installation the open form kept its generated id, so editing and
+saving again would have overwritten it (it now starts over with a new id); the channel access screen and the write now make the same
+decision about group-derived authority; deleting a workspace needs a non-blank name; the runtime's own guard on the two activation
+paths also refuses http, credentials, fragments and Tower's app header; people are searchable by full public key; a holder of
+`workspace.manage` is offered the scope and channel controls, as on the iPhone.
+
+Not in this build: group rename/delete, removing or promoting a member and app uninstall (no supported contract, as on the iPhone), a
+delegation with more than one app or destination (the iPhone is the same), group-derived authority for a non-administrator who cannot
+read the group directory, and Android push. Tested against Tower stand-ins and a synthetic emulator account, not a live Tower, a
+physical phone or real accounts. A few emulator chat and task-list tests are intermittent on this host, and behave the same on the
+previous source; see docs/workspace-administration.md and docs/parity-matrix.md.
+
 # 0.6.0 — Android build 17
 
 Several workspaces, on one Tower or more, can now be enabled together. Each has its own storage partition, drafts, outbox,

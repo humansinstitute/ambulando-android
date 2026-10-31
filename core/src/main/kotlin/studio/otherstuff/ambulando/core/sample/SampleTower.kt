@@ -94,6 +94,9 @@ class SampleTower(
     /** Board File versions (list, read, save with a stale-base check) and their canvas projection. */
     val boards = SampleBoardTower(SampleIds.STUDIO, stateFile("sample-boards.json"), auth)
 
+    /** Members, groups, grants, delegations, installations and publishing grants (administration), plus a synthetic Autopilot. */
+    val administration = SampleAdministration(auth)
+
     /** SSE stand-in for `GET /workspaces/:w/events/stream`, fed from this tower's event log. */
     val events: EventStreamTransport = SampleEventStream(this)
 
@@ -101,6 +104,7 @@ class SampleTower(
         val work = work
         boards.objectBytes = { id -> work.completedObjectBytes(id) }
         surfaces.recordLookup = { id -> lookupRecord(id) }
+        administration.onDeleted = { id -> revokedWorkspaces = revokedWorkspaces + id }
         work.onChange = { emit(SampleIds.STUDIO, it) }
         labWork.onChange = { emit(SampleIds.LAB, it) }
         surfaces.onChange = { emit(SampleIds.STUDIO, it) }
@@ -109,6 +113,9 @@ class SampleTower(
     }
 
     // MARK: Toggles (the sample-data controls in Settings and UI test launch flags)
+
+    /** Called with every request before this tower handles it; a test suspends a chosen one here and releases it later. */
+    @Volatile var requestGate: (suspend (HttpRequest) -> Unit)? = null
 
     /** Every request fails as if there were no network (open event streams drop). */
     var offline: Boolean
@@ -238,6 +245,8 @@ class SampleTower(
     // MARK: Transport
 
     override suspend fun send(request: HttpRequest): HttpResponse {
+        // Tests hold a chosen request here (before Tower sees it) to run a competing step in a controlled order.
+        requestGate?.invoke(request)
         if (latencyMillis > 0) delay(latencyMillis)
         val (status, body) = route(request)
         return when (body) {
@@ -254,6 +263,7 @@ class SampleTower(
             // Presigned object-store upload: never signed (the work stand-in records any credential that arrives).
             return work.handle(request) ?: labWork.handle(request) ?: errorReply(404, "not_found")
         }
+        if (url.host == SampleHosts.AUTOPILOT.removePrefix("https://")) return administration.handleAutopilot(request, url.path)
         // The sample never reaches another host.
         if (url.host != origin.host || url.url.scheme != "https") throw UnknownHostException(url.host)
         if (url.path == TowerClient.DESCRIPTOR_PATH) {
@@ -271,6 +281,7 @@ class SampleTower(
                 return errorReply(403, "forbidden")
             }
         }
+        administration.scopeLease(request, url.path)?.let { return it }
         // Surface routes first: their ownership is exact (board versions live under `/files/:f/versions/:v/object`).
         val handled = notifications.handle(request) ?: boards.handle(request) ?: surfaces.handle(request) ?: labSurfaces.handle(request) ?: work.handle(request) ?: labWork.handle(request)
         if (handled != null) return boards.project(handled, request)
@@ -287,10 +298,15 @@ class SampleTower(
         ),
     )
 
-    private fun workspace(id: String, label: String): Map<String, Any?> = linkedMapOf(
-        "identity" to linkedMapOf("workspace_id" to id, "app_npub" to SampleIds.APP, "workspace_owner_npub" to SampleIds.ANA), "label" to label,
-        "slug" to label.lowercase().replace(' ', '-'), "tower_base_url" to origin.url, "membership" to mapOf("role" to "member"),
-    )
+    private fun workspace(id: String, defaultLabel: String): Map<String, Any?> {
+        val (name, slug, avatar) = administration.profile(id)
+        val label = name ?: defaultLabel
+        return linkedMapOf(
+            "identity" to linkedMapOf("workspace_id" to id, "app_npub" to SampleIds.APP, "workspace_owner_npub" to SampleIds.ANA), "label" to label,
+            "slug" to (slug ?: label.lowercase().replace(' ', '-')), "tower_base_url" to origin.url,
+            "membership" to mapOf("role" to if (administration.viewer == SampleViewer.ADMIN) "admin" else "member"),
+        ).also { row -> if (avatar != null) row["avatar_url"] = avatar }
+    }
 
     private fun chatRoute(request: HttpRequest, url: SampleURL, signer: String): Reply {
         val base = "/api/v4/flightdeck-pg/workspaces"
@@ -311,6 +327,8 @@ class SampleTower(
         val rest = parts.drop(1)
         val n = rest.size
         val head = rest.firstOrNull()
+        if (method == "GET" && n == 1 && head == "me") administration.me(signer)?.let { return it }
+        administration.handle(request, w, rest, signer)?.let { return it }
         return when {
             method == "GET" && n == 1 && head == "scopes" && failScopes -> 500 to linkedMapOf("error" to "Internal error", "code" to "internal_error", "status" to 500)
             method == "GET" && n == 1 && head == "scopes" -> synchronized(lock) { 200 to linkedMapOf("scopes" to scopeRows(w), "next_cursor" to null) }
@@ -329,7 +347,7 @@ class SampleTower(
                 "members" to listOf(
                     member(signer, SampleContent.YOU_LABEL, "human"), member(SampleIds.ANA, SampleContent.ANA_LABEL, "human"),
                     member(SampleIds.ORBIT, SampleContent.ORBIT_LABEL, "agent"), member(SampleIds.BEA, null, "human"),
-                ),
+                ) + administration.addedMembers(w).filter { added -> added["npub"] !in setOf(signer, SampleIds.ANA, SampleIds.ORBIT, SampleIds.BEA) }.map { mapOf("actor" to it) },
                 "next_cursor" to null,
             )
             method == "GET" && n == 3 && head == "channels" && rest[2] == "messages" -> synchronized(lock) {
@@ -654,6 +672,7 @@ class SampleTower(
                     row["metadata"] = body["metadata"] ?: emptyMap<String, Any>()
                     row["description"] = body["description"]
                     row["participant_npubs"] = body["participant_npubs"]
+                    administration.recordInitialGrants(w, row["id"] as String, body["grants"])
                     row["updated_at"] = now
                     managed["channels"] = manageList("channels") + row
                     change = SampleChange("channel", row["id"] as String, "created", row["id"] as String, s, 1)

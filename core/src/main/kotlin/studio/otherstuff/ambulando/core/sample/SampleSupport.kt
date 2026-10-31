@@ -58,6 +58,8 @@ object SampleHosts {
     const val OBJECTS = "objects.sample.invalid"
     const val OBJECTS_LAB = "objects-lab.sample.invalid"
     const val BROWSER = "https://browser.sample.invalid"
+    /** The synthetic Autopilot origin of managed-app activation (catalog and install-intent processing). */
+    const val AUTOPILOT = "https://autopilot.sample.invalid"
     const val AVATARS = "https://avatars.sample.invalid/"
 }
 

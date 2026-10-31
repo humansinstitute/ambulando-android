@@ -122,6 +122,8 @@ interface SidebarActions {
     fun toggleScopeIn(id: String, scopeId: String) {}
     fun moveWorkspace(id: String, offset: Int) {}
     fun pauseWorkspace(id: String) {}
+    /** Opens Manage Workspace for exactly this workspace (it is brought to the front first). */
+    fun manageWorkspace(id: String) {}
 }
 
 /** The drawer content: Home, Unread & Active, scopes (collapsible, in the personal order) and the workspace switcher. */
@@ -214,14 +216,15 @@ fun SidebarContent(state: SidebarState, actions: SidebarActions, modifier: Modif
                     }
                 }
             }
-            if (state.groups.isNotEmpty()) item {
+            // Workspace administration (members, groups, access, apps) is reachable even before any scope exists.
+            if (state.selectedWorkspaceId != null) item {
                 Row(
                     Modifier.fillMaxWidth().padding(top = 10.dp).heightIn(min = 36.dp).clickable { actions.manageScopes() }
                         .testTag("sidebar.manageScopes").padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Icon(Icons.Outlined.Tune, null, tint = amb.primary, modifier = Modifier.size(18.dp))
-                    Text("Manage scopes", color = amb.primary, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Text("Manage workspace", color = amb.primary, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
@@ -378,6 +381,8 @@ private fun WorkspaceGroupHeader(w: SidebarWorkspace, actions: SidebarActions) {
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Outlined.MoreHoriz, null, tint = amb.mutedForeground, modifier = Modifier.size(16.dp)) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Manage workspace") }, onClick = { menu = false; actions.manageWorkspace(w.id) }, modifier = Modifier.testTag("workspace.manage.${w.label}"), enabled = !w.accessRemoved)
+                HorizontalDivider()
                 DropdownMenuItem(text = { Text("Move up") }, onClick = { menu = false; actions.moveWorkspace(w.id, -1) })
                 DropdownMenuItem(text = { Text("Move down") }, onClick = { menu = false; actions.moveWorkspace(w.id, 1) })
                 HorizontalDivider()

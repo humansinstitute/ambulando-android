@@ -25,13 +25,13 @@ that an emulator is an authenticated live member session.
 | Context/agents/Toolbox | Native tree/references, agents/activity and HTTPS launchers | Core parsers/policies, synthetic records; WApp and personal-agent configuration stays in the web app |
 | Browser files | Android document picker for file inputs; native save for HTTPS responses/download links and page-created blob/data; bounded files and document-scoped cancellation | See [browser file flows](browser-files.md) for support, security boundaries and remaining limits |
 | Browser/NIP-07/HTML | Isolated browser/editor/artefact profiles; native consent; no-network HTML; renderer-exit recovery | Device bridge/sandbox tests and core consent/policy tests; unsupported WebViews fail closed |
-| Management | Scope/channel create/rename/prompt/order/archive through the shared engine. Controls the member's role cannot use are hidden (from `GET /me`; if it cannot be read, all are offered and Tower decides). A read-only People and access view lists members, groups (Tower shows these to administrators, so a refusal is explained) and the selected channel's grants | Core API/management tests; `AccessDirectoryTest`; server decides authority. The group and grant response shapes are parsed tolerantly from the iPhone/web contract and were not exercised against a live Tower |
+| Management | Manage Workspace ([workspace-administration.md](workspace-administration.md)): workspace profile/avatar/delete, scope and channel create/rename/prompt/order/archive, channel creation with explicit atomic grants, scope setup with the product template, members, groups with nesting and atomic enrolment, channel grants, scope roles under the edit lease and revision, app delegations, installation reconcile/revoke, managed-app activation, publishing grants and key rotation. Online and confirmed only. Each write re-reads `/me`; non-administrators are allowed only by the exact resource authority just read (a grant naming `channel.grants.manage`, the scope's `can_manage`, a delegation naming that installation). Unknown, restricted, unsupported and offline states are named; cached lists are never authority | Core `AdministrationTests`, `ScopeSetupTests`, `AvatarUploadTests`, Robolectric `AdministrationUiTest`, emulator `AdministrationFlowTest`; the synthetic Tower is not Tower. Group and grant response shapes follow the iPhone/web contract and were not exercised against a live Tower |
 | Notifications | Shared Tower inbox (`org.wingman.notification.item` v1): bell with unread badge, list with Inbox/Unread/Archived and category filters, read/unread, dismiss (with a six-second Undo), archive, mark-all-read bounded to what was seen, tap routing to thread/task/doc/channel with a generic card for unknown kinds, redacted "no longer available" items, per-app view (`client_app_id`, shared read state, `rules_revision` reset), per-category inbox settings written by per-key compare-and-set on the app-specific rule, honest empty/unsupported/access-lost states, offline reading, durable CAS writes | Core model/store/replay/CAS/recovery tests against a stubbed Tower and a contract-following sample stand-in; Robolectric screen tests. Not exercised against a live activated Tower in this build. Android alerts and phone push need a supported Android provider/registration contract; quiet hours and per-device settings are not offered. iPhone APNs support is separate |
 | Access loss | Keep previously received content read-only, stop queued fetches/mutations; true tombstones delete | Core store and new retained-document/unsent-message integration tests; intentional difference from iPhone purge behavior |
 
 ## Unsupported on Android
 
-Feed, Android OS push notifications (the in-app notification inbox is supported; see above), direct Autopilot pipeline/session views, FIPS transport, workrooms and reports, workspace/group/grant administration writes. Web-owned
+Feed, Android OS push notifications (the in-app notification inbox is supported; see above), direct Autopilot pipeline/session views, FIPS transport, workrooms and reports. Not offered on any native client (no supported contract): group rename/delete, removing or promoting a workspace member, managed-app uninstall/runtime teardown. Web-owned
 WApp and personal-agent configuration is not recreated. The app does not promise indefinite background execution.
 
 iPhone now has APNs-specific permission, registration and cold-tap validation code. That is not an Android registration
@@ -58,7 +58,7 @@ inspection on both sides; "Evidence" names the tests or files, and the validatio
 | Files, versions, text attachments | Parity for folders (read), upload, download, preview, share, text attachments with history. No folder create/move or file rename/delete (iPhone has none either) | Core storage/text attachment tests |
 | Inbox and notifications | Parity for the shared inbox, filters, CAS actions and Undo. No OS push (no Tower registration contract for Android) | `NotificationsScreenTest`, core notification tests |
 | Canvas, naplets, boards | Parity for create/rename, live naplets, drawing edit, boards with versions. Android adds drawing edits iPhone does not have; no freehand, undo/redo or multi-item move | Core canvas tests, synthetic emulator canvas flow |
-| Permissions | Management controls follow the member's role; every write is still decided by Tower. Read-only People and access. Not implemented: member/group/grant administration writes, workspace profile edits, WApp delegations | `AccessDirectoryTest`. Authority-changing writes are left to the web app until they can be validated live |
+| Permissions | Parity for the administration workflows the iPhone offers (members, groups and nesting, channel and scope access, delegations, installations, activation, publishing, workspace profile/avatar/delete, scope setup, channel creation with grants). Authority is re-read before every write and decided on the exact resource; every write is still decided by Tower. Not mirrored: a delegation is created for one app and one destination (other filter combinations are shown, not authored); the group directory is administrator-only so a non-administrator's group-derived channel authority is unprovable and treated as absent | `AdministrationTests`, `AdministrationUiTest`, `AdministrationFlowTest`; see the administration validation record below |
 | Search | Parity: local index, grouped results with location, opens every kind | Synthetic emulator search flow |
 | Pins and order | Parity, including versioned relative ordering and hold-to-drag | Existing pin-order tests |
 | Offline and outbox | Parity: durable signed outbox and write queue, retry/discard, idempotent resend, resume after unlock | Core outbox/write tests |
@@ -176,3 +176,101 @@ review. Those are verification limits, not evidence of tested live parity. See t
   source review and the shared refresher path, not timed), `TextSheetTest` hugeUnicode (separate task), push and administration.
   `ParityFlowTest` showed the previously known intermittent chat-edit failure shape only when repeated runs reused one install
   (consistent with accumulated sample state; not separately diagnosed); runs on clean installs passed three times in a row.
+
+## Workspace administration and grants validation record (build 18, 0.7.0)
+
+Scope: [workspace-administration.md](workspace-administration.md). Compared with the iPhone/Mac contract by reading its core, views and
+documents; Android adds no backend route and changes no shared schema.
+
+- Source: core 746 JVM tests (0 failures, 1 optional live-contract skip), app 65 JVM tests (0 failures), `lint` 0 errors. New: `AdministrationTests`
+  (40, including channel-create grants and the activation guards), `ScopeSetupTests` (6), `AvatarUploadTests` (4) and Robolectric `AdministrationUiTest` (17, the real
+  screens against the synthetic administration Tower with a real store, scheduler and signer). Coverage: exact request bodies and paths,
+  validation before send, fresh `/me` before every write, an ordinary member refused with nothing sent, a direct channel grant manager limited to
+  the channel they manage (`channel.manage` and scope roles never count), nested-group and cyclic-group rules, scope roles under the edit lease
+  with a stale revision, a changed revision and a held lease refused without a write, delegation expiry/revocation/wrong installation/wildcard,
+  activation recovery without a second installation, publishing add/rotate/disable/revoke, owner step-up as a refusal, failed writes with
+  entries kept, saved-but-not-read-back shown as saved, authority revoked between the screen and the save, an unreadable `/me` turning controls
+  off, a workspace switch while a form is in flight (including while the exact-resource read is outstanding) sending nothing and reporting
+  nothing into another screen, a draft restored only over the values it was started from, and a finished create starting fresh.
+- Mutation checks: 25 deliberate regressions (channel.manage counting as grant management, the non-administrator exact-resource check
+  removed, the last look before send removed, the in-front check ignored, scope revision not compared, delegation expiry/revocation ignored,
+  nested groups ignored, a saved group list authorising, a wildcard delegation covering activation, a stale draft restored, a finished create
+  keeping its draft, a stale screen still current, an unreadable authority keeping the cached one, an activation claim ignoring the intent's
+  origin or boundary, the activation guards ignoring path or host, the runtime guard letting any `/api/wapps/` path through, a foreign catalog
+  entry being offered, and others) were each caught by a test.
+- Independent review (a separate reader, code only) found real defects, all fixed with tests: a new publishing installation could reuse the
+  previous installation's id and overwrite it; an old draft could undo another person's change; a saved-but-not-read-back create was shown
+  as a failure and could be sent twice; a saved group list could count toward group-derived authority; a finished scope setup or activation
+  could not be started again; a read-back could still send after a switch; an expiry could be built as `…ZZ`; an activation delegation with
+  no app filter covered any app. Lint also found `InputStream.readNBytes` (API 33) in the avatar picker, now replaced.
+- Dedicated Android emulator (API 36, synthetic data, no real identity, Tower or physical phone), each connected class run one at a time on the
+  final source: `AdministrationFlowTest` 6 (member, group and channel grant through the screens; read-only member; a form in flight when the
+  workspace in front changes sends nothing and keeps its entries; a delegate limited to its own installation; scope setup with the product
+  template; activation signing only to the confirmed origin through the runtime's guarded transport), `MultiWorkspaceFlowTest` 4, `ConnectedAppTest` 2, `ParityFlowTest` 6, `ConnectionSettingsTest` 1, `NotificationInboxFlowTest` 1,
+  `ThreadMenuFlowTest` 1, `BatchInteractionTest` 2, `OvernightFeedbackFlowTest` 3, `TaskHierarchyFlowTest` 3, `TextAttachmentFlowTest` 1,
+  `DocumentReconciliationFlowTest` 5. In an earlier pass one `MultiWorkspaceFlowTest` test and one `OvernightFeedbackFlowTest` chat test timed out
+  while the host was also building; both passed on two reruns and in the final pass (chat-timing signature of the known intermittents; not
+  diagnosed further). In the final pass one `TaskHierarchyFlowTest` test (a task-list sync wait) timed out and passed on two reruns, the same
+  task-list timing family as the known reused-install failures (not diagnosed). `BatchInteractionTest` failed once only because the test's own screenshot names had used up Android's 32 unique-name
+  limit in shared storage; the captures were archived off the device and cleared. Browser, web, avatar-store, identity, upgrade-retention and
+  process-death classes were not re-run for this change.
+- Sidebar: the stacked sidebar had no entry for workspace management at all; each workspace's menu now has **Manage workspace**, which opens
+  management for that exact workspace once it is in front.
+- Not offered (no supported contract, as on the iPhone): group rename/delete, removing or promoting a workspace member, managed-app uninstall.
+- Known limits of this work: no authenticated live Tower, physical phone or real account; the synthetic Tower follows the documented contract
+  and proves the client, not Tower. A non-administrator cannot read the group directory, so group-derived channel authority they cannot show is
+  treated as absent; a delegation is authored for one app and one destination (other filter combinations are displayed, not created); a grant
+  row that lists no permissions and has level `manage` is accepted as grant management as on the iPhone (Tower still decides). Long member/group lists are drawn in full
+  (search narrows them). Android push remains unsupported. The earlier known items are unchanged: `ParityFlowTest` chat reaction/edit failures on
+  reused installs (cold-timing hypothesis only), `DocumentEditControllerTest` lease-timing intermittents, `TextSheetTest` hugeUnicode (separate
+  task), the combined connected run crashing in Compose on this host so classes run one at a time.
+
+## Independent review and release validation (build 18, 0.7.0)
+
+A second reader, who had not written the code, reviewed the administration and activation code against the iPhone/Mac sources
+(`WorkspaceAdministration.swift`, `GroupDirectory.swift`, its workspace-management and channel-access documents and views) and ran the
+checks below on the final source.
+
+- **Reported limits compared with the iPhone.** A delegation is authored for exactly one app, one scope and one channel on the iPhone too
+  (`AdministrationCommand.delegation`), so that narrowness is shared, not an Android omission. Group-derived grant management: the iPhone's
+  write path reads the administrator-only group list from its saved cache, and its screen feeds the scope's group rows into the same decision.
+  Neither can show a non-administrator's group membership unless Tower returns it, so it is effectively absent there as well. Android now
+  makes the screen and the write the same decision from one fresh directory read (the scope's groups fill the recipient picker only), and
+  documents it. No iPhone-supported workflow was found missing; group rename/delete, member removal/promotion and app uninstall have no
+  contract on the iPhone either.
+- **Defects found and fixed** (with tests; each was a real behaviour, not style): a finished new publishing installation kept its generated
+  id in the open editor, so an edit and a second save would have overwritten it (a failing-first test, and a mutation check that restores the
+  old behaviour is caught); the channel access screen could offer a change for a group-derived grant that the write then refused; deleting
+  a workspace accepted an empty typed name when the label was blank; the runtime's boundary guard let the two exact activation paths through
+  over http, with credentials or with Tower's application header (the flow guard already refused them); `workspace.manage` did not offer the
+  scope and channel controls the iPhone offers; member pickers did not search a full npub.
+- **Activation reviewed.** The only way to obtain a signing target is `ConfirmedAutopilotOrigin.of`, from text the person typed; every
+  activation call takes one. The flow guard checks method, scheme, host, port, exact path, no query, fragment, credentials or application
+  header, and an exact body for the claim; the runtime guard refuses every other `/api/wapps/` path and any query; the transport never
+  follows a redirect; a catalog entry naming another Autopilot is counted and not offered; the saved intent carries its origin and the full
+  boundary (origin, signer, application, workspace) and is refused for any other, or from a closed screen; a retry processes that exact
+  intent and repeats the same client request id. Claiming a saved intent reads no `/me` (it carries no authority of its own; the intent was
+  created under administrator or delegation authority, and Autopilot and Tower decide it), as on the iPhone.
+- **New coverage.** `AvatarPickerUiTest` (3, Robolectric with a stand-in system picker and a real PNG that carries a metadata chunk: consent
+  before anything is prepared, cancel sends nothing, the stored object has no metadata chunk, the 8 MB limit, backing out). It does not
+  exercise an unreadable (non-image) file, which Robolectric's graphics accept; the on-device `ImagePrivacyTest` covers that decoder.
+  `AdministrationUiTest` grew to 20 (group-derived authority, typed-name deletion with exact body, publishing restart). The emulator
+  `AdministrationFlowTest` grew to 7: a new channel is shared only with the person ticked, at the level chosen, with nothing pre-ticked.
+- **Final source.** Core 746 JVM tests (1 optional live-contract skip), app 71 (0 failures), `lint` 0 errors, editor bun 19. Dedicated emulator
+  (API 36, synthetic data), each class one at a time with fresh app data: `AdministrationFlowTest` 7, `BatchInteractionTest` 2, `ConnectedAppTest` 2,
+  `ConnectionSettingsTest` 1, `DocumentReconciliationFlowTest` 5, `MultiWorkspaceFlowTest` 4, `NotificationInboxFlowTest` 1,
+  `OvernightFeedbackFlowTest` 3, `TaskHierarchyFlowTest` 3, `TextAttachmentFlowTest` 1, `ThreadMenuFlowTest` 1, `AvatarStoreTest`, `BrowserFilesTest`,
+  `BrowserNostrTest`, `EditorWebHostTest`, `ExcalidrawRenderTest`, `IdentityOnDeviceTest`, `ImagePrivacyTest`, `KeystoreBoxTest`, `RichContentTest`,
+  `SandboxedHtmlTest` and `TextSheetTest` all passed on the single run made; `ParityFlowTest` failed one test (below).
+- **The intermittent emulator timeouts, diagnosed to a bounded question: regression or not.** The same classes were run repeatedly with fresh app
+  data on an idle host, on this source and on the source before the administration work (`25afc49`, built in a temporary worktree):
+  `TaskHierarchyFlowTest` 1 failure in 5 on each (the same test, the same `waitUntil` for a live upsert to draw); `MultiWorkspaceFlowTest` 1
+  failure in 17 on each (the same test, a message composed in the second Tower's workspace that never reached its store, with an empty outbox and
+  a sendable workspace); `OvernightFeedbackFlowTest` 1 failure in 13 on this source and 1 in 8 on the earlier one (the same chat-newest-message test). The earlier reports of timeouts
+  while the host was also building are therefore the same intermittents, present before this work and at similar rates; they are not caused
+  by it. Their cause is not identified (the Multi failure with an empty outbox looks like a lost tap on the send control rather than a product
+  race, which is a hypothesis only), they remain open, and these small samples neither prove the absence of a small difference nor justify a
+  claim that every test passes. `ParityFlowTest` `reactionsGoByWireNameAnd…` failed in 4 of 6 runs on this source with fresh data (the same
+  family and rate as the earlier 3/6 and 4/6 on the previous source); it, the `DocumentEditControllerTest` lease-timing waits and the
+  `TextSheetTest` hugeUnicode test (which passed here) stay open.
+- Not exercised: a live Tower, a physical phone, real accounts; delivery of the delegations, activations and publishing grants to a real Autopilot.
