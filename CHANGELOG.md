@@ -1,3 +1,13 @@
+# 0.5.1 — Android build 16
+
+Tasks. A subtask list that was once complete no longer keeps showing an exact count while its refresh is unfinished. If a
+refresh fails, stops at its page budget or is cut off by closing the app, the last confirmed children stay visible, the
+count carries a `+`, and the note says whether the list is refreshing, stopped part-way or could not be refreshed. A
+child that a completed read removed does not come back, and a finished refresh restores the exact count.
+
+Not in this build: several workspaces at once, workspace/group/grant administration and Android push. Tested against a Tower
+stand-in and a synthetic emulator account, not a live Tower or a physical phone. See docs/parity-matrix.md.
+
 # 0.5.0 — Android build 15
 
 Tasks. A task's subtask lists are now kept on the device per parent, so what you saw stays visible offline and after the

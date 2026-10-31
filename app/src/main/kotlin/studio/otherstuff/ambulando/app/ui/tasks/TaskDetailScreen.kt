@@ -231,7 +231,7 @@ private fun Hierarchy(row: TaskRow, value: TaskDetailSnapshot, intents: TasksInt
     expanded.forEach { id -> LaunchedEffect(id, refresh, epoch) { attempts.remove(id); attempts[id] = intents.loadRelationships(id) } }
     // Foreground fallback for relationship events missed while this screen stays open.
     LaunchedEffect(row.id) { while (true) { kotlinx.coroutines.delay(60_000); refresh += 1 } }
-    fun kindOf(id: String) = TaskHierarchy.kind(value.relationships[id], readable = attempts[id] != RelationshipStatus.OFFLINE)
+    fun kindOf(id: String) = TaskHierarchy.kind(value.relationships[id], readable = attempts[id] != RelationshipStatus.OFFLINE, reading = id !in attempts)
     val direct = value.children[rootId].orEmpty()
     val kind = kindOf(rootId)
     Column(Modifier.testTag("task.hierarchy"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -272,14 +272,21 @@ private fun Hierarchy(row: TaskRow, value: TaskDetailSnapshot, intents: TasksInt
 @Composable
 private fun RelationshipNote(kind: TaskHierarchy.Kind, state: TaskRelationshipState?, reading: Boolean, modifier: Modifier = Modifier) {
     val amb = Amb.colors
-    val (text, warn) = when (kind) {
-        TaskHierarchy.Kind.COMPLETE -> (if (reading) "Refreshing subtasks…" else "") to false
-        TaskHierarchy.Kind.UNLOADED -> (if (reading) "Checking for subtasks… Saved tasks may be incomplete." else "Subtasks not loaded yet. Showing saved tasks.") to false
-        TaskHierarchy.Kind.CACHED -> ("Saved subtask list" + (state?.refreshedAt?.let { ", last confirmed ${it.take(16).replace('T', ' ')}" } ?: "") +
-            ". It could not be refreshed, so it may be out of date.") to false
-        TaskHierarchy.Kind.PARTIAL -> "Showing the subtasks read so far; there may be more. Refresh to read the rest." to true
-        TaskHierarchy.Kind.OFFLINE -> "Offline or locked. Showing saved subtasks; they update when this device is connected." to false
-        TaskHierarchy.Kind.RESTRICTED -> "Some subtasks may not be visible to you. Only subtasks you can read are listed." to true
+    // A once-confirmed list being read again keeps its saved children; its count stays uncertain until the read finishes.
+    val refreshingSaved = reading && state?.complete == true && (kind == TaskHierarchy.Kind.CACHED || kind == TaskHierarchy.Kind.PARTIAL)
+    val (text, warn) = when {
+        refreshingSaved -> "Refreshing subtasks… Showing the last confirmed list; the count may change." to false
+        else -> when (kind) {
+            TaskHierarchy.Kind.COMPLETE -> (if (reading) "Refreshing subtasks…" else "") to false
+            TaskHierarchy.Kind.UNLOADED -> (if (reading) "Checking for subtasks… Saved tasks may be incomplete." else "Subtasks not loaded yet. Showing saved tasks.") to false
+            TaskHierarchy.Kind.CACHED -> ("Saved subtask list" + (state?.refreshedAt?.let { ", last confirmed ${it.take(16).replace('T', ' ')}" } ?: "") +
+                ". It could not be refreshed, so it may be out of date.") to false
+            TaskHierarchy.Kind.PARTIAL ->
+                (if (state?.complete == true) "Showing the last confirmed subtasks; a refresh stopped part-way, so the list may be out of date. Refresh to finish it."
+                else "Showing the subtasks read so far; there may be more. Refresh to read the rest.") to true
+            TaskHierarchy.Kind.OFFLINE -> "Offline or locked. Showing saved subtasks; they update when this device is connected." to false
+            TaskHierarchy.Kind.RESTRICTED -> "Some subtasks may not be visible to you. Only subtasks you can read are listed." to true
+        }
     }
     if (text.isNotEmpty()) Text(text, style = MaterialTheme.typography.bodySmall, color = if (warn) amb.warning else amb.mutedForeground, modifier = modifier)
 }

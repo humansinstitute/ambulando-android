@@ -53,8 +53,9 @@ class TaskHierarchyTest {
     private fun state(complete: Boolean = false, restricted: Boolean = false, failure: String? = null, cursor: String? = null, pages: Int = 0) =
         studio.otherstuff.ambulando.core.store.TaskRelationshipState(id(1), complete, restricted, failure, 1, cursor, pages, null, null)
 
+    private fun kind(s: studio.otherstuff.ambulando.core.store.TaskRelationshipState?, readable: Boolean, reading: Boolean = false) = TaskHierarchy.kind(s, readable, reading)
+
     @Test fun unloadedCachedPartialOfflineAndRestrictedAreDistinct() {
-        val kind = TaskHierarchy::kind
         assertEquals(TaskHierarchy.Kind.UNLOADED, kind(null, true))
         assertEquals(TaskHierarchy.Kind.UNLOADED, kind(state(), true))
         assertEquals(TaskHierarchy.Kind.OFFLINE, kind(null, false))
@@ -69,5 +70,19 @@ class TaskHierarchyTest {
         assertTrue(TaskHierarchy.isConfirmed(TaskHierarchy.Kind.COMPLETE))
         listOf(TaskHierarchy.Kind.UNLOADED, TaskHierarchy.Kind.CACHED, TaskHierarchy.Kind.PARTIAL, TaskHierarchy.Kind.OFFLINE, TaskHierarchy.Kind.RESTRICTED)
             .forEach { assertFalse("$it carries an uncertain count", TaskHierarchy.isConfirmed(it)) }
+    }
+
+    private fun confirmed(cursor: String? = null, failure: String? = null, pages: Int = 1) =
+        studio.otherstuff.ambulando.core.store.TaskRelationshipState(id(1), true, false, failure, 2, cursor, pages, "2026-10-30T09:15:00Z", null)
+
+    @Test fun aPreviouslyCompleteListIsCertainOnlyWhenNoRefreshIsUnfinished() {
+        assertEquals(TaskHierarchy.Kind.COMPLETE, kind(confirmed(), true))
+        assertEquals("a refresh stopped at its budget", TaskHierarchy.Kind.PARTIAL, kind(confirmed(cursor = "c1"), true))
+        assertEquals("still partial while it resumes", TaskHierarchy.Kind.PARTIAL, kind(confirmed(cursor = "c1"), true, reading = true))
+        assertEquals("a failed refresh", TaskHierarchy.Kind.CACHED, kind(confirmed(failure = "failed"), true))
+        assertEquals("a failed refresh stays uncertain while it retries", TaskHierarchy.Kind.CACHED, kind(confirmed(failure = "failed"), true, reading = true))
+        assertEquals("begun and never finished", TaskHierarchy.Kind.CACHED, kind(confirmed(pages = 0), true))
+        assertEquals("begun and running now", TaskHierarchy.Kind.COMPLETE, kind(confirmed(pages = 0), true, reading = true))
+        assertEquals(TaskHierarchy.Kind.CACHED, kind(confirmed(), false))
     }
 }

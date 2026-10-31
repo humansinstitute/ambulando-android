@@ -362,4 +362,115 @@ class TaskRelationshipStoreTests {
             assertEquals(listOf(id(2), id(6)), children(store, 1))
         }
     }
+
+    // MARK: A previously complete list whose refresh does not finish keeps its members but loses its certain count
+
+    private suspend fun kindOf(store: LocalStore, reading: Boolean = false, readable: Boolean = true) =
+        TaskHierarchy.kind(store.reader.taskRelationship(W, id(1)), readable, reading)
+
+    @Test fun aRefreshThatStopsAtItsPageBudgetKeepsTheOldListWithAnUncertainCount() = runBlocking {
+        StoreFixtures.store().use { store ->
+            val (workspace, connection) = setup(store)
+            val tower = Tower(rows = mapOf(id(1) to row(1)))
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1), row(3, parent = 1)) to false)
+            writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader)
+            assertEquals(TaskHierarchy.Kind.COMPLETE, kindOf(store))
+            // Tower now lists 2, 5 and 6 over three pages; the call stops after one.
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1)) to false, listOf(row(5, parent = 1)) to false, listOf(row(6, parent = 1)) to false)
+            assertEquals(TaskRelationshipOutcome.PARTIAL, writes(store).loadRelationships(connection, workspace, id(1), pageBudget = 1, reader = tower.reader))
+            val state = store.reader.taskRelationship(W, id(1))!!
+            assertTrue("the earlier confirmation is retained", state.complete)
+            assertEquals("c1", state.nextCursor)
+            assertEquals(TaskHierarchy.Kind.PARTIAL, kindOf(store))
+            assertFalse(TaskHierarchy.isConfirmed(kindOf(store)))
+            assertEquals("old members stay visible, nothing is dropped before the read finishes", listOf(id(2), id(3)), children(store, 1))
+        }
+    }
+
+    @Test fun aNetworkFailureMidRefreshIsCachedAndRecoveryRestoresACertainCountWithoutTheRemovedMember() = runBlocking {
+        StoreFixtures.store().use { store ->
+            val (workspace, connection) = setup(store)
+            val tower = Tower(rows = mapOf(id(1) to row(1)))
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1), row(3, parent = 1)) to false)
+            writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader)
+            tower.failAt = { _, _ -> IOException("offline") }
+            assertTrue(runCatching { writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader) }.exceptionOrNull() is IOException)
+            assertEquals(TaskHierarchy.Kind.CACHED, kindOf(store))
+            assertEquals("a read running again over a failure is still not certain", TaskHierarchy.Kind.CACHED, kindOf(store, reading = true))
+            assertEquals(listOf(id(2), id(3)), children(store, 1))
+            // Back online, Tower no longer lists 3.
+            tower.failAt = { _, _ -> null }
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1)) to false)
+            assertEquals(TaskRelationshipOutcome.COMPLETE, writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader))
+            assertEquals(TaskHierarchy.Kind.COMPLETE, kindOf(store))
+            assertEquals(listOf(id(2)), children(store, 1))
+        }
+    }
+
+    @Test fun aMemberARefreshRemovedDoesNotReturnWhenALaterRefreshIsInterrupted() = runBlocking {
+        StoreFixtures.store().use { store ->
+            val (workspace, connection) = setup(store)
+            val tower = Tower(rows = mapOf(id(1) to row(1)))
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1), row(3, parent = 1)) to false)
+            writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader)
+            // 3 leaves the list but this device's saved copy of it still names the parent.
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1)) to false)
+            writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader)
+            assertEquals(listOf(id(2)), children(store, 1))
+            assertEquals(id(1), TaskHierarchy.parentId(store.reader.task(W, id(3))!!))
+            // A later refresh fails on its first page, then stops at its budget on another try.
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1)) to false, listOf(row(4, parent = 1)) to false)
+            tower.failAt = { _, _ -> IOException("offline") }
+            runCatching { writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader) }
+            assertEquals(listOf(id(2)), children(store, 1))
+            tower.failAt = { _, _ -> null }
+            writes(store).loadRelationships(connection, workspace, id(1), pageBudget = 1, reader = tower.reader)
+            assertEquals(TaskHierarchy.Kind.PARTIAL, kindOf(store))
+            assertEquals("the removed member is not resurrected from its saved record", listOf(id(2)), children(store, 1))
+        }
+    }
+
+    @Test fun aRefreshInterruptedByRelaunchIsCachedUntilItRunsAgain() = runBlocking {
+        val dir = tempDir()
+        StoreFixtures.store(dir).use { store ->
+            val (workspace, connection) = setup(store)
+            val tower = Tower(rows = mapOf(id(1) to row(1)))
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1), row(3, parent = 1)) to false)
+            writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader)
+            // A refresh begins and the app is closed before any page returns.
+            store.writer.beginTaskRelationshipRead(W, id(1))
+            assertEquals("running now: the last confirmed list, labelled refreshing by the screen", TaskHierarchy.Kind.COMPLETE, kindOf(store, reading = true))
+        }
+        StoreFixtures.store(dir).use { store ->
+            val (workspace, connection) = setup(store)
+            assertEquals("not running after relaunch: unfinished, so uncertain", TaskHierarchy.Kind.CACHED, kindOf(store))
+            assertEquals(listOf(id(2), id(3)), children(store, 1))
+            val tower = Tower(rows = mapOf(id(1) to row(1)))
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1), row(3, parent = 1)) to false)
+            assertEquals(TaskRelationshipOutcome.COMPLETE, writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader))
+            assertEquals(TaskHierarchy.Kind.COMPLETE, kindOf(store))
+        }
+    }
+
+    @Test fun anInterruptedRefreshSurvivesRelaunchAsPartialAndResumesToACertainCount() = runBlocking {
+        val dir = tempDir()
+        val tower = Tower(rows = mapOf(id(1) to row(1)))
+        StoreFixtures.store(dir).use { store ->
+            val (workspace, connection) = setup(store)
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1)) to false)
+            writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader)
+            tower.pages[id(1)] = listOf(listOf(row(2, parent = 1), row(4, parent = 1)) to false, listOf(row(5, parent = 1)) to false)
+            writes(store).loadRelationships(connection, workspace, id(1), pageBudget = 1, reader = tower.reader)
+        }
+        StoreFixtures.store(dir).use { store ->
+            val (workspace, connection) = setup(store)
+            assertEquals(TaskHierarchy.Kind.PARTIAL, kindOf(store))
+            assertEquals(listOf(id(2), id(4)), children(store, 1))
+            tower.requests.clear()
+            assertEquals(TaskRelationshipOutcome.COMPLETE, writes(store).loadRelationships(connection, workspace, id(1), reader = tower.reader))
+            assertEquals("resumes at the stored cursor", listOf(id(1) to "c1"), tower.requests)
+            assertEquals(listOf(id(2), id(4), id(5)), children(store, 1))
+            assertEquals(TaskHierarchy.Kind.COMPLETE, kindOf(store))
+        }
+    }
 }

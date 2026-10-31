@@ -62,6 +62,8 @@ class ParityFlowTest {
 
         // Edit through the dialog; the body changes and nothing else about the message does.
         compose.onNodeWithTag("message.edit.${root.id}").performClick()
+        // The edit dialog is its own window: wait for it to be composed before typing into it.
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.field").fetchSemanticsNodes().isNotEmpty() }
         val edited = "$text (edited)"
         compose.onNodeWithTag("chat.edit.field").performTextReplacement(edited)
         compose.onNodeWithTag("chat.edit.save").performClick()

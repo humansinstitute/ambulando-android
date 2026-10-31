@@ -49,11 +49,22 @@ object TaskHierarchy {
 
     /**
      * Classifies a stored [state]. [readable] is false while the device cannot read from Tower (locked, offline or access
-     * removed). Only [Kind.COMPLETE] has a certain count.
+     * removed); [reading] is true while a read of this list is running now. Only [Kind.COMPLETE] has a certain count.
+     *
+     * A list that was once complete keeps its members while a later refresh runs, but the count is certain only when no
+     * refresh is unfinished: a refresh that failed is [Kind.CACHED]; one that stopped at a page budget (a stored cursor) is
+     * [Kind.PARTIAL]; one that was begun and never stored a page (a stored read with no pages, such as after the
+     * app was closed) is [Kind.CACHED] unless it is running now. A refresh that is simply running leaves the last
+     * confirmed count showing, labelled as refreshing by the caller.
      */
-    fun kind(state: TaskRelationshipState?, readable: Boolean): Kind = when {
+    fun kind(state: TaskRelationshipState?, readable: Boolean, reading: Boolean = false): Kind = when {
         state != null && state.restricted -> Kind.RESTRICTED
-        state != null && state.complete -> if (readable && state.failure == null) Kind.COMPLETE else Kind.CACHED
+        state != null && state.complete -> when {
+            !readable || state.failure != null -> Kind.CACHED
+            state.nextCursor != null -> Kind.PARTIAL
+            !reading && state.pages == 0 -> Kind.CACHED
+            else -> Kind.COMPLETE
+        }
         state != null && (state.pages > 0 || state.nextCursor != null) -> Kind.PARTIAL
         !readable || state?.failure != null -> Kind.OFFLINE
         else -> Kind.UNLOADED

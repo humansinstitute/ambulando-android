@@ -50,16 +50,19 @@ class TaskHierarchyFlowTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync()
         Thread.sleep(150)
-        instrumentation.uiAutomation.takeScreenshot()?.let { image ->
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, "$name.png")
-                put(MediaStore.Downloads.MIME_TYPE, "image/png")
-                put(MediaStore.Downloads.RELATIVE_PATH, "Download/ambulando-hierarchy-review")
+        // Review screenshots are evidence, not assertions: MediaStore refuses a name after enough repeats, which must not fail a workflow.
+        runCatching {
+            instrumentation.uiAutomation.takeScreenshot()?.let { image ->
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, "$name.png")
+                    put(MediaStore.Downloads.MIME_TYPE, "image/png")
+                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/ambulando-hierarchy-review")
+                }
+                val resolver = instrumentation.targetContext.contentResolver
+                val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
+                requireNotNull(resolver.openOutputStream(uri)).use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                image.recycle()
             }
-            val resolver = instrumentation.targetContext.contentResolver
-            val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
-            requireNotNull(resolver.openOutputStream(uri)).use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            image.recycle()
         }
     }
 
@@ -78,6 +81,17 @@ class TaskHierarchyFlowTest {
     private fun awaitCount(text: String) {
         runCatching { compose.waitUntil(20_000) { compose.onAllNodesWithTag("task.subtasks.count").fetchSemanticsNodes().any { it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString("") == text } } }
         compose.onNodeWithTag("task.subtasks.count").performScrollTo().assertTextEquals(text)
+    }
+
+    /**
+     * Tasks injected into a channel are not on the sample Tower, so a channel task-list sync that completes after the injection
+     * correctly flags them removed (Tower's complete list is authoritative), and a task or relationship read that begins after
+     * it replaces the membership. Inject only once this device's task syncs have settled: nothing task-related is running or queued.
+     */
+    private fun awaitTaskSyncsSettled(model: AppModel) = compose.waitUntil(20_000) {
+        val status = model.engine.status.value
+        (status.running + status.queued).none { it.startsWith("tasks:") || it.startsWith("task:") || it.startsWith("task-relationships:") } &&
+            compose.onAllNodesWithText("Refreshing subtasks", substring = true).fetchSemanticsNodes().isEmpty()
     }
 
     private fun waitComplete(model: AppModel, id: String) = compose.waitUntil(20_000) { state(model, id)?.complete == true }
@@ -140,6 +154,7 @@ class TaskHierarchyFlowTest {
             // A saved task that names the parent but that Tower does not list for it (moved or removed elsewhere).
             val stale = child(parent.id, parent.channelId, parent.scopeId, "Stale cached child", "2026-10-01T09:00:00.000Z")
             staleId = stale.id
+            awaitTaskSyncsSettled(model)
             runBlocking { model.store.writer.upsertTasks(SampleIds.STUDIO, listOf(stale)) }
             assertNull("never read before: only saved metadata backs the list", state(model, parent.id))
             assertTrue(stale.id in children(model, parent.id).map { it.id })
@@ -153,6 +168,7 @@ class TaskHierarchyFlowTest {
 
             // An authorized upsert whose timestamps are decades off this device's clock still joins the list at once.
             val skewed = child(parent.id, parent.channelId, parent.scopeId, "Skewed live child", "2001-01-01T00:00:00.000Z", version = 5)
+            awaitTaskSyncsSettled(model)
             runBlocking { model.store.writer.upsertTasks(SampleIds.STUDIO, listOf(skewed)) }
             compose.waitUntil(20_000) { compose.onAllNodesWithTag("task.subtask.${skewed.id}").fetchSemanticsNodes().isNotEmpty() }
             awaitCount("Subtasks 1")
@@ -180,6 +196,57 @@ class TaskHierarchyFlowTest {
             assertEquals("a replaced list stays replaced after relaunch", false, staleId in children(model, parentId).map { it.id })
             assertEquals(TaskHierarchy.Kind.COMPLETE, TaskHierarchy.kind(state, readable = true))
             assertEquals(TaskHierarchy.Kind.CACHED, TaskHierarchy.kind(state, readable = false))
+        }
+    }
+
+    @Test fun aPreviouslyCompleteListTurnsUncertainWhenItsRefreshIsInterruptedAndRecoversOnRefresh() {
+        var parentId = ""
+        var keptId = ""
+        launch { model ->
+            // This may be the first test on a fresh install: wait for the sample tasks to be stored.
+            compose.waitUntil(20_000) { runBlocking { model.store.reader.tasks(SampleIds.STUDIO, includeArchived = true).any { it.title == "Review the native inbox" } } }
+            val parent = stored(model, "Review the native inbox")
+            parentId = parent.id
+            val kept = child(parent.id, parent.channelId, parent.scopeId, "Kept while refreshing", "2026-10-01T09:00:00.000Z")
+            keptId = kept.id
+            openTask(model, "Review the native inbox")
+            waitComplete(model, parent.id)
+            // The screen's read has settled on a certain list; remember how many children Tower confirmed.
+            val confirmed = children(model, parent.id).size
+            awaitCount("Subtasks $confirmed")
+            // A child joins the confirmed list (as a live upsert does), then the next refresh stops after a first page that does not list it.
+            awaitTaskSyncsSettled(model)
+            runBlocking { model.store.writer.upsertTasks(SampleIds.STUDIO, listOf(kept)) }
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("task.subtask.$keptId").fetchSemanticsNodes().isNotEmpty() }
+            awaitCount("Subtasks ${confirmed + 1}")
+            runBlocking {
+                val read = model.store.writer.beginTaskRelationshipRead(SampleIds.STUDIO, parent.id)
+                model.store.writer.applyTaskRelationshipPage(SampleIds.STUDIO, parent.id, read.generation, emptyList(), emptyList(), false, next = "c1", fromCursor = null)
+            }
+            awaitCount("Subtasks ${confirmed + 1}+")
+            compose.onNodeWithTag("task.subtasks.state").assertTextContains("stopped part-way", substring = true)
+            assertTrue("the earlier confirmation is retained", state(model, parent.id)!!.complete)
+            shot("06-interrupted-refresh-uncertain")
+
+            // A network failure on the resumed read is a different state, with its own wording.
+            val generation = state(model, parent.id)!!.generation
+            runBlocking { model.store.writer.failTaskRelationshipRead(SampleIds.STUDIO, parent.id, generation, restricted = false, failure = "offline") }
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("may be out of date", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            awaitCount("Subtasks ${confirmed + 1}+")
+            compose.onNodeWithTag("task.subtask.$keptId").assertIsDisplayed()
+            shot("07-refresh-failed-cached")
+
+            // Recovery: refresh resumes, completes, and the member Tower never listed is dropped.
+            compose.onNodeWithTag("task.subtasks.refresh").performScrollTo().performClick()
+            compose.waitUntil(20_000) { state(model, parent.id)?.let { it.nextCursor == null && it.failure == null } == true }
+            awaitCount("Subtasks $confirmed")
+            assertEquals(TaskHierarchy.Kind.COMPLETE, TaskHierarchy.kind(state(model, parent.id), readable = true))
+            shot("08-refresh-recovered")
+        }
+        // Relaunch: the removed member stays removed.
+        launch { model ->
+            assertEquals(false, keptId in children(model, parentId).map { it.id })
+            assertEquals(TaskHierarchy.Kind.COMPLETE, TaskHierarchy.kind(state(model, parentId), readable = true))
         }
     }
 }
