@@ -202,14 +202,17 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             override fun submit(intent: WriteIntent) = model.submit(intent)
             override fun refresh(force: Boolean) { model.refresh() }
             override fun openTask(taskId: String, force: Boolean, markViewed: Boolean) { if (w != null) model.act { model.sync.refreshTask(c, w, taskId, force = force); if (markViewed) model.markViewed(studio.otherstuff.ambulando.core.transport.ViewStateRecord.ResourceType.TASK, taskId) } }
+            override val readEpoch: Any? get() = model.identityState
             override suspend fun loadRelationships(taskId: String): studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus {
                 if (w == null || w.accessRemoved || model.identityState !is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked) return studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.OFFLINE
                 return try {
-                    val loaded = model.engine.perform("task-relationships:${w.id}:$taskId", studio.otherstuff.ambulando.core.sync.SyncPriority.VISIBLE) {
-                        studio.otherstuff.ambulando.core.surfaces.TaskTreeWrites(model.store, model.identity, model.transport).load(c, w, taskId)
+                    val outcome = model.engine.perform(studio.otherstuff.ambulando.core.sync.WorkspaceSync.taskRelationshipsKey(w.id, taskId), studio.otherstuff.ambulando.core.sync.SyncPriority.VISIBLE) {
+                        studio.otherstuff.ambulando.core.surfaces.TaskTreeWrites(model.store, model.identity, model.transport).loadRelationships(c, w, taskId)
                     }
-                    if (loaded.partial || loaded.unavailable) studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.PARTIAL
-                    else studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.COMPLETE
+                    when (outcome) {
+                        studio.otherstuff.ambulando.core.surfaces.TaskRelationshipOutcome.COMPLETE -> studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.COMPLETE
+                        else -> studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.PARTIAL
+                    }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e
                 } catch (e: studio.otherstuff.ambulando.core.surfaces.TaskTreeError.Unavailable) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.RESTRICTED
                 } catch (e: Exception) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.OFFLINE }

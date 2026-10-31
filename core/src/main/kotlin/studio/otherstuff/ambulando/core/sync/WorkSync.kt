@@ -19,6 +19,7 @@ import studio.otherstuff.ambulando.core.store.upsertDocs
 import studio.otherstuff.ambulando.core.store.upsertFiles
 import studio.otherstuff.ambulando.core.store.upsertFolders
 import studio.otherstuff.ambulando.core.store.upsertTasks
+import studio.otherstuff.ambulando.core.surfaces.TaskTreeWrites
 import studio.otherstuff.ambulando.core.store.upsertThreads
 import studio.otherstuff.ambulando.core.store.upsertViewStates
 import studio.otherstuff.ambulando.core.chat.thread
@@ -85,6 +86,21 @@ suspend fun WorkspaceSync.refreshTask(
         val comments = api.taskComments(workspace.id, workspace.appNpub, taskId)
         checkCancelled()
         store.writer.upsertComments(workspace.id, comments, complete = CommentRecord.Parent.TASK to task.id)
+    }
+}
+
+/**
+ * One parent's direct-child list (Tower's paged `/tasks/:id/relationships`), stored with its membership and read state.
+ * Descendants are not read here: each expanded child enqueues its own job. A tracked list is refreshed when its task or one
+ * of its children changes, on open, on identity unlock and by the detail screen's foreground fallback.
+ */
+suspend fun WorkspaceSync.refreshTaskRelationships(
+    connection: ConnectionRecord, workspace: WorkspaceRecord, taskId: String, priority: SyncPriority = SyncPriority.USER, force: Boolean = false,
+) {
+    engine.enqueueRead(WorkspaceSync.taskRelationshipsKey(workspace.id, taskId), priority, force) {
+        if (workspace.accessRemoved) return@enqueueRead
+        identity.requireReader(connection.signerNpub)
+        TaskTreeWrites(store, identity, transport).loadRelationships(connection, workspace, taskId)
     }
 }
 

@@ -9,13 +9,18 @@ import studio.otherstuff.ambulando.core.crypto.IdentityService
 import studio.otherstuff.ambulando.core.json.JsonFields
 import studio.otherstuff.ambulando.core.nostr.Sha256Hex
 import studio.otherstuff.ambulando.core.store.AccessTarget
+import studio.otherstuff.ambulando.core.store.task
 import studio.otherstuff.ambulando.core.store.ConnectionRecord
 import studio.otherstuff.ambulando.core.store.LocalStore
 import studio.otherstuff.ambulando.core.store.canvasSnapshot
 import studio.otherstuff.ambulando.core.store.markAccessRemoved
 import studio.otherstuff.ambulando.core.store.replaceCanvases
 import studio.otherstuff.ambulando.core.store.saveCanvasSnapshot
+import studio.otherstuff.ambulando.core.store.applyTaskRelationshipPage
+import studio.otherstuff.ambulando.core.store.beginTaskRelationshipRead
+import studio.otherstuff.ambulando.core.store.failTaskRelationshipRead
 import studio.otherstuff.ambulando.core.store.upsertTasks
+import studio.otherstuff.ambulando.core.transport.task
 import studio.otherstuff.ambulando.core.transport.DocumentBodyError
 import studio.otherstuff.ambulando.core.transport.HttpTransport
 import studio.otherstuff.ambulando.core.transport.ObjectTransfers
@@ -224,12 +229,28 @@ class TowerTaskRelationshipsReader(private val api: TowerAPI, private val worksp
  * confirmed request with a stable `client_request_id` (the caller keeps it for a retry), so a retry after an uncertain
  * answer finds the same task instead of creating another.
  */
+/** How one call to [TaskTreeWrites.loadRelationships] ended. */
+enum class TaskRelationshipOutcome {
+    /** The last page was read: the confirmed membership was replaced. */
+    COMPLETE,
+    /** The page budget ran out: more pages remain and the next call resumes. */
+    PARTIAL,
+    /** A newer read of the same parent replaced this one. */
+    SUPERSEDED,
+}
+
 class TaskTreeWrites(
     private val store: LocalStore,
     private val identity: IdentityService,
     private val transport: HttpTransport,
 ) {
     private fun api(connection: ConnectionRecord) = TowerAPI(TowerClient(TowerOrigin(connection.origin), transport, identity))
+
+    companion object {
+        /** Pages (of 100) read per call for one parent: 1,000 children before the list resumes on the next call. */
+        const val RELATIONSHIP_PAGE_BUDGET = 10
+        private val REFUSALS = setOf(401, 403, 404)
+    }
 
     /** The authorized tasks reachable from `root` (and `upstream` context tasks), bounded like the web's tree. */
     suspend fun load(
@@ -239,6 +260,70 @@ class TaskTreeWrites(
         val records = loaded.rows.mapNotNull { runCatching { TaskRecord.parse(it) }.getOrNull() }.filter { it.workspaceId == workspace.id }
         if (records.isNotEmpty()) store.writer.upsertTasks(workspace.id, records)
         return loaded
+    }
+
+    /**
+     * Reads one parent's direct-child list page by page into the store (bounded by [pageBudget] pages per call; a longer list
+     * resumes at its stored cursor on the next call). Each page's tasks, children and read state are stored together, so a
+     * failure part-way keeps what was read, and only a read that reaches its last page replaces the confirmed membership.
+     * Descendants are not read here: each expanded child loads its own list. Throws [TaskTreeError.Unavailable] when Tower
+     * refuses the parent (recorded as restricted) and rethrows other failures after recording them.
+     */
+    suspend fun loadRelationships(
+        connection: ConnectionRecord, workspace: WorkspaceRecord, parentId: String, pageBudget: Int = RELATIONSHIP_PAGE_BUDGET,
+        reader: TaskTreeService.RelationshipsReader? = null,
+    ): TaskRelationshipOutcome {
+        val parent = parentId.lowercase()
+        val source = reader ?: TowerTaskRelationshipsReader(api(connection), workspace.id, workspace.appNpub)
+        val begin = store.writer.beginTaskRelationshipRead(workspace.id, parent)
+        var cursor = begin.cursor
+        val resumed = cursor != null
+        val seen = HashSet<String>()
+        var pages = 0
+        while (pages < pageBudget) {
+            val fromCursor = cursor
+            val page = try {
+                source.page(parent, cursor)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val status = (e as? TowerHttpFailure)?.status ?: (e as? TowerError.Http)?.status
+                if (status in REFUSALS) {
+                    store.writer.failTaskRelationshipRead(workspace.id, parent, begin.generation, restricted = true)
+                    throw TaskTreeError.Unavailable
+                }
+                // A stored cursor Tower no longer accepts restarts the read instead of retrying it forever.
+                store.writer.failTaskRelationshipRead(workspace.id, parent, begin.generation, restricted = false, restart = resumed && pages == 0 && status != null && status < 500)
+                throw e
+            }
+            val records = (listOf(page.task) + page.tasks).mapNotNull { runCatching { TaskRecord.parse(it) }.getOrNull() }.filter { it.workspaceId == workspace.id }
+            val children = page.tasks.mapNotNull { TaskTreeNode.fromRow(it) }.filter { it.parentId == parent && it.id != parent }.map { it.id }
+            if (!store.writer.applyTaskRelationshipPage(workspace.id, parent, begin.generation, records, children, page.unavailable, page.next, fromCursor = fromCursor)) return TaskRelationshipOutcome.SUPERSEDED
+            pages += 1
+            cursor = page.next
+            if (cursor == null) break
+            if (!seen.add(cursor)) {
+                store.writer.failTaskRelationshipRead(workspace.id, parent, begin.generation, restricted = false, failure = "repeated cursor", restart = true)
+                throw TowerError.Malformed("task relationships repeated cursor")
+            }
+        }
+        if (cursor != null) return TaskRelationshipOutcome.PARTIAL
+        loadNamedParent(connection, workspace, parent)
+        return TaskRelationshipOutcome.COMPLETE
+    }
+
+    /** Stores the task this one names as parent through the normal authorized read, so the parent link can open. Best effort. */
+    private suspend fun loadNamedParent(connection: ConnectionRecord, workspace: WorkspaceRecord, taskId: String) {
+        try {
+            val task = store.reader.task(workspace.id, taskId) ?: return
+            val parent = TaskHierarchy.parentId(task) ?: return
+            if (store.reader.task(workspace.id, parent) != null) return
+            store.writer.upsertTasks(workspace.id, listOf(api(connection).task(workspace.id, workspace.appNpub, parent)))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The parent stays labelled unavailable.
+        }
     }
 
     /** Tasks of a channel to choose a root from. */

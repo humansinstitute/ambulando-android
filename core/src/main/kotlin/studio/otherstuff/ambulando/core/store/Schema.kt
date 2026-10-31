@@ -43,6 +43,20 @@ object Schema {
         )),
         // The composer's `@` lookahead: a trigram index of document and task titles (built from what is already stored).
         Migration(6, MentionIndex.statements),
+        // Confirmed per-parent task relationships: which tasks a complete read of Tower's relationships route listed as direct
+        // children, and how far that read got (see TaskRelationshipStore). Task rows are never changed by these tables.
+        Migration(7, listOf(
+            """CREATE TABLE task_relationships(
+              workspace_id TEXT NOT NULL, parent_id TEXT NOT NULL,
+              complete INTEGER NOT NULL DEFAULT 0, restricted INTEGER NOT NULL DEFAULT 0, read_restricted INTEGER NOT NULL DEFAULT 0,
+              failure TEXT, gen INTEGER NOT NULL DEFAULT 0, next_cursor TEXT, pages INTEGER NOT NULL DEFAULT 0,
+              refreshed_at TEXT, attempted_at TEXT,
+              PRIMARY KEY(workspace_id, parent_id))""",
+            """CREATE TABLE task_relationship_members(
+              workspace_id TEXT NOT NULL, parent_id TEXT NOT NULL, child_id TEXT NOT NULL, gen INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY(workspace_id, parent_id, child_id))""",
+            "CREATE INDEX task_relationship_children ON task_relationship_members(workspace_id, child_id)",
+        )),
     )
 
     val VERSION: Int get() = migrations.maxOf { it.version }
@@ -61,7 +75,7 @@ object Schema {
     /** Workspace-scoped tables, cleared with a workspace that no connection on the device lists any more. */
     internal val workspaceTables = listOf(
         "scopes", "channels", "messages", "threads", "members", "channel_sync",
-        "tasks", "comments", "docs", "doc_bodies", "files", "folders", "view_states", "reactions", "list_sync",
+        "tasks", "task_relationships", "task_relationship_members", "comments", "docs", "doc_bodies", "files", "folders", "view_states", "reactions", "list_sync",
         "context_components", "context_references", "canvases", "canvas_snapshots", "board_scenes", "board_links",
         "workspace_agents", "agent_activities", "personal_wapps", "pins",
     )

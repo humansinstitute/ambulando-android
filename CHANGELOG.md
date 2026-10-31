@@ -1,3 +1,19 @@
+# 0.5.0 — Android build 15
+
+Tasks. A task's subtask lists are now kept on the device per parent, so what you saw stays visible offline and after the
+app is closed. A list is replaced only when a full read of Tower's list finishes: a read that fails or stops part-way keeps
+the last confirmed list and resumes where it stopped. New subtasks you create, tasks that move to another parent and tasks
+that are deleted update the lists immediately. The count is exact only after a complete read; a trailing `+` and a plain-language
+note say when the list is not loaded yet, saved from an earlier read, partly read, read offline, or limited because Tower hides
+tasks you cannot see (hidden tasks are never counted). Each list has Refresh and re-reads when opened, expanded and about once
+a minute while the screen stays open.
+
+Fixes. Closing the local store while a save was still running could crash the app's database layer; it now waits.
+
+Not in this build: several workspaces at once, workspace/group/grant administration and Android push. This package has been
+tested against a Tower stand-in and a synthetic emulator account, not a live Tower or a physical phone. See
+docs/parity-matrix.md.
+
 # 0.4.0 — Android build 14
 
 Documents. Android now keeps your unsaved page work when someone else changes the same page, and lets you review, merge or

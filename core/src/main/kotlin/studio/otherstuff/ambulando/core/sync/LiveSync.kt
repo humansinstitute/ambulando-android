@@ -54,7 +54,9 @@ import studio.otherstuff.ambulando.core.store.upsertFiles
 import studio.otherstuff.ambulando.core.store.upsertFolders
 import studio.otherstuff.ambulando.core.store.upsertMessages
 import studio.otherstuff.ambulando.core.store.upsertPins
+import studio.otherstuff.ambulando.core.store.taskRelationship
 import studio.otherstuff.ambulando.core.store.upsertTasks
+import studio.otherstuff.ambulando.core.surfaces.TaskHierarchy
 import studio.otherstuff.ambulando.core.store.upsertThreads
 import studio.otherstuff.ambulando.core.store.upsertViewStates
 import studio.otherstuff.ambulando.core.surfaces.CanvasScene
@@ -451,6 +453,10 @@ private suspend fun WorkspaceSync.materialize(
             onAccessLoss({ store.writer.markAccessRemoved(w, AccessTarget.Task(refresh.id)) }) {
                 val task = api.task(w, app, refresh.id)
                 store.writer.upsertTasks(w, listOf(task))
+                // A tracked child list that this task heads or belongs to is confirmed again, not only noted.
+                for (related in listOfNotNull(task.id, TaskHierarchy.parentId(task)).distinct()) {
+                    if (store.reader.taskRelationship(w, related) != null) refreshTaskRelationships(connection, workspace, related, SyncPriority.BACKGROUND, force = true)
+                }
                 val comments = api.taskComments(w, app, refresh.id)
                 store.writer.upsertComments(w, comments, complete = CommentRecord.Parent.TASK to task.id)
             }

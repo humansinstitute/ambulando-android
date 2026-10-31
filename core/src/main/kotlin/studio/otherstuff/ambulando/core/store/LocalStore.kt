@@ -1,6 +1,7 @@
 package studio.otherstuff.ambulando.core.store
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -102,7 +103,8 @@ class StoreWriter internal constructor(path: String, val changes: ChangeCoalesce
     /** Notifies observers that data outside SQLite changed (for example a finished download in the file cache). */
     suspend fun touch(keys: Set<ChangeKey>) = withContext(dispatcher) { changes.record(keys) }
 
-    override fun close() = db.close()
+    /** Closes behind any statement still running on this connection's dispatcher: a native handle must never be freed mid-use. */
+    override fun close() = runBlocking(dispatcher) { db.close() }
 }
 
 /**
@@ -115,7 +117,8 @@ class StoreReader internal constructor(path: String) : AutoCloseable {
 
     internal suspend fun <T> read(body: SqlConnection.() -> T): T = withContext(dispatcher) { db.snapshot { db.body() } }
 
-    override fun close() = db.close()
+    /** Closes behind any statement still running on this connection's dispatcher: a native handle must never be freed mid-use. */
+    override fun close() = runBlocking(dispatcher) { db.close() }
 }
 
 /**

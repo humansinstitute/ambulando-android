@@ -140,6 +140,7 @@ class WorkspaceSync(
         // Work (WorkSync)
         fun tasksKey(w: String, c: String): String = "tasks:$w:$c"
         fun taskKey(w: String, t: String): String = "task:$w:$t"
+        fun taskRelationshipsKey(w: String, t: String): String = "task-relationships:$w:${t.lowercase()}"
         fun docsKey(w: String, c: String): String = "docs:$w:$c"
         fun docKey(w: String, d: String): String = "doc:$w:$d"
         fun filesKey(w: String, c: String): String = "files:$w:$c"

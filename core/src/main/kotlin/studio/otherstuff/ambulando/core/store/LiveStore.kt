@@ -35,6 +35,7 @@ suspend fun StoreWriter.applyTombstones(workspaceId: String, tombstones: Set<Tom
             }
             is Tombstone.Task -> {
                 run("DELETE FROM tasks WHERE workspace_id = ? AND id = ?", t.id, StoreTable.TASKS)
+                dropTaskRelationships(workspaceId, t.id)
                 run("DELETE FROM comments WHERE workspace_id = ? AND parent = 'task' AND parent_id = ?", t.id, StoreTable.COMMENTS)
             }
             is Tombstone.Doc -> {

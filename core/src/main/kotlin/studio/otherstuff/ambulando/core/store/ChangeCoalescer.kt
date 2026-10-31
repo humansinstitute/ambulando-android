@@ -14,6 +14,9 @@ import kotlinx.coroutines.launch
 /** Local tables (and pseudo-tables) a change notification can name. */
 enum class StoreTable {
     CONNECTIONS, WORKSPACES, SCOPES, CHANNELS, MESSAGES, THREADS, MEMBERS, DRAFTS, OUTBOX, APP_STATE,
+
+    /** Per-parent task relationship membership and read state (the task detail subtask lists). */
+    TASK_RELATIONSHIPS,
     TASKS, COMMENTS, DOCS, DOC_BODIES, DOC_DRAFTS, FILES, FOLDERS, VIEW_STATES, REACTIONS, WRITES,
     CONTEXT_TREE, CANVASES, BOARDS, AGENTS, TOOLBOX, PINS,
 

@@ -49,4 +49,25 @@ class TaskHierarchyTest {
         assertNull(TaskHierarchy.parentId(task(1)))
         assertEquals(id(1), TaskHierarchy.parentId(task(2, parent = 1)))
     }
+
+    private fun state(complete: Boolean = false, restricted: Boolean = false, failure: String? = null, cursor: String? = null, pages: Int = 0) =
+        studio.otherstuff.ambulando.core.store.TaskRelationshipState(id(1), complete, restricted, failure, 1, cursor, pages, null, null)
+
+    @Test fun unloadedCachedPartialOfflineAndRestrictedAreDistinct() {
+        val kind = TaskHierarchy::kind
+        assertEquals(TaskHierarchy.Kind.UNLOADED, kind(null, true))
+        assertEquals(TaskHierarchy.Kind.UNLOADED, kind(state(), true))
+        assertEquals(TaskHierarchy.Kind.OFFLINE, kind(null, false))
+        assertEquals("a failed first read with nothing stored", TaskHierarchy.Kind.OFFLINE, kind(state(failure = "failed"), true))
+        assertEquals(TaskHierarchy.Kind.COMPLETE, kind(state(complete = true, pages = 2), true))
+        assertEquals(TaskHierarchy.Kind.CACHED, kind(state(complete = true, pages = 2), false))
+        assertEquals("a failed refresh of a confirmed list", TaskHierarchy.Kind.CACHED, kind(state(complete = true, failure = "failed"), true))
+        assertEquals(TaskHierarchy.Kind.PARTIAL, kind(state(pages = 1, cursor = "c1"), true))
+        assertEquals("still partial when the device goes offline", TaskHierarchy.Kind.PARTIAL, kind(state(pages = 1, cursor = "c1"), false))
+        assertEquals(TaskHierarchy.Kind.RESTRICTED, kind(state(complete = true, restricted = true), true))
+        assertEquals(TaskHierarchy.Kind.RESTRICTED, kind(state(restricted = true), false))
+        assertTrue(TaskHierarchy.isConfirmed(TaskHierarchy.Kind.COMPLETE))
+        listOf(TaskHierarchy.Kind.UNLOADED, TaskHierarchy.Kind.CACHED, TaskHierarchy.Kind.PARTIAL, TaskHierarchy.Kind.OFFLINE, TaskHierarchy.Kind.RESTRICTED)
+            .forEach { assertFalse("$it carries an uncertain count", TaskHierarchy.isConfirmed(it)) }
+    }
 }

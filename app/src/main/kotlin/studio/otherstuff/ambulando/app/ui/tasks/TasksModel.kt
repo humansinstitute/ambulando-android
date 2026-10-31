@@ -32,6 +32,9 @@ import studio.otherstuff.ambulando.core.store.people
 import studio.otherstuff.ambulando.core.store.task
 import studio.otherstuff.ambulando.core.store.tasks
 import studio.otherstuff.ambulando.core.store.channelTasks
+import studio.otherstuff.ambulando.core.store.TaskRelationshipState
+import studio.otherstuff.ambulando.core.store.TaskSubtasks
+import studio.otherstuff.ambulando.core.store.subtaskTree
 import studio.otherstuff.ambulando.core.surfaces.TaskHierarchy
 import studio.otherstuff.ambulando.core.store.workspaceWrites
 import studio.otherstuff.ambulando.core.transport.CommentRecord
@@ -183,6 +186,9 @@ interface TasksIntents : WriteActions {
      * list reflects other devices. Never throws; the result says how complete the stored list is.
      */
     suspend fun loadRelationships(taskId: String): RelationshipStatus = RelationshipStatus.OFFLINE
+
+    /** Changes when the device's ability to read changes (identity unlock or lock), so open lists read again. */
+    val readEpoch: Any? get() = null
 }
 
 /** How much of a task's child list this device could confirm. */
@@ -253,6 +259,8 @@ data class TaskDetailSnapshot(
     val parentId: String? = null,
     /** Direct children by parent id for this task and its descendants, oldest first, with pending changes applied. */
     val children: Map<String, List<TaskRow>> = emptyMap(),
+    /** The stored read state (membership completeness, restriction, failure) of each listed parent; absent: never read. */
+    val relationships: Map<String, TaskRelationshipState> = emptyMap(),
     /** Queued or failed subtask creations by parent id (they are not Tower records yet). */
     val creatingChildren: Map<String, List<WriteItem>> = emptyMap(),
     val comments: List<CommentRecord> = emptyList(),
@@ -275,22 +283,15 @@ class TaskDetailState(store: LocalStore, scope: ScreenScope, val taskId: String,
         val pending = store.reader.workspaceWrites(scope.connectionId, w, taskId)
         val record = store.reader.task(w, taskId)
         val everyWrite = if (record != null) store.reader.workspaceWrites(scope.connectionId, w) else emptyList()
-        val index = record?.let { TaskHierarchy.index(store.reader.channelTasks(w, it.channelId)) } ?: emptyMap()
-        // Only this task's subtree (cycle-safe, bounded), each child with its own pending changes applied.
-        val subtree = LinkedHashMap<String, List<TaskRow>>()
-        val queue = ArrayDeque(listOf(taskId.lowercase()))
-        while (queue.isNotEmpty() && subtree.size < 200) {
-            val parent = queue.removeFirst()
-            if (parent in subtree) continue
-            val direct = index[parent].orEmpty()
-            subtree[parent] = direct.map { TaskRow.of(it, everyWrite) }
-            direct.forEach { queue.add(it.id.lowercase()) }
-        }
+        // This task's subtree from the stored per-parent membership (cycle-safe, bounded), each child with its own pending changes.
+        val tree = if (record != null) store.reader.subtaskTree(w, taskId) else TaskSubtasks(emptyMap(), emptyMap())
+        val subtree = tree.children.mapValues { (_, list) -> list.map { TaskRow.of(it, everyWrite) } }
         val parentId = record?.let { TaskHierarchy.parentId(it) }
         TaskDetailSnapshot(
             parent = parentId?.let { store.reader.task(w, it) },
             parentId = parentId,
             children = subtree,
+            relationships = tree.states,
             creatingChildren = everyWrite.filter { it.kind == WriteKind.TASK_CREATE }.groupBy { TaskWrites.pendingParent(it) ?: "" }.filterKeys { it in subtree },
             row = record?.let { TaskRow.of(it, pending.filter { p -> p.kind != WriteKind.TASK_COMMENT }) },
             comments = store.reader.comments(w, CommentRecord.Parent.TASK, taskId),
@@ -302,6 +303,6 @@ class TaskDetailState(store: LocalStore, scope: ScreenScope, val taskId: String,
     }.loaded(coroutineScope, TaskDetailSnapshot())
 
     private companion object {
-        val TABLES = setOf(StoreTable.TASKS, StoreTable.COMMENTS, StoreTable.WRITES, StoreTable.MEMBERS, StoreTable.CHANNELS)
+        val TABLES = setOf(StoreTable.TASKS, StoreTable.TASK_RELATIONSHIPS, StoreTable.COMMENTS, StoreTable.WRITES, StoreTable.MEMBERS, StoreTable.CHANNELS)
     }
 }

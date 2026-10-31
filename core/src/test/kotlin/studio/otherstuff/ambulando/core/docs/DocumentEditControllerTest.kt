@@ -341,6 +341,8 @@ class DocumentEditControllerTest {
         assertEquals("a lost journal never lets a merged draft publish itself", 0, tower.patches.size)
         assertNotNull(draft())
         assertNotNull("the unreadable journal text is kept", store.reader.state(studio.otherstuff.ambulando.core.store.DocumentReviewCodec.corruptKey(editor.draftKey)))
+        // The background lease/reconcile pass must have finished: save() declines while it is reconciling.
+        eventually { damaged.state.value.leaseState.contains("lease held") }
         assertTrue(damaged.save())
         relaunched.scope.cancel()
     }
@@ -362,6 +364,7 @@ class DocumentEditControllerTest {
         reopened.setActive(false) // background flush
         assertEquals("no journal, no autosave", 0, tower.patches.size)
         assertEquals(DocDraft.State.HELD, relaunched.draft()!!.state)
+        eventually { reopened.state.value.leaseState.contains("lease held") }
         assertTrue(reopened.save())
         assertEquals(1, tower.patches.size)
         assertFalse(reopened.state.value.pendingMergedSave)

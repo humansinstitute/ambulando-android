@@ -1,5 +1,6 @@
 package studio.otherstuff.ambulando.core.surfaces
 
+import studio.otherstuff.ambulando.core.store.TaskRelationshipState
 import studio.otherstuff.ambulando.core.transport.TaskRecord
 
 /**
@@ -29,4 +30,34 @@ object TaskHierarchy {
 
     /** The text for a direct-child count: `+` marks a list that may be incomplete. */
     fun countLabel(count: Int, complete: Boolean): String = if (complete) "$count" else "$count+"
+
+    /** What this device can say about one parent's direct-child list. */
+    enum class Kind {
+        /** Nothing read yet: only saved tasks that name the parent are shown. */
+        UNLOADED,
+        /** A read completed and Tower listed everything this identity may see; the count is certain. */
+        COMPLETE,
+        /** A read completed earlier; it cannot be refreshed now (offline, locked or a failed refresh), so the list may be out of date. */
+        CACHED,
+        /** A read began and stopped part-way: the children read so far are shown. */
+        PARTIAL,
+        /** No read could be made (offline, locked or failed) and none ever completed. */
+        OFFLINE,
+        /** Tower refused the parent or hid some related tasks: inaccessible tasks are never enumerated or counted. */
+        RESTRICTED,
+    }
+
+    /**
+     * Classifies a stored [state]. [readable] is false while the device cannot read from Tower (locked, offline or access
+     * removed). Only [Kind.COMPLETE] has a certain count.
+     */
+    fun kind(state: TaskRelationshipState?, readable: Boolean): Kind = when {
+        state != null && state.restricted -> Kind.RESTRICTED
+        state != null && state.complete -> if (readable && state.failure == null) Kind.COMPLETE else Kind.CACHED
+        state != null && (state.pages > 0 || state.nextCursor != null) -> Kind.PARTIAL
+        !readable || state?.failure != null -> Kind.OFFLINE
+        else -> Kind.UNLOADED
+    }
+
+    fun isConfirmed(kind: Kind): Boolean = kind == Kind.COMPLETE
 }

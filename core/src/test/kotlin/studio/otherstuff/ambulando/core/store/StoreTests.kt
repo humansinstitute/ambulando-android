@@ -45,6 +45,37 @@ class StoreTests {
         }
     }
 
+    @Test fun upgradingFromBeforeTaskRelationshipsKeepsTasksAndStartsUntracked() {
+        SqlConnection.memory().use { db ->
+            Schema.migrate(db, Schema.migrations.filter { it.version <= 6 })
+            assertEquals(6, db.userVersion)
+            db.executeAll(listOf("INSERT INTO tasks(workspace_id, id, channel_id, title, state, priority, row_version, activity_version, created_at, updated_at, raw) " +
+                "VALUES('w','t1','c','Old task','new','medium',1,0,'2026-10-01T10:00:00.000Z','2026-10-01T10:00:00.000Z','{}')"))
+            Schema.migrate(db)
+            assertEquals(Schema.VERSION, db.userVersion)
+            assertEquals(1L, db.longValue("SELECT COUNT(*) FROM tasks"))
+            assertEquals(0L, db.longValue("SELECT COUNT(*) FROM task_relationships"))
+            assertEquals(0L, db.longValue("SELECT COUNT(*) FROM task_relationship_members"))
+        }
+    }
+
+    @Test fun closingTheStoreWaitsForWritesAndReadsStillRunning() = runBlocking {
+        // Closing used to free the native connection under a statement still running on the store's dispatcher (SIGSEGV).
+        repeat(15) {
+            val store = StoreFixtures.store()
+            val busy = (1..40).map { n ->
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                    runCatching {
+                        store.writer.setState("k$n", "v".repeat(2_000))
+                        store.reader.state("k$n")
+                    }
+                }
+            }
+            store.close()
+            busy.forEach { it.join() }
+        }
+    }
+
     @Test fun rowVersionAndTimestampGuardPreventsStaleOverwrite() = runBlocking {
         StoreFixtures.store().use { store ->
             val w = store.writer

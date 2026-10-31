@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -71,6 +72,7 @@ import studio.otherstuff.ambulando.core.store.WriteKind
 import studio.otherstuff.ambulando.core.transport.TaskPriority
 import studio.otherstuff.ambulando.core.transport.authorNpub
 import studio.otherstuff.ambulando.core.transport.TaskState
+import studio.otherstuff.ambulando.core.store.TaskRelationshipState
 import studio.otherstuff.ambulando.core.surfaces.TaskHierarchy
 import studio.otherstuff.ambulando.app.ui.nav.WorkRoute
 
@@ -207,23 +209,31 @@ private fun label(item: WriteItem): String = when (item.kind) {
 
 /**
  * The task's place in its tree: its parent (labelled unavailable rather than guessed), its direct children with status,
- * descendants that expand in place, and Add subtask. The count is direct children including archived ones; a `+` means
- * the list could not be confirmed complete.
+ * descendants that expand in place, and Add subtask. Each parent's list comes from its stored membership and read state:
+ * the count is direct children including archived ones, and a `+` means the list is not confirmed complete (unloaded,
+ * cached, partial, offline or restricted). Opening, expanding, a refresh, and a minute-by-minute foreground fallback each
+ * read that parent's direct children again.
  */
 @Composable
 private fun Hierarchy(row: TaskRow, value: TaskDetailSnapshot, intents: TasksIntents, editable: Boolean) {
     val amb = Amb.colors
     val services = LocalAppServices.current
     val workspaceId = row.task.workspaceId
-    var status by remember(row.id) { mutableStateOf<RelationshipStatus?>(null) }
+    // The outcome of this session's latest read of each parent (absent: in flight); the stored state says what was ever confirmed.
+    val attempts = remember(row.id) { mutableStateMapOf<String, RelationshipStatus>() }
     var expanded by rememberSaveable(row.id) { mutableStateOf(listOf<String>()) }
     var adding by remember(row.id) { mutableStateOf(false) }
     var refresh by remember(row.id) { mutableStateOf(0) }
-    LaunchedEffect(row.id, refresh) { status = null; status = intents.loadRelationships(row.id) }
+    val rootId = row.id.lowercase()
+    val epoch = intents.readEpoch
+    LaunchedEffect(row.id, refresh, epoch) { attempts.remove(rootId); attempts[rootId] = intents.loadRelationships(row.id) }
     // Expanding a descendant reads that task's own direct list.
-    expanded.forEach { id -> LaunchedEffect(id) { intents.loadRelationships(id) } }
-    val direct = value.children[row.id.lowercase()].orEmpty()
-    val complete = status == RelationshipStatus.COMPLETE
+    expanded.forEach { id -> LaunchedEffect(id, refresh, epoch) { attempts.remove(id); attempts[id] = intents.loadRelationships(id) } }
+    // Foreground fallback for relationship events missed while this screen stays open.
+    LaunchedEffect(row.id) { while (true) { kotlinx.coroutines.delay(60_000); refresh += 1 } }
+    fun kindOf(id: String) = TaskHierarchy.kind(value.relationships[id], readable = attempts[id] != RelationshipStatus.OFFLINE)
+    val direct = value.children[rootId].orEmpty()
+    val kind = kindOf(rootId)
     Column(Modifier.testTag("task.hierarchy"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         value.parentId?.let { parentId ->
             val parent = value.parent
@@ -232,20 +242,15 @@ private fun Hierarchy(row: TaskRow, value: TaskDetailSnapshot, intents: TasksInt
                 modifier = Modifier.fillMaxWidth().clickable(enabled = parent != null) { services.open(WorkRoute.Task(workspaceId, parentId)) }.padding(vertical = 4.dp).testTag("task.parent"))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Subtasks " + TaskHierarchy.countLabel(direct.size, complete), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+            Text("Subtasks " + TaskHierarchy.countLabel(direct.size, TaskHierarchy.isConfirmed(kind)), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                 color = amb.primary, modifier = Modifier.weight(1f).testTag("task.subtasks.count"))
+            TextButton(onClick = { refresh += 1 }, modifier = Modifier.testTag("task.subtasks.refresh")) { Text("Refresh") }
             TextButton(onClick = { adding = true }, enabled = editable, modifier = Modifier.testTag("task.subtask.add")) { Text("Add subtask") }
         }
-        when (status) {
-            null -> Text("Checking for subtasks…", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
-            RelationshipStatus.PARTIAL -> Text("Showing the subtasks read so far; there may be more.", style = MaterialTheme.typography.bodySmall, color = amb.warning)
-            RelationshipStatus.RESTRICTED -> Text("Some subtasks may not be visible to you.", style = MaterialTheme.typography.bodySmall, color = amb.warning)
-            RelationshipStatus.OFFLINE -> Text("Showing saved subtasks. They update when this device is connected.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
-            RelationshipStatus.COMPLETE -> Unit
-        }
-        val creating = value.creatingChildren[row.id.lowercase()].orEmpty()
-        if (direct.isEmpty() && creating.isEmpty() && status != null) Text("No subtasks.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
-        SubtaskRows(direct, value, listOf(row.id.lowercase()), 0, expanded, { id -> expanded = if (id in expanded) expanded - id else expanded + id }, intents)
+        RelationshipNote(kind, value.relationships[rootId], reading = rootId !in attempts, modifier = Modifier.testTag("task.subtasks.state"))
+        val creating = value.creatingChildren[rootId].orEmpty()
+        if (direct.isEmpty() && creating.isEmpty() && kind == TaskHierarchy.Kind.COMPLETE) Text("No subtasks.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
+        SubtaskRows(direct, value, listOf(rootId), 0, expanded, { id -> expanded = if (id in expanded) expanded - id else expanded + id }, intents, ::kindOf, attempts)
         creating.forEach { item ->
             Column(Modifier.testTag("task.subtask.pending")) {
                 Text(item.string("title") ?: "", style = MaterialTheme.typography.bodyMedium, color = amb.mutedForeground)
@@ -263,8 +268,25 @@ private fun Hierarchy(row: TaskRow, value: TaskDetailSnapshot, intents: TasksInt
     }
 }
 
+/** What this device knows about one parent's list, in words: unloaded, cached, partial, offline and restricted are different. */
 @Composable
-private fun SubtaskRows(children: List<TaskRow>, value: TaskDetailSnapshot, path: List<String>, depth: Int, expanded: List<String>, toggle: (String) -> Unit, intents: TasksIntents) {
+private fun RelationshipNote(kind: TaskHierarchy.Kind, state: TaskRelationshipState?, reading: Boolean, modifier: Modifier = Modifier) {
+    val amb = Amb.colors
+    val (text, warn) = when (kind) {
+        TaskHierarchy.Kind.COMPLETE -> (if (reading) "Refreshing subtasks…" else "") to false
+        TaskHierarchy.Kind.UNLOADED -> (if (reading) "Checking for subtasks… Saved tasks may be incomplete." else "Subtasks not loaded yet. Showing saved tasks.") to false
+        TaskHierarchy.Kind.CACHED -> ("Saved subtask list" + (state?.refreshedAt?.let { ", last confirmed ${it.take(16).replace('T', ' ')}" } ?: "") +
+            ". It could not be refreshed, so it may be out of date.") to false
+        TaskHierarchy.Kind.PARTIAL -> "Showing the subtasks read so far; there may be more. Refresh to read the rest." to true
+        TaskHierarchy.Kind.OFFLINE -> "Offline or locked. Showing saved subtasks; they update when this device is connected." to false
+        TaskHierarchy.Kind.RESTRICTED -> "Some subtasks may not be visible to you. Only subtasks you can read are listed." to true
+    }
+    if (text.isNotEmpty()) Text(text, style = MaterialTheme.typography.bodySmall, color = if (warn) amb.warning else amb.mutedForeground, modifier = modifier)
+}
+
+@Composable
+private fun SubtaskRows(children: List<TaskRow>, value: TaskDetailSnapshot, path: List<String>, depth: Int, expanded: List<String>, toggle: (String) -> Unit, intents: TasksIntents,
+                        kindOf: (String) -> TaskHierarchy.Kind, attempts: Map<String, RelationshipStatus>) {
     val amb = Amb.colors
     val services = LocalAppServices.current
     children.forEach { child ->
@@ -285,8 +307,10 @@ private fun SubtaskRows(children: List<TaskRow>, value: TaskDetailSnapshot, path
             if (open) {
                 val nested = value.children[id].orEmpty()
                 val creating = value.creatingChildren[id].orEmpty()
-                if (nested.isEmpty() && creating.isEmpty()) Text("No subtasks.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground, modifier = Modifier.padding(start = 16.dp))
-                SubtaskRows(nested, value, path + id, depth + 1, expanded, toggle, intents)
+                val kind = kindOf(id)
+                RelationshipNote(kind, value.relationships[id], reading = id !in attempts, modifier = Modifier.padding(start = 16.dp).testTag("task.subtask.state.$id"))
+                if (nested.isEmpty() && creating.isEmpty() && kind == TaskHierarchy.Kind.COMPLETE) Text("No subtasks.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground, modifier = Modifier.padding(start = 16.dp))
+                SubtaskRows(nested, value, path + id, depth + 1, expanded, toggle, intents, kindOf, attempts)
                 creating.forEach { item -> WriteStatusLine(item, "Subtask ${item.string("title") ?: ""}".trim(), intents, Modifier.padding(start = 16.dp)) }
             }
         }

@@ -52,6 +52,7 @@ internal fun WriteTx.flagMissing(table: String, workspaceId: String, column: Str
 /** Upserts tasks under the row-version guard. Tasks of a flagged channel are not written. */
 internal fun WriteTx.writeTasks(records: List<TaskRecord>): Int {
     var changed = 0
+    val written = ArrayList<TaskRecord>()
     val removed = HashMap<String, Set<String>>()
     db.prepare(
         """INSERT INTO tasks(workspace_id, id, scope_id, channel_id, thread_id, title, description, state, priority, assigned_to_npub, created_by_npub,
@@ -64,10 +65,14 @@ internal fun WriteTx.writeTasks(records: List<TaskRecord>): Int {
     ).use { s ->
         for (r in records) {
             if (r.channelId in removed.getOrPut(r.workspaceId) { db.removedChannelIds(r.workspaceId) }) continue
-            changed += s.run(r.workspaceId, r.id, r.scopeId, r.channelId, r.threadId, r.title, r.description, r.state, r.priority, r.assignedToNpub,
+            val wrote = s.run(r.workspaceId, r.id, r.scopeId, r.channelId, r.threadId, r.title, r.description, r.state, r.priority, r.assignedToNpub,
                 r.createdByNpub, r.rowVersion, r.activityVersion, r.createdAt, r.updatedAt, canonical(r.raw))
+            changed += wrote
+            if (wrote > 0) written.add(r)
         }
     }
+    // An authorized upsert or write acknowledgement is relationship evidence: known membership follows it in this transaction.
+    noteTaskRelationships(written)
     return changed
 }
 
@@ -350,10 +355,10 @@ suspend fun StoreWriter.saveListSync(workspaceId: String, key: String, complete:
 
 // MARK: Reader
 
-private const val TASK_COLUMNS = "id, scope_id, channel_id, thread_id, title, description, state, priority, assigned_to_npub, created_by_npub, " +
+internal const val TASK_COLUMNS = "id, scope_id, channel_id, thread_id, title, description, state, priority, assigned_to_npub, created_by_npub, " +
     "row_version, activity_version, created_at, updated_at, raw, access_removed"
 
-private fun task(r: SqlRow, w: String) = TaskRecord(
+internal fun task(r: SqlRow, w: String) = TaskRecord(
     workspaceId = w, id = r.text(0)!!, scopeId = r.text(1), channelId = r.text(2)!!, threadId = r.text(3), title = r.text(4)!!,
     description = r.text(5), state = r.text(6)!!, priority = r.text(7)!!, assignedToNpub = r.text(8), createdByNpub = r.text(9),
     rowVersion = r.long(10), activityVersion = r.long(11), createdAt = r.text(12)!!, updatedAt = r.text(13)!!, raw = parseRaw(r.text(14)),
