@@ -1,3 +1,17 @@
+# 0.7.1 — Android build 19
+
+Stabilisation of chat, document saving and the text editor after 0.7.0.
+
+- An open message edit or delete dialog no longer disappears, taking the typed edit with it, when its message scrolls out of the list or the
+  keyboard resizes it; the dialogs close if access to the conversation is removed. A sent message is kept in view while the keyboard moves
+  the list.
+- A Save or Takeover pressed while the app is checking for a newer document version now waits (up to 15 seconds) instead of being ignored;
+  if the check outlasts that, you are told and nothing changes. A newer version still never replaces your draft.
+- Typing or pasting into the text-attachment editor on a page that has to be split no longer inserts the same text twice.
+
+Not fixed: a few emulator tests of chat taps, task counts and canvas touch input still fail intermittently on this host with causes not yet
+found (docs/parity-matrix.md). Tested with unit tests and a synthetic emulator account, not a live Tower, a physical phone or real accounts.
+
 # 0.7.0 — Android build 18
 
 Manage Workspace. A new **Manage workspace** entry in the sidebar (and in each workspace's own menu when several are enabled)

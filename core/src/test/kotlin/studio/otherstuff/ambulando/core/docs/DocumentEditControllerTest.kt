@@ -3,7 +3,9 @@ package studio.otherstuff.ambulando.core.docs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -108,6 +110,72 @@ class DocumentEditControllerTest {
         assertEquals(listOf("One", "Two, edited offline", "Three"), bodyParagraphs(tower))
         assertNull(second.draft())
         second.scope.cancel()
+    }
+
+    // Found as the intermittent "lease timing" failures: the background version check sets `reconciling`, and a person's Save or
+    // Takeover that arrived in that window returned false without a word (autosave every 20 ms made the window common in tests).
+    @Test fun aSaveThatArrivesDuringTheBackgroundVersionCheckWaitsForItInsteadOfBeingDropped() = world {
+        val page = FakePage()
+        val editor = open(page)
+        editor.prepareOpening()
+        page.editParagraph(1, "Two, edited")
+        editor.pageChanged(page.text)
+        assertTrue(editor.checkpoint())
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        tower.headGate = gate
+        val check = scope.launch { editor.reconcileRemote() }
+        eventually { editor.reconciling }
+        val save = scope.async { editor.save() }
+        kotlinx.coroutines.delay(100)
+        assertFalse("the save is waiting for the check, not finished or dropped", save.isCompleted)
+        assertEquals(0, tower.patches.size)
+        gate.complete(Unit)
+        assertTrue("the save went ahead once the check ended", save.await())
+        check.join()
+        assertEquals(listOf("One", "Two, edited", "Three"), bodyParagraphs(tower))
+        editor.close()
+    }
+
+    @Test fun aSaveAndATakeoverThatOutwaitTheVersionCheckDeclineVisiblyAndChangeNothing() = world {
+        val page = FakePage()
+        val editor = open(page)
+        editor.prepareOpening()
+        page.editParagraph(1, "Two, edited")
+        editor.pageChanged(page.text)
+        assertTrue(editor.checkpoint())
+        editor.reconcileWaitMillis = 150
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        tower.headGate = gate
+        val check = scope.launch { editor.reconcileRemote() }
+        eventually { editor.reconciling }
+        assertFalse("the save declines once the bounded wait ends", editor.save())
+        editor.takeover()
+        assertEquals(0, tower.patches.size)
+        assertTrue("the person is told, not left with silence", editor.status.orEmpty().contains("Still checking"))
+        gate.complete(Unit)
+        check.join()
+        assertTrue("a later save is not blocked by the earlier decline", editor.save())
+        editor.close()
+    }
+
+    @Test fun closingTheEditorEndsAWaitingSaveWithoutSavingAnything() = world {
+        val page = FakePage()
+        val editor = open(page)
+        editor.prepareOpening()
+        page.editParagraph(1, "Two, edited")
+        editor.pageChanged(page.text)
+        assertTrue(editor.checkpoint())
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        tower.headGate = gate
+        val check = scope.launch { editor.reconcileRemote() }
+        eventually { editor.reconciling }
+        val save = scope.async { editor.save() }
+        kotlinx.coroutines.delay(50)
+        editor.close()
+        assertFalse(save.await())
+        assertEquals(0, tower.patches.size)
+        gate.complete(Unit)
+        check.join()
     }
 
     @Test fun cancelledOrFailedSaveKeepsTheDraftAndRetryDoesNotDuplicate() = world {

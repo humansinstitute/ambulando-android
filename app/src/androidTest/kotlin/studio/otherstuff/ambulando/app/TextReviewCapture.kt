@@ -12,6 +12,12 @@ internal fun captureTextReview(name: String) {
     instrumentation.waitForIdleSync()
     Thread.sleep(100) // Let the newly committed Compose frame reach the screenshot surface.
     instrumentation.uiAutomation.takeScreenshot()?.let { image ->
+        // One image per name: MediaStore keeps "name (1).png", "name (2).png" and refuses a new copy after about 32 ("Failed to build
+        // unique file"), which failed the text tests on an emulator that had run them that often.
+        resolver.delete(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI, "${MediaStore.Downloads.DISPLAY_NAME} LIKE ? AND ${MediaStore.Downloads.RELATIVE_PATH} LIKE ?",
+            arrayOf("$name%", "Download/ambulando-text-review%"),
+        )
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, "$name.png")
             put(MediaStore.Downloads.MIME_TYPE, "image/png")

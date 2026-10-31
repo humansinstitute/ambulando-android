@@ -140,6 +140,8 @@ internal class FakeDocTower(val workspace: String = Fixtures.WORKSPACE_ID, val c
     val fenced = mutableSetOf<String>()
     val tombstoned = mutableSetOf<String>()
     var loseNextPatchResponse = false
+    /** While set, reading the head waits for it: a version check held in flight. */
+    @Volatile var headGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var holderNpub = "npub1other" + "q".repeat(50)
     val patches = mutableListOf<JsonObject>()
     val recoveriesStored = mutableListOf<Triple<String, ByteArray, String>>()
@@ -242,6 +244,7 @@ internal class FakeDocTower(val workspace: String = Fixtures.WORKSPACE_ID, val c
 
     override suspend fun fetchHead(workspaceId: String, appNpub: String, docId: String): DocHead? {
         gate()
+        headGate?.await()
         denyReads?.let { throw TowerError.Http(it, "denied", "document body") }
         val doc = DocRecord.parse(kotlinx.serialization.json.Json.parseToJsonElement(docJson()) as JsonObject)
         return DocHead(doc, DocBodyRecord(workspace, docId, objectId, sha, contentType, version.toLong(), body, "2026-10-01T00:00:00Z"))

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import studio.otherstuff.ambulando.core.chat.UploadToken
 import studio.otherstuff.ambulando.core.nostr.Sha256Hex
 import studio.otherstuff.ambulando.core.store.ConnectionRecord
@@ -60,6 +61,9 @@ data class WikiRange(val from: Int, val to: Int)
 data class WikiPlacement(val occurrence: Int, val count: Int)
 
 data class WikiSelection(val range: WikiRange, val text: String)
+
+/** How long a person's Save or Takeover waits for the background version check before it declines. */
+internal const val RECONCILE_WAIT_MILLIS = 15_000L
 
 /**
  * One open document: working copy, durable draft, edit authority, reconciliation with newer shared versions and the
@@ -164,7 +168,8 @@ class DocumentEditController(
         private set
     var lastSyncedAt: Instant? = null
         private set
-    var reconciling = false
+    // Read by explicit actions waiting for a background pass to end, which runs on another thread outside the UI.
+    @Volatile var reconciling = false
         private set
     var permissionDenied = false
         private set
@@ -468,7 +473,9 @@ class DocumentEditController(
      * then authority is taken from the inspected lease and the latest body is loaded. Any failure keeps the local draft and
      * asks for a fresh decision; authority is never taken back automatically.
      */
-    suspend fun takeover() {
+    suspend fun takeover() = personsAction(Unit) { takeoverNow() }
+
+    private suspend fun takeoverNow() {
         if (saving || takingOver || reconciling || !canTakeover) return
         val expected = observedLeaseId
         takingOver = true; publish()
@@ -524,10 +531,39 @@ class DocumentEditController(
 
     // MARK: Remote head
 
+    private val personsActions = java.util.concurrent.atomic.AtomicInteger()
+    /** The bound on that wait; tests shorten it. */
+    internal var reconcileWaitMillis = RECONCILE_WAIT_MILLIS
+
+    /**
+     * A person's Save or Takeover that arrives while the background version check is in flight waits for it (bounded)
+     * instead of being dropped without a word, and no new background check starts until the action is done, so the check
+     * that just ended cannot be replaced by the next one between the wait and the action's own guards.
+     */
+    private suspend fun <T> personsAction(declined: T, action: suspend () -> T): T {
+        personsActions.incrementAndGet()
+        try {
+            if (reconciling) {
+                val ended = withTimeoutOrNull(reconcileWaitMillis) { while (reconciling && !closed) delay(5) }
+                // Still checking after the bound: decline visibly rather than let the action's own guard drop it in silence.
+                if (ended == null && reconciling && !closed) {
+                    setStatus("Still checking for a newer version. Nothing was saved or changed; try again in a moment.", Tone.WARNING)
+                    return declined
+                }
+            }
+            return action()
+        } finally {
+            personsActions.decrementAndGet()
+        }
+    }
+
     /** Refresh only the comparison target. A newer shared save never replaces a working draft. */
     suspend fun reconcileRemote() {
-        if (loading || saving || takingOver || reconciling || !active || !isUnlocked()) return
-        reconciling = true; publish()
+        if (loading || saving || takingOver || reconciling || personsActions.get() > 0 || !active || !isUnlocked()) return
+        reconciling = true
+        // A person's action that counted itself in between the check above and the flag must not find the flag set and be dropped.
+        if (personsActions.get() > 0) { reconciling = false; publish(); return }
+        publish()
         try {
             if (!checkpoint()) return
             val fresh = authority.latest(doc.id) ?: return
@@ -1170,7 +1206,9 @@ class DocumentEditController(
     }
 
     /** Saves through Tower (lease, expected version). True when Tower made it the canonical version. */
-    suspend fun save(): Boolean {
+    suspend fun save(): Boolean = personsAction(false) { saveNow() }
+
+    private suspend fun saveNow(): Boolean {
         if (closed || saving || takingOver || reconciling || permissionDenied) return false
         saving = true; publish()
         try {

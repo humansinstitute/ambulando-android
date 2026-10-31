@@ -111,6 +111,9 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     val threadRemoved by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.isAccessRemoved(w.id, FlaggedTable.THREADS, it) } ?: false } }.collectAsState(false)
     val removed = threadRemoved || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true
     val richActions = storedRichActions(model, !removed)
+    // The message dialogs live here, outside the list: a row that scrolls away must not take an open dialog with it.
+    var editing by remember(target) { mutableStateOf<MessageRecord?>(null) }
+    var deleting by remember(target) { mutableStateOf<MessageRecord?>(null) }
     Column(Modifier.fillMaxSize()) {
         if (threadId != null) ThreadHeader(model, threadId, !removed)
         val listState = remember(target) { androidx.compose.foundation.lazy.LazyListState() }
@@ -154,7 +157,7 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                     if (threadId == null && message.threadId != null) ThreadSummaryRow(post) {
                         services.open(WorkRoute.Thread(w.id, channel, message.threadId!!)); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT
                     }
-                    ChatMessageActions(model, message, !removed)
+                    ChatMessageActions(model, message, !removed, onEdit = { editing = it }, onDelete = { deleting = it })
                     message.threadId?.let { RecordPin(model, studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.THREAD, it, !removed) }
                 }
             }
@@ -236,6 +239,7 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
             }
         }
         openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
+        ChatMessageDialogs(model, editing.takeIf { !removed }, deleting.takeIf { !removed }, onEditDone = { editing = null }, onDeleteDone = { deleting = null })
         openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed) { openSent = null } }
     }
 }
@@ -351,7 +355,9 @@ data class ChatPosition(val key: Any?, val offset: Int, val follow: Boolean)
         if (follow) state.requestScrollToItem(count - 1, FOLLOW_OFFSET)
     }
     LaunchedEffect(state, loaded) {
-        if (loaded) snapshotFlow { state.canScrollForward }.collect { more ->
+        // The viewport height is observed too: the keyboard resizes the list in animated steps, a step can overwrite a pending
+        // request, and canScrollForward then stays true, so no flip would ever ask again (the newest message stayed hidden).
+        if (loaded) snapshotFlow { state.canScrollForward to state.layoutInfo.viewportSize.height }.collect { (more, _) ->
             val total = state.layoutInfo.totalItemsCount
             // A layout snapshot may arrive during measurement. Request the next layout instead of re-entering it.
             if (more && placed && follow && !state.isScrollInProgress && total > 0) state.requestScrollToItem(total - 1, FOLLOW_OFFSET)

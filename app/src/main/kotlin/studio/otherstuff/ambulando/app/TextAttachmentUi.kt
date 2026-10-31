@@ -128,11 +128,33 @@ import studio.otherstuff.ambulando.core.transport.MessageAttachment
     }
 }
 
+/**
+ * What one page of the editor does with a value the text field reports. An edit that makes the page too long is split, so the
+ * field is then given back a shorter value than the one it reported. The field's input buffer still holds the longer text until
+ * it is next composed; an input-method event in that gap (finishing a composition, for example) reports that buffer again,
+ * and applying it again would insert the same edit twice (`INSERTED` doubled on a full page on the emulator).
+ */
+internal class ChunkPageEdit(private val doc: ChunkedText, private val page: Int) {
+    private var splitFrom: String? = null
+
+    /** Applies [value] to the page and returns what the field must show next; [shown] is what it shows now. */
+    fun apply(value: TextFieldValue, shown: TextFieldValue): TextFieldValue {
+        val kept = doc.chunks[page]
+        if (value.text == splitFrom) return TextFieldValue(kept, TextRange(minOf(value.selection.end, kept.length)))
+        if (value.text != shown.text) doc.update(page, value.text)
+        val now = doc.chunks[page]
+        splitFrom = if (now == value.text) null else value.text
+        // A big paste is split in place: stay on this page and keep the caret inside what it still holds.
+        return if (now == value.text) value else TextFieldValue(now, TextRange(minOf(value.selection.end, now.length)))
+    }
+}
+
 /** Editing view: one chunk in a text field, with page controls. Switching pages never loses edits (they are written through). */
 @Composable private fun ChunkEditor(doc: ChunkedText, modifier: Modifier) {
     val count = doc.chunks.size
     val page = doc.page.coerceIn(0, count - 1)
     var field by remember(doc, page) { mutableStateOf(TextFieldValue(doc.chunks[page])) }
+    val edit = remember(doc, page) { ChunkPageEdit(doc, page) }
     Column(modifier) {
         if (count > 1) Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(enabled = page > 0, onClick = { doc.page = page - 1 }, modifier = Modifier.testTag("text.prev")) { Text("Previous") }
@@ -140,11 +162,7 @@ import studio.otherstuff.ambulando.core.transport.MessageAttachment
             TextButton(enabled = page < count - 1, onClick = { doc.page = page + 1 }, modifier = Modifier.testTag("text.next")) { Text("Next") }
         }
         OutlinedTextField(
-            field, { value ->
-                if (value.text != field.text) doc.update(page, value.text)
-                // A big paste is split in place: stay on this page and keep the caret inside what it still holds.
-                field = if (doc.chunks[page] == value.text) value else TextFieldValue(doc.chunks[page], TextRange(minOf(value.selection.end, doc.chunks[page].length)))
-            },
+            field, { value -> field = edit.apply(value, field) },
             textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
             modifier = Modifier.fillMaxWidth().weight(1f).testTag("text.editor"),
         )

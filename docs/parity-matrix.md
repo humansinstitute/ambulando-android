@@ -274,3 +274,60 @@ checks below on the final source.
   family and rate as the earlier 3/6 and 4/6 on the previous source); it, the `DocumentEditControllerTest` lease-timing waits and the
   `TextSheetTest` hugeUnicode test (which passed here) stay open.
 - Not exercised: a live Tower, a physical phone, real accounts; delivery of the delegations, activations and publishing grants to a real Autopilot.
+
+## Intermittent failure diagnosis (task c812ecc1, after build 18; source only, not released)
+
+Method: each failure was reproduced first (class repeats on the dedicated emulator with fresh data per run; JVM repeats under CPU load),
+the actual state was captured (semantics tree, store contents, composition enter/leave events, stack traces of the duplicate callback), and
+the change was kept only where the captured cause was removed and the rate fell. Small samples; none of this proves live behaviour.
+
+- **Chat edit dialog (`ParityFlowTest`): product defect, fixed.** The edit/delete dialog state belonged to the message row. A row that
+  left the list (follow scroll, keyboard resizing the list) took the open dialog and the typed edit with it ("actions leave … edit=true"
+  half a second after "dialog compose"). The dialogs now belong to the chat screen. Test `anOpenEditDialogSurvivesItsMessageScrollingOutOfTheList`
+  fails without the change (3 of 3 runs).
+- **Chat reaction chip (`ParityFlowTest`): product defect, fixed.** The follow-newest effect reacted only to `canScrollForward` flips; keyboard
+  resize steps could overwrite its scroll request and leave the list short of the newest message (first item 38 of 41, follow on, no flip to
+  ask again), so the sent message was not composed. It also observes the viewport height now. No test fails without this part (the Robolectric
+  attempts did not reproduce the lost request); it is supported by the captured log only.
+- **`ParityFlowTest` after the fixes: not clean.** Class runs on the final source: 4 of 20 failed (3 reactions test, 1 the new dialog test),
+  against about half before. Not diagnosed: a tap that did not open the dialog although the button was on screen; an attempt to record the
+  button's bounds before the tap changed the timing and the failure did not occur. Next step: log raw touch events and the button's laid-out
+  bounds from the app (no test-side reads) in a failing run.
+- **`DocumentEditControllerTest` lease timing: product defect, fixed.** `save()` and `takeover()` returned false when a person asked during
+  the background version check (`reconciling`). Reproduced under load (6 of 40 and 3 of 40 repeats), 0 of 150 after; a new test holds the
+  check in flight (fails without the wait). The wait is bounded (15 s) and no new background check starts until the action ends.
+- **`TextSheetTest` hugeUnicode duplicate `INSERTED`: product defect, fixed.** After the editor split an over-long page it handed the field a
+  shorter value; the input method then re-reported the field's longer buffer (`finishComposingText`) and the same edit was applied twice
+  (stack traces captured). Fixed with `ChunkPageEdit`; unit test fails without the echo check; 2 of 20 under load before, 0 of 30 after.
+  Separately the review-screenshot helper accumulated `name (n).png` until MediaStore refused a new copy (about 32), failing the text tests
+  on a reused emulator (`pm clear` also removes ownership, so only a shell can delete the old rows); it now replaces its image.
+- **`MultiWorkspaceFlowTest` / `TaskHierarchyFlowTest` / `OvernightFeedbackFlowTest`: not diagnosed.** Ten fresh-data runs each on the final
+  source: Multi 0 failures, Hierarchy 1 (a "Subtasks 1" count after a live upsert did not settle in 20 s), Overnight 2 (a canvas swipe
+  "Failed to inject touch input", and `aCanvasIsFullScreenWithItsControlsAtTheBottom`). Different places each time, no common cause found;
+  small samples show neither a regression nor its absence. Next step: capture the count's source state at the Hierarchy timeout and the
+  window/focus state at the injection failure.
+- JVM/lint on this source: core 747 tests (1 optional skip), app 74, lint 0 errors.
+
+## Independent review of the four fixes and release validation (build 19, 0.7.1)
+
+The four stabilisation commits were read line by line against the risks below before release.
+
+- **Chat dialogs:** state sits in the chat screen keyed by the conversation target (connection, workspace, channel, thread), so a switch
+  drops it and one conversation's edit can never be shown in another. The edit keeps the message as it was when Edit was tapped. Added in
+  review: the dialogs close if access to the conversation is removed (they used to stay open).
+- **Follow scroll:** the added viewport-height trigger still requires follow on, no drag or fling in progress and room to scroll; it changes
+  nothing when the reader has scrolled up, and a request does not change the height, so it cannot loop. No test fails without this part
+  (see above); this is review and the captured log only.
+- **Save/Takeover wait:** cancellation and close end the wait and release the counter; the guards run after the wait, so a lease taken in
+  the meantime is still refused (`HELD`) and takeover re-reads the lease it acts on. Found in review and fixed: a person's action could
+  still be dropped in the instant between the background check's guard and its flag (the check now sets the flag and then looks for a
+  waiting action), and when the 15 s bound passed the action returned false in silence (it now says "Still checking for a newer version…"
+  and changes nothing). Tests: decline is visible and nothing is written; closing ends a waiting Save; a later Save works.
+- **Text editor echo:** only a value equal to the text the page was just split from is treated as the echo, and the next different edit clears
+  it. Tests: a real second identical insert is applied, caret moves and a composition are left alone, a caret after a split stays on a
+  whole character, undo/page-split content is preserved. Known edge: typing exactly the characters that were just cut off a split page, as
+  the next input, is treated as the echo.
+- Not resolved and not cleared by this release: the Parity tap that did not open the dialog (4 of 20), Hierarchy count settling (1 of 10),
+  Overnight touch injection/full-screen (2 of 10), Multi (0 of 10). Small samples; the bounded next diagnosis stays as written above.
+- JVM on the release source: core 749 tests (1 optional skip), app 77, zero failures.
+

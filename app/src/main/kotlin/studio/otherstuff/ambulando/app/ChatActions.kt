@@ -13,11 +13,8 @@ import studio.otherstuff.ambulando.core.surfaces.PinRecord
 import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable internal fun ChatMessageActions(model: AppModel, message: MessageRecord, enabled: Boolean) {
+@Composable internal fun ChatMessageActions(model: AppModel, message: MessageRecord, enabled: Boolean, onEdit: (MessageRecord) -> Unit, onDelete: (MessageRecord) -> Unit) {
     val w = model.workspace ?: return; val c = model.connection ?: return
-    // The message as it was when Edit was tapped: the text being edited and the version it is saved against stay together.
-    var edit by remember(message.id) { mutableStateOf<MessageRecord?>(null) }
-    var delete by remember(message.id) { mutableStateOf(false) }
     val reactions by remember(message.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.reactions(w.id, listOf(message.id)) } }.collectAsState(emptyList())
     fun payload(block: JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
     FlowRow(verticalArrangement = Arrangement.Center) {
@@ -29,19 +26,29 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
             else WriteIntent(WriteKind.REACTION_REMOVE, message.id, payload { put("reaction_id", existing.id) }))
         }
         if (message.senderNpub == c.signerNpub && !message.deleted) {
-            TextButton(enabled = enabled, onClick = { edit = message }, modifier = androidx.compose.ui.Modifier.testTag("message.edit.${message.id}")) { Text("Edit") }
-            TextButton(enabled = enabled, onClick = { delete = true }, modifier = androidx.compose.ui.Modifier.testTag("message.delete.${message.id}")) { Text("Delete") }
+            TextButton(enabled = enabled, onClick = { onEdit(message) }, modifier = androidx.compose.ui.Modifier.testTag("message.edit.${message.id}")) { Text("Edit") }
+            TextButton(enabled = enabled, onClick = { onDelete(message) }, modifier = androidx.compose.ui.Modifier.testTag("message.delete.${message.id}")) { Text("Delete") }
         }
     }
+}
+
+/**
+ * The edit and delete dialogs of a chat message. They belong to the screen, not to the message row: a row scrolls out of the
+ * list (a new message, the keyboard resizing the list) and its state goes with it, which closed the dialog and lost the edit.
+ * [edit] is the message as it was when Edit was tapped: the text being edited and the version it is saved against stay together.
+ */
+@Composable internal fun ChatMessageDialogs(model: AppModel, edit: MessageRecord?, delete: MessageRecord?, onEditDone: () -> Unit, onDeleteDone: () -> Unit) {
+    val w = model.workspace ?: return
+    fun payload(block: JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
     edit?.let { editing -> studio.otherstuff.ambulando.app.ui.chat.MessageEditDialog(model, w.id, editing.body, onSave = { encoded ->
         model.submit(WriteIntent(WriteKind.MESSAGE_EDIT, editing.id, payload {
             put("channel_id", editing.channelId); editing.threadId?.let { put("thread_id", it) }; put("body", encoded.body); put("row_version", editing.rowVersion)
             put("mentions", JsonArray(encoded.mentions.map { m -> buildJsonObject { m.requestObject.forEach { (k, v) -> put(k, v) } } }))
-        })); edit = null
-    }, onDismiss = { edit = null }) }
-    if (delete) AlertDialog(onDismissRequest = { delete = false }, title = { Text("Delete message?") }, confirmButton = { TextButton(onClick = {
-        model.submit(WriteIntent(WriteKind.MESSAGE_DELETE, message.id, payload { put("channel_id", message.channelId); put("row_version", message.rowVersion); message.threadId?.let { put("thread_id", it) } })); delete = false
-    }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { delete = false }) { Text("Cancel") } })
+        })); onEditDone()
+    }, onDismiss = { onEditDone() }) }
+    delete?.let { message -> AlertDialog(onDismissRequest = { onDeleteDone() }, title = { Text("Delete message?") }, confirmButton = { TextButton(onClick = {
+        model.submit(WriteIntent(WriteKind.MESSAGE_DELETE, message.id, payload { put("channel_id", message.channelId); put("row_version", message.rowVersion); message.threadId?.let { put("thread_id", it) } })); onDeleteDone()
+    }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { onDeleteDone() }) { Text("Cancel") } }) }
 }
 
 /**

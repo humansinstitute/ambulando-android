@@ -80,6 +80,28 @@ class ParityFlowTest {
         compose.waitUntil(20_000) { runBlocking { model.store.reader.thread(SampleIds.STUDIO, root.threadId!!)?.title == "Renamed on Android" } }
     }
 
+    // Found as the intermittent "edit dialog never appears" failure: the dialog state lived in the message row, and a row that
+    // leaves the list (the follow scroll, the keyboard resizing the list) closed the dialog and lost the edit.
+    @Test fun anOpenEditDialogSurvivesItsMessageScrollingOutOfTheList() = launch { model ->
+        openGeneralChat(model)
+        val text = "Dialog survives ${System.nanoTime()}"
+        compose.onNodeWithTag("chat.composer").performTextReplacement(text)
+        compose.onNodeWithTag("chat.send").performClick()
+        compose.waitUntil(20_000) { runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).any { it.message.body == text } } }
+        val root = runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).first { it.message.body == text }.message }
+        compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
+        compose.onNodeWithTag("message.edit.${root.id}").performClick()
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.field").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("chat.edit.field").performTextReplacement("$text (half edited)")
+        // The row is composed only while it is near the viewport: scroll to the oldest message and it is gone.
+        compose.onNodeWithTag("chat.messages").performScrollToIndex(0)
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("message.edit.${root.id}").fetchSemanticsNodes().isEmpty() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("chat.edit.field").assertExists()
+        compose.onNodeWithTag("chat.edit.save").performClick()
+        compose.waitUntil(20_000) { runBlocking { model.store.reader.message(SampleIds.STUDIO, root.id)?.body == "$text (half edited)" } }
+    }
+
     @Test fun aTaskShowsItsSubtasksAndAddingOneKeepsTheParentChannel() = launch { model ->
         compose.runOnIdle { val c = model.channels.first { it.id == SampleIds.GENERAL }; model.selectContext(c.scopeId, c.id); model.section = AppSection.TASKS }
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("task.Review the native inbox").fetchSemanticsNodes().isNotEmpty() }
