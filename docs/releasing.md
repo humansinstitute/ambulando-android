@@ -58,3 +58,7 @@ The APK signing certificate SHA-256 is `95ae1a491e106931a25296797a6e99a9efe95a9e
   Latest releases and its app page showed 0.7.0 with Open and Uninstall (the package was installed), while the zapstore.dev web page,
   rendered in a headless browser, said the app was not found. The client reads the relay events; the web listing evidently does not
   follow the same path yet. Report each as observed; neither is proof of general store availability or of what the release `a` tag changes.
+- Build 19 check: after the relay accepted the three events and returned them, the Zapstore Android client (opened once on the emulator) listed
+  Ambulando 0.7.1 under Latest releases. The emulator already had build 19 installed from the APK, so the check mark beside the version shows the
+  installed version matches; it is not evidence of a store-mediated fresh install. The zapstore.dev app page returned HTTP 200 but its HTML carries
+  no version text to read, so web visibility was not established either way.
