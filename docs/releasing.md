@@ -54,3 +54,7 @@ The APK signing certificate SHA-256 is `95ae1a491e106931a25296797a6e99a9efe95a9e
   0.4.17 does not emit it.
 - The relay may answer `pending: the listing will be saved once its checks pass`. Acceptance and relay read-back are not store
   visibility: check the public listing separately and report it as it is.
+- Build 18 check of what a person actually sees: the Zapstore Android client (opened once on the emulator) listed the new version under
+  Latest releases and its app page showed 0.7.0 with Open and Uninstall (the package was installed), while the zapstore.dev web page,
+  rendered in a headless browser, said the app was not found. The client reads the relay events; the web listing evidently does not
+  follow the same path yet. Report each as observed; neither is proof of general store availability or of what the release `a` tag changes.
