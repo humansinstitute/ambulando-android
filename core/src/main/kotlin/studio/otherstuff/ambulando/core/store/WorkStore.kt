@@ -720,3 +720,19 @@ suspend fun StoreWriter.finishDocDraftSave(submitted: DocDraft, savedRowVersion:
     )
     emit(StoreTable.DOC_DRAFTS, submitted.workspaceId)
 }
+
+/**
+ * Workspaces of a connection that still hold work only this device has: an unsent message, a queued change, a saved
+ * message draft or a saved document draft. A fresh install of multiple-workspace support enables these so nothing
+ * queued by an earlier build is left behind a switch nobody turned on.
+ */
+suspend fun StoreReader.workspacesWithLocalWork(connectionId: String): Set<String> = read {
+    val ids = LinkedHashSet<String>()
+    for (sql in listOf(
+        "SELECT DISTINCT workspace_id FROM outbox WHERE connection_id = ?",
+        "SELECT DISTINCT workspace_id FROM writes WHERE connection_id = ?",
+        "SELECT DISTINCT workspace_id FROM drafts WHERE connection_id = ? AND (text <> '' OR attachments <> '[]')",
+        "SELECT DISTINCT workspace_id FROM doc_drafts WHERE connection_id = ?",
+    )) ids.addAll(query(sql, connectionId) { it.text(0)!! })
+    ids
+}

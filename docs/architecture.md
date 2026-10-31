@@ -40,26 +40,37 @@ and sync tests exercise the real engine.
 
 ## 3. Store and isolation
 
-- One SQLite database per install (WAL). Every record row is keyed by `(workspace_id, id)` and keeps Tower's canonical
-  JSON beside its indexed columns, so unknown fields survive round trips and migrations.
+- A **catalog** database (`Store/ambulando.sqlite`) holds connections, discovered workspace lists, workspace preferences and
+  global settings. Content, drafts, the outbox and the write queue live in **one SQLite partition per boundary** (normalised
+  Tower origin, signer, application namespace, workspace id), opened by a store pool, with the same schema as before: every
+  record row is keyed `(workspace_id, id)` inside its own file and keeps Tower's canonical JSON beside its indexed columns, so
+  unknown fields survive round trips and migrations. This replaces the earlier single database per install so that identical
+  workspace ids on two Towers or identities can never collide; see [multi-workspace-storage.md](multi-workspace-storage.md)
+  for the migration, ownership and recovery policy. The catalog's legacy content is a frozen backup, never a fallback.
 - Upserts are guarded by `row_version`: an older version never overwrites a newer one.
 - Connection rows bind origin, workspace, `app_npub` and signer; a different identity cannot write under another
-  identity's connection.
-- **Access loss is non-destructive.** When a scope, channel or record stops being visible, records this device already
-  received while authorized stay readable, marked as no longer available, and no further reads or writes are made for
-  them; Tower enforces future access. Records Tower reports as deleted are removed. (The iPhone app removes local
-  copies on access loss; this is a deliberate difference.)
+  identity's connection, and a partition is only ever opened by the exact boundary that owns it.
+- **Access loss is non-destructive.** When a scope, channel, record or whole workspace stops being visible, records this
+  device already received while authorized stay readable, marked as no longer available, and no further reads, writes or
+  leases are made for them (the workspace's write gate closes at once); pending local work stays queued for recovery. Tower
+  enforces future access. Records Tower reports as deleted are removed, and notification text is purged or redacted under its
+  own stricter rules. (The iPhone app removes local copies on access loss; this is a deliberate difference.)
 
 ## 4. Sync
 
-`SyncEngine` is the only network owner. Jobs are keyed and coalesced, cancellable, bounded in concurrency, and backed
-off exponentially on failure; priorities are `user` (a send, opening a thread), `visible` and `background`, with one
-slot reserved for non-background work. Screens observe the store and never call the network.
+`SyncEngine` is the only network owner, shared by every enabled workspace. Jobs are keyed and coalesced, cancellable,
+bounded in concurrency, and backed off exponentially on failure; priorities are `user` (a send, opening a thread),
+`visible` and `background`, with one slot reserved for non-background work. Each workspace **runtime** reaches the engine
+through a scoped view: its keys are namespaced by boundary, equal-priority work rotates between workspaces, one Tower cannot
+occupy every slot, its status shows only its own jobs, and pausing it cancels only its own work. Read and write **gates** close
+synchronously on pause and re-open only after the exact workspace is revalidated and its cursor caught up. Screens observe
+the store and never call the network.
 
-- Foreground: a bounded event catch-up from a durable per-workspace cursor, then Tower's SSE stream, applied in small
-  batches with tombstones and targeted reads.
+- Foreground: for every enabled workspace, a bounded event catch-up from its durable cursor, then Tower's SSE stream
+  (one per enabled workspace), applied in small batches with tombstones and targeted reads. Only the workspace in front also
+  refreshes its task, document and file lists.
 - Background: WorkManager periodic work (at least 15 minutes apart, scheduled by Android) runs the same catch-up jobs
-  at background priority. Unsent messages and changes are sent only while the identity is unlocked. There is no
+  at background priority; enabled workspaces take turns within the window, starting from a rotating position. Unsent messages and changes are sent only while the identity is unlocked. There is no
   background SSE and no keep-alive foreground service.
 - Offline: chat sends go through a durable outbox and every other change through a durable write queue; both survive
   process death, retry with backoff, keep per-conversation/per-record order, and show unsent, retrying, failed and
@@ -67,10 +78,17 @@ slot reserved for non-background work. Screens observe the store and never call 
 
 ## 5. Navigation
 
-The shared **Workspace → Scope → Channel** context, chosen in the sidebar, is used by Chat, Tasks, Docs and Files and
-remembered per workspace. A bottom section bar follows the web client's mobile order: Deck, Chat, Tasks, Docs, Files,
-Agents and Context (optional), Toolbox. Inbox, Search and pins span the workspace and move the context when a result
-is opened. Conversations open in a focused thread view over the current section.
+Several workspaces can be enabled at once (the chooser groups them by Tower and adds another Tower with the same unlocked
+identity). Each enabled workspace has its own Home, scopes, channels, collapse state, order and saved colour; with more than
+one enabled, the sidebar stacks them under shared **Unread & Active** rows that keep their source workspace in their label and
+accessibility description, the header takes a faint 12% tint of the workspace in front and the composer says "Working in
+<workspace>". Colour supplements the name and never decides routing: every action carries the full boundary. The
+**Workspace → Scope → Channel** context of the workspace in front is used by Chat, Tasks, Docs and Files; it, the open section
+and each section's record stack are saved per boundary in that workspace's partition and restored after the process ends.
+A bottom section bar follows the web client's mobile order: Deck, Chat, Tasks, Docs, Files, Agents and Context (optional),
+Toolbox. Inbox, Search and pins span the workspace in front and move the context when a result is opened. Conversations open in
+a focused thread view over the current section. The whole connected screen is rebuilt when the workspace in front changes, so
+no remembered state, query or editor can follow a switch into another workspace.
 
 ## 6. Web content
 

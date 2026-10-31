@@ -47,7 +47,7 @@ class DocumentReconciliationFlowTest {
             compose.runOnIdle { model.act { model.sync.refreshDocs(model.connection!!, model.workspace!!) } }
             try { block(model) } finally {
                 compose.runOnIdle { model.editorDoc = null; model.documentOpensInEdit = false; model.autoEditedDoc = null }
-                runBlocking { model.store.writer.setState("settings.documentOpening", "view") }
+                runBlocking { model.catalog.writer.setState("settings.documentOpening", "view") }
             }
         }
     }

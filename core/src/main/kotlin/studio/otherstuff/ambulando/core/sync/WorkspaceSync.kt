@@ -54,13 +54,18 @@ fun interface PendingSender {
  */
 class WorkspaceSync(
     val store: LocalStore,
-    val engine: SyncEngine,
+    val engine: SyncScheduler,
     val identity: IdentityService,
     val transport: HttpTransport,
     /** Live-update state per workspace (event stream batches, poll requests, diagnostics). */
     val live: LiveRegistry = LiveRegistry(),
     /** Out-of-process transfers for presigned object-store URLs, when the app provides them. */
     val transfers: ObjectTransfers? = null,
+    /**
+     * Set on a workspace runtime: discovery is the connection catalog's business (the partition holds one workspace), so a
+     * runtime that learns its access may have changed asks the catalog instead of rewriting its own workspace list.
+     */
+    val discoveryHook: DiscoveryHook? = null,
 ) {
     /** A Tower API over [origin], signed by the identity (or unsigned for the public descriptor). */
     fun api(origin: TowerOrigin, signed: Boolean = true): TowerAPI =
@@ -84,6 +89,19 @@ class WorkspaceSync(
      * longer listed is flagged (kept readable, left out of sync) by the store.
      */
     suspend fun discover(connection: ConnectionRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
+        discoveryHook?.let { it.discover(connection, priority, force); return }
+        discoverListing(connection, priority, force) { workspaces ->
+            for (workspace in workspaces) refreshWorkspace(connection, workspace, SyncPriority.BACKGROUND)
+        }
+    }
+
+    /**
+     * The discovery job: stores the authoritative list for the connection in this store, then lets [afterListing] schedule
+     * what each listed workspace needs (the catalog hands them to the enabled runtimes; the single-store app refreshes them).
+     */
+    suspend fun discoverListing(
+        connection: ConnectionRecord, priority: SyncPriority, force: Boolean, afterListing: suspend (List<WorkspaceRecord>) -> Unit,
+    ) {
         engine.enqueueRead(discoverKey(connection.id), priority, force) {
             identity.requireReader(connection.signerNpub)
             val origin = TowerOrigin(connection.origin)
@@ -92,7 +110,7 @@ class WorkspaceSync(
             store.writer.replaceWorkspaces(connection.id, workspaces)
             // Keeps an enabled background credential pinned to exactly the workspaces this identity can see.
             runCatching { identity.updateBackgroundWorkspaces(origin, workspaces.map { it.id }) }
-            for (workspace in workspaces) refreshWorkspace(connection, workspace, SyncPriority.BACKGROUND)
+            afterListing(workspaces)
         }
     }
 
@@ -211,6 +229,11 @@ class WorkspaceSync(
         fun navigationError(snapshot: SyncSnapshot, connectionId: String, workspaceId: String?): String? =
             NavigationKeys.error(navigationSnapshot(snapshot), connectionId, workspaceId)
     }
+}
+
+/** Where a workspace runtime sends "my access may have changed" (see [WorkspaceSync.discoveryHook]). */
+fun interface DiscoveryHook {
+    suspend fun discover(connection: ConnectionRecord, priority: SyncPriority, force: Boolean)
 }
 
 /** Cooperative cancellation point inside a job (the analogue of `Task.checkCancellation()`). */

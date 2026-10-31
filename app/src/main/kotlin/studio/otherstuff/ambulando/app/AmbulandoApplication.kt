@@ -5,6 +5,8 @@ import studio.otherstuff.ambulando.app.background.*
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.sync.*
 import studio.otherstuff.ambulando.core.transport.OkHttpTransport
+import studio.otherstuff.ambulando.core.workspaces.RuntimeEnvironment
+import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntimes
 
 /** WorkManager never resumes an interactive signing session after process death. */
 class AmbulandoApplication : Application(), BackgroundHost {
@@ -15,20 +17,24 @@ class AmbulandoApplication : Application(), BackgroundHost {
     override suspend fun backgroundEntryPoint(): BackgroundEntryPoint {
         activeModel?.takeUnless { it.environment.isSample }?.let { return it }
         return object : BackgroundEntryPoint {
-            override suspend fun backgroundRefresh(budgetMillis: Long): Boolean {
+            /** A window with no screen: the same runtimes and rotation as the app, read-only unless the identity is unlocked in memory. */
+            private suspend fun <T> withRuntimes(block: suspend (BackgroundRefresher) -> T): T {
                 val environment = AppEnvironment.Production(this@AmbulandoApplication)
                 val identity = environment.identityService()
-                if (!identity.loadBackgroundRead()) return false
-                val store = LocalStore(environment.storeFile.parentFile!!)
-                val engine = SyncEngine()
-                try {
-                    val sync = WorkspaceSync(store, engine, identity, OkHttpTransport())
-                    for (connection in store.reader.connections()) {
-                        sync.backgroundRefresh(connection, store.reader.syncableWorkspaces(connection.id), budgetMillis = budgetMillis)
-                    }
-                    return true
-                } finally { engine.cancelAll(); engine.close(); store.close() }
+                identity.loadBackgroundRead()
+                val base = environment.storeFile.parentFile!!
+                val catalog = LocalStore(base)
+                val engine = SyncEngine(maxConcurrent = 4, reservedForeground = 1, maxPerGroup = 3)
+                val transport = OkHttpTransport()
+                val runtimes = WorkspaceRuntimes(catalog, WorkspaceStorePool(catalog, java.io.File(base, "Workspaces")), foreground = false) { hook ->
+                    RuntimeEnvironment(engine, identity, transport, studio.otherstuff.ambulando.core.transport.OkHttpEventStreamTransport(), null,
+                        java.io.File(environment.baseDir, "attachments"), java.io.File(environment.baseDir, "uploads"), java.io.File(environment.baseDir, "composer-uploads"),
+                        null, kotlinx.coroutines.Dispatchers.Default, hook)
+                }
+                try { return block(BackgroundRefresher(catalog, runtimes, identity)) }
+                finally { engine.cancelAll(); runtimes.close(); engine.close(); catalog.close() }
             }
+            override suspend fun backgroundRefresh(budgetMillis: Long): Boolean = withRuntimes { it.refresh(budgetMillis) }
             override suspend fun finishSending(budgetMillis: Long) = false
         }
     }

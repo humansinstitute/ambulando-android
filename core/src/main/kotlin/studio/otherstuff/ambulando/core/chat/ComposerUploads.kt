@@ -21,7 +21,7 @@ import studio.otherstuff.ambulando.core.store.ChatTarget
 import studio.otherstuff.ambulando.core.store.ConnectionRecord
 import studio.otherstuff.ambulando.core.store.LocalStore
 import studio.otherstuff.ambulando.core.store.replaceDraftToken
-import studio.otherstuff.ambulando.core.sync.SyncEngine
+import studio.otherstuff.ambulando.core.sync.SyncScheduler
 import studio.otherstuff.ambulando.core.sync.SyncPriority
 import studio.otherstuff.ambulando.core.transport.FileTransferError
 import studio.otherstuff.ambulando.core.transport.HttpTransport
@@ -124,7 +124,7 @@ class ComposerUploadJob(
  * own unlocked identity.
  */
 class ComposerUploadTransfer(
-    private val engine: SyncEngine,
+    private val engine: SyncScheduler,
     private val identity: IdentityService,
     private val transport: HttpTransport,
     private val transfers: ObjectTransfers? = null,

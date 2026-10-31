@@ -17,8 +17,10 @@ avatars use app-private cache storage. Cloud backup and device transfer are disa
 grants the chosen receiver temporary access to that file through a narrowly scoped FileProvider.
 
 Upgrades keep the same data paths and signing identity. An unavailable vault is kept and reported as unavailable,
-never treated as a missing account. Explicit disconnect/removal is different from an update and removes the associated
-local history and drafts. Records whose membership access was removed remain read-only; real deletion tombstones
+never treated as a missing account. Each workspace of each Tower lives in its own private database file, so one account's
+or Tower's content is never read through another's. Explicit disconnect is different from an update: the app stops using
+that Tower's workspaces, drafts and unsent work, and their files are moved to a private recovery folder the app does not
+read; removing the identity deletes all of it, including the pre-upgrade backup and the recovery folder. Records whose membership access was removed remain read-only; real deletion tombstones
 remove records. The server remains authoritative for all future access.
 
 ## Notifications

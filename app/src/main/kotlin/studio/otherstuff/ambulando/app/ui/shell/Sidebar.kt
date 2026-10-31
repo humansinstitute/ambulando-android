@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.UnfoldMore
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -80,6 +81,26 @@ data class SidebarState(
     val loadState: NavigationLoadState,
     /** The identity exists but cannot be opened right now (device locked), as opposed to locked by the user. */
     val identityUnavailable: Boolean,
+    /** Every enabled workspace, in the saved order, when more than one is enabled (the column then stacks them). */
+    val stacked: List<SidebarWorkspace> = emptyList(),
+)
+
+/** One enabled workspace in the stacked column; actions carry its [id] (the full-boundary id), never "the current workspace". */
+@Immutable
+data class SidebarWorkspace(
+    val id: String,
+    val label: String,
+    /** Tower host, shown only where it tells two similarly named workspaces apart. */
+    val towerLabel: String,
+    val colour: studio.otherstuff.ambulando.core.workspaces.WorkspaceColour,
+    val collapsed: Boolean,
+    val active: Boolean,
+    val accessRemoved: Boolean,
+    val groups: List<SidebarGroup>,
+    val scopeCollapsed: Set<String>,
+    val unread: Set<String>,
+    val labels: Map<String, String>,
+    val loaded: Boolean,
 )
 
 interface SidebarActions {
@@ -93,6 +114,14 @@ interface SidebarActions {
     fun selectWorkspace(workspaceId: String)
     fun retry()
     fun close()
+    /** Opens the workspace chooser (enable, pause, colour, add a Tower). */
+    fun chooseWorkspaces() {}
+    /** Brings workspace [id] in front and optionally opens a scope or channel of it. */
+    fun openIn(id: String, scopeId: String?, channelId: String?) {}
+    fun toggleWorkspaceCollapsed(id: String) {}
+    fun toggleScopeIn(id: String, scopeId: String) {}
+    fun moveWorkspace(id: String, offset: Int) {}
+    fun pauseWorkspace(id: String) {}
 }
 
 /** The drawer content: Home, Unread & Active, scopes (collapsible, in the personal order) and the workspace switcher. */
@@ -102,6 +131,7 @@ fun SidebarContent(state: SidebarState, actions: SidebarActions, modifier: Modif
     val context = state.context
     Column(modifier.fillMaxHeight().widthIn(max = 340.dp).background(amb.card).testTag("sidebar")) {
         LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp)) {
+            if (state.stacked.size > 1) { stackedItems(state, actions); return@LazyColumn }
             item {
                 Row(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -207,13 +237,19 @@ private fun SidebarHeading(text: String) {
 
 /** One channel in the sidebar (sol `.sidebar-scope-channel-row`): active rows are muted fill with bold primary text. */
 @Composable
-private fun ChannelRow(channel: NavChannel, label: String, unread: Boolean, active: Boolean, tagPrefix: String, onClick: () -> Unit) {
+private fun ChannelRow(
+    channel: NavChannel, label: String, unread: Boolean, active: Boolean, tagPrefix: String, onClick: () -> Unit,
+    /** Set on shared rows: the workspace this channel belongs to, kept in the label, description and a quiet suffix. */
+    source: SidebarWorkspace? = null,
+    dotColour: studio.otherstuff.ambulando.core.workspaces.WorkspaceColour? = null,
+) {
     val amb = Amb.colors
+    val dark = isSystemInDarkTheme()
     Row(
         Modifier.fillMaxWidth().heightIn(min = 36.dp)
             .background(if (active) amb.selectedFill else Color.Transparent, RoundedCornerShape(Amb.radiusControl))
             .clickable(onClick = onClick)
-            .semantics { contentDescription = label + if (unread) ", unread" else ""; selected = active }
+            .semantics { contentDescription = label + (source?.let { ", ${it.label}" + (if (it.towerLabel.isNotEmpty()) ", ${it.towerLabel}" else "") } ?: "") + if (unread) ", unread" else ""; selected = active }
             .testTag("$tagPrefix.$label")
             .padding(start = 28.dp, end = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -224,42 +260,128 @@ private fun ChannelRow(channel: NavChannel, label: String, unread: Boolean, acti
             label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
             fontWeight = when { active -> FontWeight.Bold; unread -> FontWeight.SemiBold; else -> FontWeight.Normal },
             color = when { active -> amb.selectedForeground; unread -> amb.foreground; else -> amb.mutedForeground },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f, fill = source == null),
         )
-        if (unread) Box(Modifier.size(7.dp).background(Amb.brandOrange, CircleShape))
+        if (source != null) Text(source.label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground,
+            modifier = Modifier.weight(1f, fill = false))
+        val dot = (source?.colour ?: dotColour)?.let { WorkspaceTint.navigation(it, dark) } ?: Amb.brandOrange
+        if (unread) Box(Modifier.size(7.dp).background(dot, CircleShape))
     }
 }
 
-/** Workspace switcher at the bottom of the sidebar (sol `.sidebar-workspace-footer`). */
+/** The workspace chooser entry at the bottom of the sidebar (sol `.sidebar-workspace-footer`). */
 @Composable
 private fun WorkspaceFooter(state: SidebarState, actions: SidebarActions) {
     val amb = Amb.colors
-    var open by remember { mutableStateOf(false) }
     Column {
         HorizontalDivider(thickness = 0.5.dp, color = amb.border)
         Box(Modifier.padding(12.dp)) {
             Row(
-                Modifier.fillMaxWidth().background(amb.muted, RoundedCornerShape(Amb.radiusControl)).clickable { open = true }
-                    .semantics { contentDescription = "Switch workspace, current ${state.workspaceLabel}" }
+                Modifier.fillMaxWidth().background(amb.muted, RoundedCornerShape(Amb.radiusControl)).clickable { actions.chooseWorkspaces() }
+                    .semantics { contentDescription = if (state.stacked.size > 1) "Choose workspaces, ${state.stacked.size} enabled" else "Choose workspaces, current ${state.workspaceLabel}" }
                     .testTag("sidebar.workspace").padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 WorkspaceAvatar(state.workspaceLabel, 32.dp)
                 Column(Modifier.weight(1f)) {
-                    Text("Workspace", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
-                    Text(state.workspaceLabel, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (state.stacked.size > 1) "Workspaces" else "Workspace", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
+                    Text(if (state.stacked.size > 1) "${state.stacked.size} enabled" else state.workspaceLabel, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Icon(Icons.Outlined.UnfoldMore, null, tint = amb.mutedForeground, modifier = Modifier.size(18.dp))
             }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                state.workspaces.forEach { (id, label) ->
-                    DropdownMenuItem(
-                        text = { Text(label) },
-                        leadingIcon = { if (id == state.selectedWorkspaceId) Icon(Icons.Outlined.Check, null) },
-                        onClick = { open = false; actions.selectWorkspace(id); actions.close() },
-                    )
+        }
+    }
+}
+
+/**
+ * Several enabled workspaces in one column: shared Unread & Active rows first (each keeps its source workspace in its label
+ * and accessibility description), then one collapsible group per workspace. Every tap names its workspace.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.stackedItems(state: SidebarState, actions: SidebarActions) {
+    val unreadRows = state.stacked.flatMap { w -> SidebarNavigation.unreadChannels(w.groups, w.unread).map { w to it } }
+    if (unreadRows.isNotEmpty()) {
+        item { SidebarHeading("Unread & Active") }
+        items(unreadRows, key = { (w, c) -> "unread:${w.id}:${c.id}" }) { (w, channel) ->
+            ChannelRow(channel, w.labels[channel.id] ?: channel.name, unread = true, active = w.active && state.context.channelId == channel.id,
+                tagPrefix = "workspace.unread.${w.label}", source = w, onClick = { actions.openIn(w.id, channel.scopeId, channel.id); actions.close() })
+        }
+        item { Spacer(Modifier.heightIn(min = 6.dp)) }
+    }
+    for (w in state.stacked) {
+        item(key = "workspace:" + w.id) { WorkspaceGroupHeader(w, actions) }
+        if (w.collapsed) continue
+        item(key = "workspace-home:" + w.id) {
+            val amb = Amb.colors
+            val active = w.active && state.context.isHome
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 34.dp).background(if (active) amb.selectedFill else Color.Transparent, RoundedCornerShape(Amb.radiusControl))
+                    .clickable { actions.openIn(w.id, null, null); actions.close() }
+                    .semantics { contentDescription = "Home in ${w.label}"; selected = active }
+                    .testTag("workspace.home.${w.label}").padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) { WorkspaceAvatar(w.label, 20.dp); Text("Home", fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold, color = amb.foreground, style = MaterialTheme.typography.bodyMedium) }
+        }
+        if (w.accessRemoved) item(key = "workspace-lost:" + w.id) {
+            Text("No longer available to you. Saved content stays readable; nothing more is sent.", style = MaterialTheme.typography.labelSmall,
+                color = Amb.colors.destructive, modifier = Modifier.padding(start = 34.dp, top = 4.dp, bottom = 4.dp).testTag("workspace.lost.${w.label}"))
+        }
+        if (!w.loaded) item(key = "workspace-loading:" + w.id) {
+            Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp); Text("Loading saved navigation…", style = MaterialTheme.typography.labelSmall, color = Amb.colors.mutedForeground)
+            }
+        } else if (w.groups.isEmpty()) item(key = "workspace-empty:" + w.id) {
+            Text("No scopes visible", style = MaterialTheme.typography.labelSmall, color = Amb.colors.mutedForeground, modifier = Modifier.padding(8.dp))
+        }
+        for (group in w.groups) {
+            val collapsed = group.id in w.scopeCollapsed
+            item(key = "scope:${w.id}:${group.id}") {
+                val amb = Amb.colors
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(28.dp, 32.dp).clickable { actions.toggleScopeIn(w.id, group.id) }
+                            .semantics { contentDescription = "${if (collapsed) "Expand" else "Collapse"} ${group.scope.name} in ${w.label}" }
+                            .testTag("workspace.scopeCollapse.${w.label}.${group.scope.name}"),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(if (collapsed) Icons.Outlined.KeyboardArrowRight else Icons.Outlined.KeyboardArrowDown, null, tint = amb.mutedForeground, modifier = Modifier.size(18.dp)) }
+                    Text(group.scope.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.ExtraBold,
+                        color = amb.mutedForeground,
+                        modifier = Modifier.weight(1f).heightIn(min = 32.dp).clickable { actions.openIn(w.id, group.id, null); actions.close() }
+                            .semantics { contentDescription = "Open ${group.scope.name} in ${w.label}" }
+                            .testTag("workspace.scope.${w.label}.${group.scope.name}").padding(horizontal = 4.dp, vertical = 8.dp))
                 }
-                if (state.workspaces.isEmpty()) DropdownMenuItem(text = { Text(if (state.workspacesLoaded) "No workspaces yet" else "Loading…") }, onClick = { open = false }, enabled = false)
+            }
+            if (!collapsed) items(group.channels, key = { "channel:${w.id}:${it.id}" }) { channel ->
+                ChannelRow(channel, w.labels[channel.id] ?: channel.name, unread = channel.id in w.unread, active = w.active && state.context.channelId == channel.id,
+                    tagPrefix = "workspace.channel.${w.label}", dotColour = w.colour, onClick = { actions.openIn(w.id, channel.scopeId, channel.id); actions.close() })
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceGroupHeader(w: SidebarWorkspace, actions: SidebarActions) {
+    val amb = Amb.colors
+    val dark = isSystemInDarkTheme()
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(
+            Modifier.size(28.dp, 32.dp).clickable { actions.toggleWorkspaceCollapsed(w.id) }
+                .semantics { contentDescription = "${if (w.collapsed) "Expand" else "Collapse"} ${w.label}" }.testTag("workspace.collapse.${w.label}"),
+            contentAlignment = Alignment.Center,
+        ) { Icon(if (w.collapsed) Icons.Outlined.KeyboardArrowRight else Icons.Outlined.KeyboardArrowDown, null, tint = amb.mutedForeground, modifier = Modifier.size(18.dp)) }
+        Box(Modifier.size(9.dp).background(WorkspaceTint.navigation(w.colour, dark), CircleShape))
+        Text(w.label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.ExtraBold,
+            color = amb.foreground, modifier = Modifier.weight(1f).semantics { heading() })
+        Box {
+            Box(
+                Modifier.size(28.dp, 32.dp).clickable { menu = true }.semantics { contentDescription = "Options for ${w.label}" }.testTag("workspace.options.${w.label}"),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Outlined.MoreHoriz, null, tint = amb.mutedForeground, modifier = Modifier.size(16.dp)) }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Move up") }, onClick = { menu = false; actions.moveWorkspace(w.id, -1) })
+                DropdownMenuItem(text = { Text("Move down") }, onClick = { menu = false; actions.moveWorkspace(w.id, 1) })
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("Pause workspace") }, onClick = { menu = false; actions.pauseWorkspace(w.id) }, modifier = Modifier.testTag("workspace.pause.${w.label}"))
             }
         }
     }

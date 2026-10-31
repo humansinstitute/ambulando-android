@@ -36,7 +36,7 @@ import studio.otherstuff.ambulando.core.store.retryOutbox
 import studio.otherstuff.ambulando.core.store.thread
 import studio.otherstuff.ambulando.core.store.updateOutboxAttachments
 import studio.otherstuff.ambulando.core.sync.SyncBackoff
-import studio.otherstuff.ambulando.core.sync.SyncEngine
+import studio.otherstuff.ambulando.core.sync.SyncScheduler
 import studio.otherstuff.ambulando.core.sync.SyncPriority
 import studio.otherstuff.ambulando.core.transport.FileTransferError
 import studio.otherstuff.ambulando.core.transport.HttpTransport
@@ -134,7 +134,7 @@ object OutboxRequest {
  */
 class OutboxSender(
     val store: LocalStore,
-    val engine: SyncEngine,
+    val engine: SyncScheduler,
     val identity: IdentityService,
     val transport: HttpTransport,
     /** Directory holding staged attachment bytes (privacy-stripped images) until their message is accepted. */
@@ -142,6 +142,8 @@ class OutboxSender(
     /** Out-of-process transfers for presigned attachment uploads (null: in-process). */
     val transfers: ObjectTransfers? = null,
     private val random: () -> Double = { Math.random() },
+    /** The one workspace this outbox belongs to (a runtime's): a message for another is refused instead of queued here. */
+    private val boundary: studio.otherstuff.ambulando.core.workspaces.WorkspaceBoundary? = null,
 ) {
     companion object {
         fun key(connection: ConnectionRecord): String = "outbox:${connection.id}"
@@ -258,6 +260,7 @@ class OutboxSender(
         attachments: List<PendingAttachment> = emptyList(),
     ): OutboxItem? {
         if (target.connectionId != connection.id || target.workspaceId != workspace.id) throw TowerError.UnsafePath
+        boundary?.requireOwns(connection, workspace)
         val encoded = MentionCodec.encode(text, mentions)
         val body = OutboxRequest.normalizedBody(encoded.body)
         if (body.isEmpty() && attachments.isEmpty()) return null

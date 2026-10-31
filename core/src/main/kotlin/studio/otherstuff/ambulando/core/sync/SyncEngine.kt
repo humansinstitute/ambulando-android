@@ -48,6 +48,25 @@ data class SyncSnapshot(
 }
 
 /**
+ * What every sync collaborator needs from the scheduler. The shared [SyncEngine] implements it directly; a
+ * [ScopedSyncScheduler] gives one workspace runtime its own namespace, pause gate and status view over that same engine.
+ */
+interface SyncScheduler {
+    val status: StateFlow<SyncSnapshot>
+    suspend fun snapshot(): SyncSnapshot
+    suspend fun enqueue(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: SyncEngine.Work)
+    suspend fun enqueueRead(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: SyncEngine.Work)
+    suspend fun recovered(key: String)
+    fun post(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: SyncEngine.Work)
+    suspend fun cancel(key: String)
+    suspend fun cancelPrefix(prefix: String)
+    suspend fun cancelAll()
+    suspend fun waitUntilIdle()
+    suspend fun failureCount(key: String): Int
+    suspend fun <T> perform(key: String, priority: SyncPriority = SyncPriority.USER, work: suspend () -> T): T
+}
+
+/**
  * The single owner of network refresh work (architecture: "sole network/update owner").
  *
  * - Keyed jobs coalesce: enqueueing a queued key replaces its work; enqueueing a running key schedules exactly one
@@ -72,7 +91,12 @@ class SyncEngine(
     private val retryDelay: (Int) -> Long = { SyncBackoff.delayMillis(it, random()) },
     private val retryEvent: (String) -> Unit = {},
     private val describe: (Throwable) -> String = { studio.otherstuff.ambulando.core.transport.ConnectionFailure.userMessage(it) ?: "Connection lost" },
-) {
+    /**
+     * Most jobs of one connection group that may run at once (null: unlimited). With several Towers this leaves a slot
+     * for another one, in foreground and background work alike.
+     */
+    maxPerGroup: Int? = null,
+) : SyncScheduler {
     fun interface Work { suspend fun run() }
 
     private class QueuedJob(
@@ -84,15 +108,24 @@ class SyncEngine(
         var dropped: (() -> Unit)? = null,
         var retryRead: Boolean = false,
         var automaticRetry: Boolean = false,
+        /** Workspace boundary that owns the job (equal-priority work rotates between owners). */
+        val owner: String? = null,
+        /** Connection (origin + signer) the job talks to (bounds occupancy per Tower). */
+        val group: String? = null,
     )
 
     val maxConcurrent: Int = max(1, maxConcurrent)
     val reservedForeground: Int = reservedForeground.coerceIn(0, this.maxConcurrent - 1)
+    val maxPerGroup: Int? = maxPerGroup?.coerceAtLeast(1)
 
     private val scope = CoroutineScope(SupervisorJob() + stateDispatcher)
     private val queue = ArrayList<QueuedJob>()
     private val running = HashMap<String, Job>()
     private val runningPriority = HashMap<String, SyncPriority>()
+    private val runningGroup = HashMap<String, String>()
+    /** Start order of each owner's most recent job: the owner served longest ago goes first among equal priorities. */
+    private val ownerServed = HashMap<String, Long>()
+    private var served = 0L
     private val reruns = HashMap<String, QueuedJob>()
     private val failures = HashMap<String, Int>()
     private val notBefore = HashMap<String, Long>()      // failure backoff
@@ -101,16 +134,17 @@ class SyncEngine(
     private val errors = HashMap<String, String>()
     private var sequence = 0L
     private var generation = 0L
-    private val idleWaiters = ArrayList<CompletableDeferred<Unit>>()
+    private class IdleWaiter(val prefix: String?, val done: CompletableDeferred<Unit> = CompletableDeferred())
+    private val idleWaiters = ArrayList<IdleWaiter>()
     private var wakeJob: Job? = null
 
     private val _status = MutableStateFlow(SyncSnapshot())
     /** Current queue state; conflated, so observers see the newest snapshot. */
-    val status: StateFlow<SyncSnapshot> = _status.asStateFlow()
+    override val status: StateFlow<SyncSnapshot> = _status.asStateFlow()
 
     private suspend fun <T> confined(block: () -> T): T = withContext(stateDispatcher) { block() }
 
-    suspend fun snapshot(): SyncSnapshot = confined { computeSnapshot() }
+    override suspend fun snapshot(): SyncSnapshot = confined { computeSnapshot() }
 
     private fun computeSnapshot(): SyncSnapshot {
         val now = nowMillis()
@@ -124,15 +158,19 @@ class SyncEngine(
      * Adds or coalesces a keyed job. [delayMillis] schedules it for later (an automatic retry); a delayed request
      * never postpones one already pending without delay, and an immediate request cancels an earlier delay.
      */
-    suspend fun enqueue(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: Work) =
+    override suspend fun enqueue(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: Work) =
         confined { enqueueLocked(key, priority, force, delayMillis, work, null) }
 
+    /** [enqueue] for a scoped scheduler: the job is attributed to a workspace boundary [owner] and a [group] (connection). */
+    suspend fun enqueueFor(owner: String?, group: String?, key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, read: Boolean, work: Work) =
+        confined { enqueueLocked(key, priority, force, delayMillis, work, null, retryRead = read, owner = owner, group = group) }
+
     /** Only idempotent read jobs opt in. Three total attempts per key/outage, reset by success or explicit force. */
-    suspend fun enqueueRead(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: Work) =
+    override suspend fun enqueueRead(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: Work) =
         confined { enqueueLocked(key, priority, force, delayMillis, work, null, retryRead = true) }
 
     /** A successful alternate refresh (for example the event path) resolves stale warnings for this key. */
-    suspend fun recovered(key: String) = confined {
+    override suspend fun recovered(key: String) = confined {
         failures.remove(key); notBefore.remove(key); errors.remove(key)
         if (connectionFailures.remove(key)) retryEvent("recovered")
         queue.removeAll { it.key == key && it.automaticRetry }
@@ -140,13 +178,13 @@ class SyncEngine(
     }
 
     /** Fire-and-forget [enqueue] for callers that are not suspending (posts in order on the state dispatcher). */
-    fun post(key: String, priority: SyncPriority = SyncPriority.BACKGROUND, force: Boolean = false, delayMillis: Long? = null, work: Work) {
+    override fun post(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: Work) {
         scope.launch { enqueueLocked(key, priority, force, delayMillis, work, null) }
     }
 
-    private fun enqueueLocked(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: Work, dropped: (() -> Unit)?, retryRead: Boolean = false) {
+    private fun enqueueLocked(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: Work, dropped: (() -> Unit)?, retryRead: Boolean = false, owner: String? = null, group: String? = null) {
         sequence++
-        val job = QueuedJob(key, priority, work, sequence, dropped, retryRead)
+        val job = QueuedJob(key, priority, work, sequence, dropped, retryRead, owner = owner, group = group)
         if (force) { notBefore.remove(key); if (retryRead) failures.remove(key) }
         val pendingImmediately = (reruns.containsKey(key) || queue.any { it.key == key }) && !delayedUntil.containsKey(key)
         if (delayMillis != null && !force) {
@@ -187,7 +225,7 @@ class SyncEngine(
         }
     }
 
-    suspend fun cancel(key: String) = confined { cancelLocked(key) }
+    override suspend fun cancel(key: String) = confined { cancelLocked(key) }
 
     private fun cancelLocked(key: String) {
         failures.remove(key); notBefore.remove(key); errors.remove(key); connectionFailures.remove(key)
@@ -201,13 +239,13 @@ class SyncEngine(
     }
 
     /** Cancels every job whose key starts with [prefix] (for example all profile refreshes of a connection). */
-    suspend fun cancelPrefix(prefix: String) = confined {
+    override suspend fun cancelPrefix(prefix: String) = confined {
         val keys = (queue.map { it.key } + reruns.keys + delayedUntil.keys + running.keys).filter { it.startsWith(prefix) }.toSet()
         keys.forEach { cancelLocked(it) }
     }
 
     /** Cancels everything (identity locked, workspace removed, background work expiring). */
-    suspend fun cancelAll() = confined {
+    override suspend fun cancelAll() = confined {
         generation++
         failures.clear(); notBefore.clear(); errors.clear(); connectionFailures.clear()
         queue.forEach { it.dropped?.invoke() }
@@ -221,25 +259,31 @@ class SyncEngine(
     }
 
     /** Returns when nothing is queued or running, or when the caller is cancelled (background expiry). */
-    suspend fun waitUntilIdle() {
+    override suspend fun waitUntilIdle() = waitUntilIdle(null)
+
+    /** As [waitUntilIdle], but only for jobs whose key starts with [prefix] (one workspace's namespace). */
+    suspend fun waitUntilIdle(prefix: String?) {
         val waiter = confined {
-            if (queue.isEmpty() && running.isEmpty()) null else CompletableDeferred<Unit>().also { idleWaiters.add(it) }
+            if (idleFor(prefix)) null else IdleWaiter(prefix).also { idleWaiters.add(it) }
         } ?: return
         try {
-            waiter.await()
+            waiter.done.await()
         } finally {
             withContext(NonCancellable + stateDispatcher) { idleWaiters.remove(waiter) }
         }
     }
 
-    suspend fun failureCount(key: String): Int = confined { failures[key] ?: 0 }
+    override suspend fun failureCount(key: String): Int = confined { failures[key] ?: 0 }
 
     /**
      * Runs one job under the engine's slots and priorities and returns its result. The job's own error is returned to
      * the caller rather than recorded (no backoff for the key). A job removed before it ran (cancel, [cancelAll]) or a
      * cancelled caller ends with [CancellationException], so a waiter is never left hanging.
      */
-    suspend fun <T> perform(key: String, priority: SyncPriority = SyncPriority.USER, work: suspend () -> T): T {
+    override suspend fun <T> perform(key: String, priority: SyncPriority, work: suspend () -> T): T = performFor(null, null, key, priority, work)
+
+    /** [perform] attributed to a workspace boundary [owner] and its connection [group]. */
+    suspend fun <T> performFor(owner: String?, group: String?, key: String, priority: SyncPriority, work: suspend () -> T): T {
         val result = CompletableDeferred<T>()
         confined {
             enqueueLocked(key, priority, true, null, Work {
@@ -251,7 +295,7 @@ class SyncEngine(
                 } catch (t: Throwable) {
                     result.completeExceptionally(t)
                 }
-            }, dropped = { result.completeExceptionally(CancellationException("Job was cancelled before it ran")) })
+            }, dropped = { result.completeExceptionally(CancellationException("Job was cancelled before it ran")) }, owner = owner, group = group)
         }
         try {
             return result.await()
@@ -269,9 +313,16 @@ class SyncEngine(
         while (running.size < maxConcurrent) {
             val backgroundRunning = runningPriority.values.count { it == SyncPriority.BACKGROUND }
             val backgroundAllowed = backgroundRunning < maxConcurrent - reservedForeground
+            val groupLimit = maxPerGroup
             val next = queue.filter { j ->
-                (backgroundAllowed || j.priority > SyncPriority.BACKGROUND) && (readyAt(j.key)?.let { it <= now } ?: true)
-            }.maxWithOrNull(compareBy<QueuedJob> { it.priority }.thenByDescending { it.sequence }) ?: break
+                (backgroundAllowed || j.priority > SyncPriority.BACKGROUND) && (readyAt(j.key)?.let { it <= now } ?: true) &&
+                    (groupLimit == null || j.group == null || runningGroup.values.count { it == j.group } < groupLimit)
+            }.maxWithOrNull(
+                compareBy<QueuedJob> { it.priority }
+                    // The workspace served longest ago goes first, so one busy workspace cannot starve another.
+                    .thenBy { -(it.owner?.let { o -> ownerServed[o] } ?: 0L) }
+                    .thenByDescending { it.sequence }
+            ) ?: break
             queue.remove(next)
             start(next)
         }
@@ -282,6 +333,8 @@ class SyncEngine(
         val key = job.key
         val started = generation
         runningPriority[key] = job.priority
+        job.group?.let { runningGroup[key] = it }
+        job.owner?.let { ownerServed[it] = ++served }
         delayedUntil.remove(key)
         running[key] = scope.launch(jobDispatcher) {
             var failure: Throwable? = null
@@ -301,6 +354,7 @@ class SyncEngine(
         val key = job.key
         val cancelled = running.remove(key)?.isCancelled == true || started != generation
         runningPriority.remove(key)
+        runningGroup.remove(key)
         if (cancelled) {
             // A cancelled transport may ignore cancellation and return a late success/failure. Neither is current.
         } else if (error != null && error !is CancellationException) {
@@ -321,7 +375,9 @@ class SyncEngine(
             errors.remove(key)
             if (connectionFailures.remove(key)) retryEvent("recovered")
         }
-        reruns.remove(key)?.let { rerun -> if (started == generation) queue.add(rerun) else rerun.dropped?.invoke() }
+        // cancelAll clears every rerun, so one still waiting here was issued after the latest cancel: it is not the cancelled
+        // job's and must run even when its predecessor unwinds late.
+        reruns.remove(key)?.let { rerun -> queue.add(rerun) }
         pump()
         publish()
         resumeIdleWaitersIfIdle()
@@ -339,11 +395,15 @@ class SyncEngine(
         }
     }
 
+    private fun idleFor(prefix: String?): Boolean =
+        if (prefix == null) queue.isEmpty() && running.isEmpty()
+        else queue.none { it.key.startsWith(prefix) } && running.keys.none { it.startsWith(prefix) }
+
     private fun resumeIdleWaitersIfIdle() {
-        if (queue.isNotEmpty() || running.isNotEmpty()) return
-        val waiters = idleWaiters.toList()
-        idleWaiters.clear()
-        waiters.forEach { it.complete(Unit) }
+        val ready = idleWaiters.filter { idleFor(it.prefix) }
+        if (ready.isEmpty()) return
+        idleWaiters.removeAll(ready.toSet())
+        ready.forEach { it.done.complete(Unit) }
     }
 
     /** Stops the engine permanently (process teardown in tests). */

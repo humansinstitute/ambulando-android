@@ -1,6 +1,7 @@
 package studio.otherstuff.ambulando.app.ui.shell
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -138,9 +139,11 @@ fun ContextBar(
     onHome: () -> Unit,
     onOpenSidebar: () -> Unit,
     onToggleLock: () -> Unit,
+    /** The saved colour of the workspace in front, blended faintly into this existing strip when several workspaces are enabled. */
+    tint: Color? = null,
 ) {
     val amb = Amb.colors
-    Column(Modifier.fillMaxWidth().background(amb.background)) {
+    Column(Modifier.fillMaxWidth().background(tint?.let { WorkspaceTint.blend(amb.background, it) } ?: amb.background).testTag("context.strip")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.clickable(onClick = onHome).semantics { contentDescription = "Show all in $workspaceLabel" }.testTag("context.home")) {
                 WorkspaceAvatar(workspaceLabel)

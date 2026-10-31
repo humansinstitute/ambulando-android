@@ -42,13 +42,13 @@ private fun refusal(e: Exception, what: String): String = when {
     var grants by remember(w.id, channel?.id) { mutableStateOf<Loaded<AccessGrant>>(Loaded.Loading) }
     var attempt by remember(w.id) { mutableIntStateOf(0) }
     LaunchedEffect(w.id, attempt) {
-        val client = TowerClient(TowerOrigin(c.origin), model.transport, model.identity)
+        val client = TowerClient(TowerOrigin(c.origin), model.workspaceTransport, model.identity)
         groups = try { Loaded.Ready(model.engine.perform("access-groups:${w.id}", SyncPriority.USER) { AccessDirectory.groups(client, w) }) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { Loaded.Unavailable(refusal(e, "groups")) }
     }
     LaunchedEffect(w.id, channel?.id, attempt) {
         val id = channel?.id ?: return@LaunchedEffect
-        val client = TowerClient(TowerOrigin(c.origin), model.transport, model.identity)
+        val client = TowerClient(TowerOrigin(c.origin), model.workspaceTransport, model.identity)
         grants = try { Loaded.Ready(model.engine.perform("access-grants:${w.id}:$id", SyncPriority.USER) { AccessDirectory.channelGrants(client, w, id) }) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { Loaded.Unavailable(refusal(e, "this channel's access")) }
     }

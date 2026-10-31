@@ -199,6 +199,7 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                 model.saveDraft(target, text, mentions)
             })
         }
+        studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceComposerContext(model)
         val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
         val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
         val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current

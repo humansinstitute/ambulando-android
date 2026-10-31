@@ -20,7 +20,7 @@ import java.util.UUID
 @Composable internal fun NativeTaskTree(model: AppModel, channelId: String, saved: TaskTreeView? = null, saveView: ((TaskTreeView) -> Unit)? = null) {
     val w = model.workspace ?: return; val c = model.connection ?: return
     val services = LocalAppServices.current
-    val writes = remember { TaskTreeWrites(model.store, model.identity, model.transport) }
+    val writes = remember { TaskTreeWrites(model.store, model.identity, model.workspaceTransport) }
     val tasks by remember(w.id, channelId) { model.store.liveQuery({ it.workspaceId == w.id }) {
         model.store.reader.tasks(w.id).filter { it.channelId == channelId }.map { TaskTreeNode.from(it.id, it.title, it.state, it.channelId, it.createdAt, it.raw) }
     } }.collectAsState(emptyList())

@@ -40,7 +40,7 @@ import java.io.File
 @Composable internal fun rememberStoredBitmap(model: AppModel, id: String, allowRead: Boolean, maxSide: Int): ImageBitmap? {
     val w = model.workspace ?: return null
     val context = LocalContext.current
-    val cache = remember { FileCache(File(context.cacheDir, "AmbulandoFiles")) }
+    val cache = remember(model.activeBoundaryId) { model.fileCache() }
     val local by remember(w.id, id) { model.store.liveQuery({ it.workspaceId == w.id && it.table == StoreTable.FILES }) { cache.attachment(w.id, id) } }.collectAsState(null)
     var bitmap by remember(w.id, id) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(w.id, id) { if (allowRead && !w.accessRemoved) model.sync.downloadAttachment(model.connection!!, w, id, cache) }

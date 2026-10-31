@@ -119,6 +119,8 @@ data class ShellChromeState(
     val syncError: String? = null,
     /** Unread notifications for the bell (null: none to show). */
     val notificationBadge: String? = null,
+    /** Saved colour of the workspace in front; set only while several workspaces are enabled (a faint 12% header tint). */
+    val workspaceTint: Color? = null,
 )
 
 interface ShellActions {
@@ -212,6 +214,7 @@ private fun SectionStackView(
                 workspaceLabel = chrome.workspaceLabel, scopeName = chrome.scopeName, channelLabel = chrome.channelLabel, isHome = chrome.isHome,
                 lockable = section.lockable, locked = chrome.viewLocked && chrome.section == section, sectionTitle = section.title,
                 onHome = actions::chooseHome, onOpenSidebar = actions::openSidebar, onToggleLock = actions::toggleViewLock,
+                tint = chrome.workspaceTint,
             )
         }
         Banners(chrome, actions)

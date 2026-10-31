@@ -14,7 +14,7 @@ import studio.otherstuff.ambulando.core.sync.SyncPriority
 /** Explicit online management; Tower decides the actor's authority. */
 @Composable internal fun WorkspaceManagement(model: AppModel, done: () -> Unit) {
     val c = model.connection ?: return; val w = model.workspace ?: return
-    val manager = remember(model) { ScopeChannelManager(model.store, model.identity, model.transport) }
+    val manager = remember(model) { ScopeChannelManager(model.store, model.identity, model.workspaceTransport) }
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var prompt by remember { mutableStateOf("") }

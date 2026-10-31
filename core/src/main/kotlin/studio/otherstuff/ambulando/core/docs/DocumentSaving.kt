@@ -7,7 +7,7 @@ import studio.otherstuff.ambulando.core.store.ConnectionRecord
 import studio.otherstuff.ambulando.core.store.LocalStore
 import studio.otherstuff.ambulando.core.store.connections
 import studio.otherstuff.ambulando.core.store.docDraftStore
-import studio.otherstuff.ambulando.core.sync.SyncEngine
+import studio.otherstuff.ambulando.core.sync.SyncScheduler
 import studio.otherstuff.ambulando.core.sync.SyncPriority
 import studio.otherstuff.ambulando.core.transport.EditLease
 import studio.otherstuff.ambulando.core.transport.HttpTransport
@@ -130,7 +130,7 @@ internal fun leaseKey(connectionId: String, workspaceId: String, docId: String, 
  */
 class DocumentSaveRunner(
     private val store: LocalStore,
-    private val engine: SyncEngine,
+    private val engine: SyncScheduler,
     private val identity: IdentityService,
     private val transport: HttpTransport,
     private val transfers: ObjectTransfers? = null,

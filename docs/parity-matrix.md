@@ -31,7 +31,7 @@ that an emulator is an authenticated live member session.
 
 ## Unsupported on Android
 
-Feed, Android OS push notifications (the in-app notification inbox is supported; see above), direct Autopilot pipeline/session views, FIPS transport, workrooms and reports, multiple workspaces shown at once, workspace/group/grant administration writes. Web-owned
+Feed, Android OS push notifications (the in-app notification inbox is supported; see above), direct Autopilot pipeline/session views, FIPS transport, workrooms and reports, workspace/group/grant administration writes. Web-owned
 WApp and personal-agent configuration is not recreated. The app does not promise indefinite background execution.
 
 iPhone now has APNs-specific permission, registration and cold-tap validation code. That is not an Android registration
@@ -49,11 +49,12 @@ inspection on both sides; "Evidence" names the tests or files, and the validatio
 
 | Area | Status on Android | Evidence / reason |
 | --- | --- | --- |
-| Navigation and context | Parity for workspace/scope/channel, DM labels, section stacks, restore after process end. Intentional difference: one workspace is active at a time (switcher) instead of iPhone's several enabled workspaces in one column, and no per-workspace colour cue | `RouteStateTest`, shell tests. Multi-workspace needs a per-workspace runtime and scheduler and is not started |
+| Navigation and context | Parity for workspace/scope/channel, DM labels, section stacks, restore after process end, now **per enabled workspace** (see the multi-workspace row) | `RouteStateTest`, shell tests, `MultiWorkspaceRuntimeTests`, `MultiWorkspaceFlowTest` |
+| Multiple workspaces and Towers | Parity with the iPhone/Mac runtime design ([multi-workspace-storage.md](multi-workspace-storage.md)): several workspaces on one or more Towers enabled at once, each with its own partition and runtime behind one bounded fair scheduler; chooser grouped by Tower with enable/pause, colour, order, collapse and Add Tower with the same unlocked identity; shared Unread & Active rows keep their source workspace; "Working in" composer indicator and faint header tint; per-workspace navigation, drafts, outbox and cursors persisted; empty selection is explicit; pause/resume with revalidation before any send; boundary guard on every runtime request; disconnect retires one Tower's partitions; background windows rotate between enabled workspaces. Intentional differences: access loss keeps received content read-only (write gate closed, pending work kept) instead of purging; presigned transfers started before a pause may finish in the system (bytes only); the optional locked read credential covers only its pinned Tower; no combined Home dashboard (also absent on iPhone/Mac) | Core: `WorkspaceStorePoolTests` (unique import, identical ids on two Towers, ambiguity withheld, idempotent and interrupted imports, retire/reconnect), `ScopedSchedulerTests` (namespaces, pause isolation, stale answers after pause, rotation, per-Tower occupancy), `MultiWorkspaceRuntimeTests` (two synthetic Towers with identical workspace ids: separate stores and writes, pause/offline/queued sends, revalidation gate, access loss and regain, disconnect, boundary guard), `WorkspaceCatalogTests`; emulator `MultiWorkspaceFlowTest` (synthetic Towers only). Not exercised: a live Tower, a physical phone, background windows granted by Android, real accounts |
 | Account / NStack persistence | Parity for descriptor, identity vault, trusted session, removal, reconnect | Core identity/store tests; unchanged this build |
 | Chat, threads, Markdown, media, mentions | Parity, including the full reaction set, edit with mentions, rename, branch, Get it done, tables and inline media. Not offered: thread archive (no confirmed route) | `ReactionEmojiTest`, `MentionTest`, `MessageFlowsTests`, synthetic emulator flow |
 | Tasks | Parity for list/board/detail/comments and subtask hierarchy. Per-parent membership table persisted as on iPhone | `TaskHierarchyTest` |
-| Documents | Parity with iPhone/Mac build 64 / Mac 55 for preserved drafts, three-way review/merge, concurrent-protocol negotiation, explicit takeover, saved versions, the `[[` picker and create-and-link. Intentional differences: Android has no per-workspace colour cue; the minute checkpoint runs only while the editor is in front (Android may end a backgrounded process; local drafts are written on every edit and on stop); Save keeps the editor open, as on iPhone; the editor toolbar scrolls horizontally | Core, Robolectric and synthetic-emulator tests (see above). The take-over, concurrent and recovery paths follow `document_edit_session_v1` / `document_concurrent_edit_v1` and need live Tower validation; they were exercised against an in-process stand-in only |
+| Documents | Parity with iPhone/Mac build 64 / Mac 55 for preserved drafts, three-way review/merge, concurrent-protocol negotiation, explicit takeover, saved versions, the `[[` picker and create-and-link. Intentional differences: the minute checkpoint runs only while the editor is in front (Android may end a backgrounded process; local drafts are written on every edit and on stop); Save keeps the editor open, as on iPhone; the editor toolbar scrolls horizontally | Core, Robolectric and synthetic-emulator tests (see above). The take-over, concurrent and recovery paths follow `document_edit_session_v1` / `document_concurrent_edit_v1` and need live Tower validation; they were exercised against an in-process stand-in only |
 | Files, versions, text attachments | Parity for folders (read), upload, download, preview, share, text attachments with history. No folder create/move or file rename/delete (iPhone has none either) | Core storage/text attachment tests |
 | Inbox and notifications | Parity for the shared inbox, filters, CAS actions and Undo. No OS push (no Tower registration contract for Android) | `NotificationsScreenTest`, core notification tests |
 | Canvas, naplets, boards | Parity for create/rename, live naplets, drawing edit, boards with versions. Android adds drawing edits iPhone does not have; no freehand, undo/redo or multi-item move | Core canvas tests, synthetic emulator canvas flow |
@@ -132,3 +133,46 @@ review. Those are verification limits, not evidence of tested live parity. See t
   without network. Running all classes in one instrumentation process still crashes in Compose on this loaded host.
 - Not exercised: a live Tower, a physical phone, real accounts.
 
+
+## Multi-workspace runtime validation record (build 17, 0.6.0)
+
+- Source: core 680 JVM tests (0 failures, 1 optional live-contract skip), app 48 JVM, `lint` 0 errors. New core coverage:
+  `WorkspaceStorePoolTests` (5: unique legacy import with drafts, outbox bytes and navigation moved once; identical workspace
+  ids on two Towers with ambiguous cache withheld; application namespace and origin normalisation; rolled-back and retried
+  import with a corrupt backup failing closed; disconnect retiring one Tower and a reconnect starting fresh) and
+  `BoardDraftRestoreTests`; `ScopedSchedulerTests` (6: identical keys never coalesce across workspaces, pause isolation and
+  stale-answer refusal, rotation, per-Tower occupancy, per-workspace idle); `MultiWorkspaceRuntimeTests` (6, two synthetic
+  Towers serving the same workspace ids: separate stores and writes, pause/offline/resume sends once, no send before
+  revalidation (mutation-checked), access loss and regain, disconnect/reconnect, boundary guard); `WorkspaceCatalogTests` (2).
+- Dedicated Android emulator (API 36, synthetic data, no real identity, Tower or physical phone), every connected class run
+  one at a time on the final source: `ConnectedAppTest` 2, `ConnectionSettingsTest` 1, `ParityFlowTest` 6, `NotificationInboxFlowTest` 1,
+  `ThreadMenuFlowTest` 1, `TaskHierarchyFlowTest` 3, `DocumentReconciliationFlowTest` 5, `TextAttachmentFlowTest` 1,
+  `BatchInteractionTest` 2, `OvernightFeedbackFlowTest` 3, `MultiWorkspaceFlowTest` 4 (stacked sidebar with shared unread and
+  workspace switching without stopping the other, send isolation with offline queue/pause/re-enable sent once, a second Tower with
+  identical workspace ids added through the chooser, access loss labelled with writes closed), plus browser, web, avatar and
+  identity classes (the live HTTPS download check is skipped without network). A separate force-stop run
+  (`MultiWorkspaceProcessDeathTest` phase 1, `am force-stop`, phase 2 in a fresh process) confirmed both workspaces still enabled,
+  the one in front, each workspace's own section and each workspace's draft restored.
+- Upgrade in place on the emulator (debug signer, synthetic data): the previous build (`f1a8b88`, single database) was left with a saved
+  draft and an unsent message, this build was installed over it (`install -r`), and `UpgradeRetentionTest` confirmed the remembered
+  workspace enabled and in front, the draft present in its partition, and the unsent message sent exactly once after revalidation.
+- Found by those runs and fixed: the route state of a workspace was saved after the switch had reset the section (a switch lost
+  the section it left); the sidebar's channels could briefly show the previous workspace's under identical ids; an explicit
+  open of a workspace now goes Home as the old switcher did.
+- Release-gate runtime race validation (core 696 JVM tests, 1 optional skip; app 48): `RuntimeRaceTests` holds a request in flight
+  and runs the competing lifecycle step before releasing it (pause during the access listing, access lost during validation,
+  regained access needing a fresh listing, reads/stream/direct writes/queued jobs refused after loss, 40-round random pause
+  stress, a closed runtime refusing a late start). It found two real defects, both fixed with a failing-first test: a runtime
+  closed by Disconnect could be reopened by a late enable, and `SyncEngine` dropped a job re-issued after `cancelAll` when its
+  cancelled predecessor unwound late (a fast disable/enable could leave a workspace unvalidated, writes stayed closed).
+  Mutation checks: the closed flag, the write-gate re-check and `closeAccess` clearing are each caught; the runtime's own
+  lease re-checks are not isolated (the transport and scheduler guards overlap and stop a stale result first), so they are
+  defence in depth without a separate proof.
+- Known unresolved, not release-blocking: `DocumentEditControllerTest` lease-timing waits flake intermittently (about 3 of 8
+  runs on the pre-release base as well); `ParityFlowTest` chat reaction/edit failures on reused installs (cold-process timing is
+  a hypothesis, not diagnosed; a 3/6 versus 4/6 small sample proves neither absence of regression nor of leakage); hugeUnicode
+  `TextSheetTest` remains an open separate task.
+- Not exercised: a live Tower, a physical phone, real accounts, Android-granted background windows (the rotation is covered by
+  source review and the shared refresher path, not timed), `TextSheetTest` hugeUnicode (separate task), push and administration.
+  `ParityFlowTest` showed the previously known intermittent chat-edit failure shape only when repeated runs reused one install
+  (consistent with accumulated sample state; not separately diagnosed); runs on clean installs passed three times in a row.

@@ -9,7 +9,7 @@ import studio.otherstuff.ambulando.core.store.pruneProfiles
 import studio.otherstuff.ambulando.core.store.recordProfileCheck
 import studio.otherstuff.ambulando.core.store.setState
 import studio.otherstuff.ambulando.core.store.state
-import studio.otherstuff.ambulando.core.sync.SyncEngine
+import studio.otherstuff.ambulando.core.sync.SyncScheduler
 import studio.otherstuff.ambulando.core.sync.SyncPriority
 import studio.otherstuff.ambulando.core.sync.checkCancelled
 import java.time.Duration
@@ -25,7 +25,7 @@ import java.time.Instant
  */
 class ProfileSync(
     private val store: LocalStore,
-    private val engine: SyncEngine,
+    private val engine: SyncScheduler,
     private val source: ProfileSource,
     private val now: () -> Instant = { Instant.now() },
 ) {

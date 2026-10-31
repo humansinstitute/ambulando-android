@@ -33,7 +33,7 @@ class ParityFlowTest {
             try { block(model) } finally {
                 // The model and the sample store outlive one test: leave neither the editor nor the Edit default behind.
                 compose.runOnIdle { model.editorDoc = null; model.documentOpensInEdit = false; model.autoEditedDoc = null }
-                runBlocking { model.store.writer.setState("settings.documentOpening", "view") }
+                runBlocking { model.catalog.writer.setState("settings.documentOpening", "view") }
             }
         }
     }
@@ -121,7 +121,7 @@ class ParityFlowTest {
 
     @Test fun theDefaultDocumentOpeningModeIsSavedAndOpensDocumentsInTheEditor() = launch { model ->
         compose.runOnIdle { model.documentOpensInEdit = true; model.section = AppSection.DOCS }
-        runBlocking { model.store.writer.setState("settings.documentOpening", "edit") }
+        runBlocking { model.catalog.writer.setState("settings.documentOpening", "edit") }
         val doc = runBlocking { model.store.reader.docs(SampleIds.STUDIO).first { it.title == "Native app plan (sample)" } }
         compose.runOnIdle { model.autoEditedDoc = null }
         compose.waitUntil(20_000) { compose.onAllNodesWithText("Native app plan (sample)").fetchSemanticsNodes().isNotEmpty() }

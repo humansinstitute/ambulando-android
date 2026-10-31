@@ -152,7 +152,7 @@ import kotlin.math.roundToInt
         is CanvasNaplet.Content.ChatThread -> ConnectedChat(model, content.threadId)
         is CanvasNaplet.Content.TaskTree -> NativeTaskTree(model, content.channelId, TaskTreeView.fromLayout(naplet.savedLayout, naplet.id)) { view ->
             model.act { model.engine.perform("tree-view:${naplet.id}", studio.otherstuff.ambulando.core.sync.SyncPriority.USER) {
-                StoreCanvasEditBackend(model.store, model.identity, model.transport, model.connection!!, w, {}, { model.sync.refreshCanvas(model.connection!!, w, it, force = true) }).editor().saveTaskTreeView(canvasId, naplet, view)
+                StoreCanvasEditBackend(model.store, model.identity, model.workspaceTransport, model.connection!!, w, {}, { model.sync.refreshCanvas(model.connection!!, w, it, force = true) }).editor().saveTaskTreeView(canvasId, naplet, view)
             } }
         }
         is CanvasNaplet.Content.TaskList -> Column(Modifier.verticalScroll(rememberScrollState())) { content.tasks.forEach { task -> TextButton(onClick = { services.open(WorkRoute.Task(w.id, task.id)) }) { Text(task.title) } } }

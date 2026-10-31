@@ -70,6 +70,12 @@ internal fun newerGuard(table: String, flagged: Boolean = table in Schema.flagge
         "excluded.updated_at >= $table.updated_at)) AND $changed"
 }
 
+/**
+ * A store whose files were closed (a retired partition after Disconnect). Stale work that reaches it is cancelled rather
+ * than failed, so a late callback from a retired runtime neither backs off nor touches another connection's store.
+ */
+class StoreClosedException : kotlinx.coroutines.CancellationException("The workspace store was closed")
+
 /** The state of one writer step: its connection and the change keys it reports after commit. */
 class WriteTx internal constructor(val db: SqlConnection) {
     internal val keys = LinkedHashSet<ChangeKey>()
@@ -87,11 +93,22 @@ class WriteTx internal constructor(val db: SqlConnection) {
 class StoreWriter internal constructor(path: String, val changes: ChangeCoalescer) : AutoCloseable {
     internal val db: SqlConnection = SqlConnection.open(path)
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
+    @Volatile internal var closed = false
 
     init { Schema.migrate(db) }
 
+    /**
+     * Runs `body` on the writer connection outside any transaction (ATTACH, VACUUM INTO and other statements SQLite refuses
+     * inside one). The caller owns atomicity.
+     */
+    internal suspend fun <T> exclusive(body: SqlConnection.() -> T): T = withContext(dispatcher) {
+        if (closed) throw StoreClosedException()
+        db.body()
+    }
+
     /** Runs `body` as one transaction on the writer connection, then reports the keys it emitted. */
     internal suspend fun <T> write(body: WriteTx.() -> T): T = withContext(dispatcher) {
+        if (closed) throw StoreClosedException()
         val tx = WriteTx(db)
         val result = db.transaction { tx.body() }
         changes.record(tx.keys)
@@ -104,7 +121,7 @@ class StoreWriter internal constructor(path: String, val changes: ChangeCoalesce
     suspend fun touch(keys: Set<ChangeKey>) = withContext(dispatcher) { changes.record(keys) }
 
     /** Closes behind any statement still running on this connection's dispatcher: a native handle must never be freed mid-use. */
-    override fun close() = runBlocking(dispatcher) { db.close() }
+    override fun close() { closed = true; runBlocking(dispatcher) { db.close() } }
 }
 
 /**
@@ -115,10 +132,15 @@ class StoreReader internal constructor(path: String) : AutoCloseable {
     internal val db: SqlConnection = SqlConnection.open(path, readOnly = true)
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
 
-    internal suspend fun <T> read(body: SqlConnection.() -> T): T = withContext(dispatcher) { db.snapshot { db.body() } }
+    @Volatile internal var closed = false
+
+    internal suspend fun <T> read(body: SqlConnection.() -> T): T = withContext(dispatcher) {
+        if (closed) throw StoreClosedException()
+        db.snapshot { db.body() }
+    }
 
     /** Closes behind any statement still running on this connection's dispatcher: a native handle must never be freed mid-use. */
-    override fun close() = runBlocking(dispatcher) { db.close() }
+    override fun close() { closed = true; runBlocking(dispatcher) { db.close() } }
 }
 
 /**

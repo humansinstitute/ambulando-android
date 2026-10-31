@@ -23,7 +23,7 @@ import java.util.UUID
     var page by remember { mutableStateOf<EditorWebHost?>(null) }
     val session = remember { UUID.randomUUID().toString() }
     val transport = remember(board.fileId) {
-        val base = TowerBoardTransport(model.identity, model.transport, c, w, board.fileId, title)
+        val base = TowerBoardTransport(model.identity, model.workspaceTransport, c, w, board.fileId, title)
         object : BoardController.Transport {
             override suspend fun versions() = model.engine.perform("board-versions:${board.fileId}", SyncPriority.USER) { base.versions() }
             override suspend fun read(versionId: String, sha256: String?) = model.engine.perform("board-read:${board.fileId}", SyncPriority.USER) { base.read(versionId, sha256) }
@@ -32,7 +32,7 @@ import java.util.UUID
             override suspend fun rename(name: String) = model.engine.perform("board-rename:${board.fileId}", SyncPriority.USER) { base.rename(name) }
         }
     }
-    val controller = remember(board.fileId) { BoardController(board.fileId, title, c.signerNpub, transport, BoardDraftStore(File(model.environment.baseDir, "board-drafts")), { value -> scope.launch { state = value } }) }
+    val controller = remember(board.fileId) { BoardController(board.fileId, title, c.signerNpub, transport, model.boardDrafts(), { value -> scope.launch { state = value } }) }
     fun close() { scope.launch { controller.suspendBoard(); controller.detach(session); done() } }
     BackHandler { close() }
     DisposableEffect(controller) {

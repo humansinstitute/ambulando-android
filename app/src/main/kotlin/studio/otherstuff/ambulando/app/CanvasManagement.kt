@@ -37,7 +37,7 @@ import studio.otherstuff.ambulando.core.sync.SyncPriority
 @Composable internal fun rememberCanvasEdits(model: AppModel, canvasId: String): CanvasEdits? {
     val w = model.workspace ?: return null; val c = model.connection ?: return null
     return remember(canvasId, w.id, c.id) {
-        val backend = StoreCanvasEditBackend(model.store, model.identity, model.transport, c, w, { model.sync.refreshCanvases(c, w, force = true) }, { model.sync.refreshCanvas(c, w, it, force = true) })
+        val backend = StoreCanvasEditBackend(model.store, model.identity, model.workspaceTransport, c, w, { model.sync.refreshCanvases(c, w, force = true) }, { model.sync.refreshCanvas(c, w, it, force = true) })
         CanvasEdits(model, canvasId, backend.editor(), backend)
     }
 }

@@ -10,7 +10,7 @@ Updates signed with the same release certificate retain the identity, connection
 
 ## Workflows
 
-- One workspace → scope → channel selection across chat, tasks, documents and files; independent section navigation.
+- Several workspaces (on one or more Towers) enabled at once, each with its own runtime and storage; workspace → scope → channel selection across chat, tasks, documents and files; independent section navigation per workspace.
 - Chat conversations, replies, mentions, reactions, signed edits/deletes, privacy-stripped image and file uploads,
   per-conversation drafts and a durable retrying outbox. Large pasted text becomes a `.txt` attachment with a paged
   editor, offline recovery and sent-file version history.
@@ -34,7 +34,7 @@ Photo attachments are decoded and re-encoded without camera/GPS metadata. See [p
 public-profile requests, browser isolation and optional background reads.
 
 Previously received records remain readable when access is removed, with editing disabled. Server deletion tombstones
-still remove records. Keeping a local copy grants no future server access. Disconnecting explicitly removes local data.
+still remove records. Keeping a local copy grants no future server access. Disconnecting stops using that Tower's data and moves it to a private recovery folder; removing the identity deletes it.
 
 ## Build
 

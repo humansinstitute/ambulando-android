@@ -227,7 +227,7 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
                     "need-image" -> scope.launch {
                         val id = event.optString("objectId")
                         if (studio.otherstuff.ambulando.core.transport.isUUID(id)) {
-                            val cache = studio.otherstuff.ambulando.core.sync.FileCache(java.io.File(context.cacheDir, "AmbulandoFiles"))
+                            val cache = model.fileCache()
                             model.sync.downloadAttachment(c, w, id, cache)
                             repeat(60) {
                                 val file = withContext(Dispatchers.IO) { cache.attachment(w.id, id) }

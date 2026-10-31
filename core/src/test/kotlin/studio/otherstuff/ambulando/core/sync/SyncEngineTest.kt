@@ -143,6 +143,21 @@ class SyncEngineTest {
         engine.waitUntilIdle()
     }
 
+    @Test fun workQueuedAfterCancelAllUnderTheSameKeyStillRunsWhenTheCancelledPredecessorUnwindsLate() = test {
+        val engine = SyncEngine(maxConcurrent = 2, reservedForeground = 0)
+        val release = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        // The predecessor ignores cancellation until released (a transport that does not honour it).
+        engine.enqueue("resume") { started.complete(Unit); kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() } }
+        started.await()
+        engine.cancelAll()
+        val successor = async { runCatching { engine.perform("resume") { "validated" } } }
+        delay(30)
+        release.complete(Unit)
+        assertEquals("a job issued after the cancel is not the cancelled one", "validated", successor.await().getOrNull())
+        engine.waitUntilIdle()
+    }
+
     @Test fun statusFlowReportsRunningAndIdle() = test {
         val engine = SyncEngine(maxConcurrent = 1)
         val gate = CompletableDeferred<Unit>()

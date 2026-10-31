@@ -59,8 +59,10 @@ class SampleTower(
     clock: () -> Long = { System.currentTimeMillis() / 1000 },
     /** Simulated network latency per request, so loading and sending states are observable. */
     @Volatile var latencyMillis: Long = 0,
+    /** A second synthetic Tower (tests with several connections) answers at its own origin; the content is the same. */
+    originUrl: String = SampleHosts.ORIGIN,
 ) : HttpTransport {
-    val origin: TowerOrigin = TowerOrigin(SampleHosts.ORIGIN)
+    val origin: TowerOrigin = TowerOrigin(originUrl)
     val auth = SampleAuth(clock)
 
     private val lock = Any()
@@ -68,6 +70,7 @@ class SampleTower(
     private val tick = MutableStateFlow(0L)
     private var actor = ""
     private var offlineFlag = false
+    private var revoked: Set<String> = emptySet()
     private var failScopesFlag = false
     private var rejectNext = false
     private var scopeOrderConflictFlag = false
@@ -79,10 +82,10 @@ class SampleTower(
     val notifications = SampleNotifications(SampleIds.STUDIO, auth)
 
     /** Tasks, documents, files, storage, inbox and reactions of the Studio workspace. */
-    val work = SampleWorkTower(SampleIds.STUDIO, SampleHosts.ORIGIN, SampleHosts.OBJECTS, stateFile("sample-work.json"), auth)
+    val work = SampleWorkTower(SampleIds.STUDIO, originUrl, SampleHosts.OBJECTS, stateFile("sample-work.json"), auth)
 
     /** The Lab workspace has no tasks, documents or files (empty lists, not errors). */
-    val labWork = SampleWorkTower(SampleIds.LAB, SampleHosts.ORIGIN, SampleHosts.OBJECTS_LAB, stateFile("sample-work-lab.json"), auth)
+    val labWork = SampleWorkTower(SampleIds.LAB, originUrl, SampleHosts.OBJECTS_LAB, stateFile("sample-work-lab.json"), auth)
 
     /** Context Tree, canvases, agents, Toolbox and pins of the Studio workspace; the Lab workspace has none. */
     val surfaces = SampleSurfaceTower(SampleIds.STUDIO, stateFile("sample-surfaces.json"), auth)
@@ -126,6 +129,16 @@ class SampleTower(
     var scopeOrderConflict: Boolean
         get() = synchronized(lock) { scopeOrderConflictFlag }
         set(value) = synchronized(lock) { scopeOrderConflictFlag = value }
+
+    /** Bodies of every chat message of a workspace as this Tower holds them (tests check where a write landed). */
+    fun messageBodies(workspaceId: String): List<String> = synchronized(lock) {
+        allMessages().filter { it["workspace_id"] == workspaceId }.mapNotNull { it["body"] as? String }
+    }
+
+    /** Workspaces this identity lost membership in: absent from the list, and every request under them answers 403. */
+    var revokedWorkspaces: Set<String>
+        get() = synchronized(lock) { revoked }
+        set(value) { synchronized(lock) { revoked = value }; bump() }
 
     /** How often the workspace list was read (the "Store workspace list again" control re-runs discovery). */
     val workspaceListReads: Int get() = synchronized(lock) { workspaceListReadCount }
@@ -252,6 +265,12 @@ class SampleTower(
             is SampleAuth.Result.Valid -> result.npub
         }
         if (actorNpub != signer) actorNpub = signer
+        run {
+            val prefix = "/api/v4/flightdeck-pg/workspaces/"
+            if (url.path.startsWith(prefix) && url.path.removePrefix(prefix).substringBefore('/') in revokedWorkspaces) {
+                return errorReply(403, "forbidden")
+            }
+        }
         // Surface routes first: their ownership is exact (board versions live under `/files/:f/versions/:v/object`).
         val handled = notifications.handle(request) ?: boards.handle(request) ?: surfaces.handle(request) ?: labSurfaces.handle(request) ?: work.handle(request) ?: labWork.handle(request)
         if (handled != null) return boards.project(handled, request)
@@ -280,7 +299,9 @@ class SampleTower(
             if (method != "GET") return errorReply(404, "not_found")
             synchronized(lock) { workspaceListReadCount += 1 }
             return 200 to linkedMapOf(
-                "workspaces" to listOf(workspace(SampleIds.STUDIO, "Sample Studio"), workspace(SampleIds.LAB, "Sample Lab")), "next_cursor" to null,
+                "workspaces" to listOf(workspace(SampleIds.STUDIO, "Sample Studio"), workspace(SampleIds.LAB, "Sample Lab")).filter {
+                    ((it["identity"] as Map<*, *>)["workspace_id"]) !in revokedWorkspaces
+                }, "next_cursor" to null,
             )
         }
         if (!url.path.startsWith("$base/")) return errorReply(404, "not_found")

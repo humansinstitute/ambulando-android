@@ -127,7 +127,10 @@ class SqlConnection private constructor(private val conn: SQLiteConnection, val 
         val s = changesStatement ?: conn.prepare("SELECT changes()").also { changesStatement = it }
         s.reset()
         s.step()
-        return s.getLong(0).toInt()
+        val changed = s.getLong(0).toInt()
+        // A statement left mid-step would make VACUUM / ATTACH refuse with "statements in progress".
+        s.reset()
+        return changed
     }
 
     var userVersion: Int

@@ -50,7 +50,7 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
         override fun refreshCanvases(force: Boolean) { model.act { model.sync.refreshCanvases(c, w, force = force) } }
         override suspend fun createCanvas(title: String): Result<String> = runCatching {
             model.engine.perform("canvas-create:${w.id}", SyncPriority.USER) {
-                StoreCanvasEditBackend(model.store, model.identity, model.transport, c, w,
+                StoreCanvasEditBackend(model.store, model.identity, model.workspaceTransport, c, w,
                     { model.sync.refreshCanvases(c, w, force = true) }, { model.sync.refreshCanvas(c, w, it) }).editor().createCanvas(title).id
             }
         }

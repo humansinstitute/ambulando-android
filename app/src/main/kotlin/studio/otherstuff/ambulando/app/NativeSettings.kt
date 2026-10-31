@@ -24,7 +24,7 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
     var confirm by remember { mutableStateOf(false) }
     var remove by remember { mutableStateOf(false) }
     var profiles by remember { mutableStateOf(true) }
-    LaunchedEffect(model) { background = model.identity.backgroundReadEnabled(); profiles = studio.otherstuff.ambulando.core.profiles.ProfileSync.isEnabled(model.store) }
+    LaunchedEffect(model) { background = model.identity.backgroundReadEnabled(); profiles = studio.otherstuff.ambulando.core.profiles.ProfileSync.isEnabled(model.catalog) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = done) { Text("Done") }
         Text("Settings", style = MaterialTheme.typography.titleLarge)
@@ -37,18 +37,18 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
         TextButton(onClick = { model.clearDiagnostics() }) { Text("Clear diagnostics") }
         Text("Diagnostics stay on this device until you choose to share. The newest 300 entries are kept in private app storage until replaced or cleared. No keys, tokens, message text or user identifiers are included.", style = MaterialTheme.typography.bodySmall)
         NativeNotificationSettings(model)
-        Row { Text("Show Agents", Modifier.weight(1f)); Switch(model.showAgents, { model.showAgents = it; model.act { model.store.writer.setState("settings.agents", it.toString()) } }) }
-        Row { Text("Show Context", Modifier.weight(1f)); Switch(model.showContext, { model.showContext = it; model.act { model.store.writer.setState("settings.context", it.toString()) } }) }
+        Row { Text("Show Agents", Modifier.weight(1f)); Switch(model.showAgents, { model.showAgents = it; model.act { model.catalog.writer.setState("settings.agents", it.toString()) } }) }
+        Row { Text("Show Context", Modifier.weight(1f)); Switch(model.showContext, { model.showContext = it; model.act { model.catalog.writer.setState("settings.context", it.toString()) } }) }
         Text("Documents", style = MaterialTheme.typography.titleMedium)
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Open documents in", Modifier.weight(1f))
             listOf(false to "View", true to "Edit").forEach { (edit, label) ->
-                FilterChip(model.documentOpensInEdit == edit, { model.documentOpensInEdit = edit; model.act { model.store.writer.setState("settings.documentOpening", if (edit) "edit" else "view") } },
+                FilterChip(model.documentOpensInEdit == edit, { model.documentOpensInEdit = edit; model.act { model.catalog.writer.setState("settings.documentOpening", if (edit) "edit" else "view") } },
                     { Text(label) }, Modifier.padding(start = 8.dp).testTag("settings.documentOpening.$label"))
             }
         }
         Text("Choose how existing documents open. You can still switch between View and Edit inside a document.", style = MaterialTheme.typography.bodySmall)
-        AppearancePreference.entries.forEach { value -> TextButton(onClick = { model.appearance = value; model.act { model.store.writer.setState("settings.appearance", value.name) } }) { Text(value.name) } }
+        AppearancePreference.entries.forEach { value -> TextButton(onClick = { model.appearance = value; model.act { model.catalog.writer.setState("settings.appearance", value.name) } }) { Text(value.name) } }
         Row {
             Text("Background reads", Modifier.weight(1f))
             Switch(background, { on -> model.act {
@@ -61,13 +61,13 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
             } })
         }
         Text("Optional background reads use a GET-only credential. Android decides when refresh can run. Lock now revokes it.", style = MaterialTheme.typography.bodySmall)
-        Row { Text("Public Nostr profiles", Modifier.weight(1f)); Switch(profiles, { on -> model.act { model.profileSync.setEnabled(on, model.connection); profiles = on; if (on && !model.environment.isSample) model.connection?.let { c -> model.workspace?.let { model.profileSync.refresh(c, it.id, true) } } } }) }
+        Row { Text("Public Nostr profiles", Modifier.weight(1f)); Switch(profiles, { on -> profiles = on; model.setPublicProfiles(on) }) }
         TextButton(onClick = { remove = true }) { Text("Remove identity from this device") }
         TextButton(onClick = { model.lock(); done() }) { Text("Lock now") }
         TextButton(onClick = { confirm = true }) { Text("Disconnect and remove downloaded history") }
     }
     if (remove) AlertDialog(onDismissRequest = { remove = false }, title = { Text("Remove identity?") }, text = { Text("This deletes the local identity, history, drafts and unsent work. Keep your own backup before proceeding.") }, confirmButton = { TextButton(onClick = { model.removeIdentity(); done() }) { Text("Remove") } }, dismissButton = { TextButton(onClick = { remove = false }) { Text("Cancel") } })
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Disconnect this Tower?") }, text = { Text("Downloaded history, drafts and unsent work for this connection will be removed from this device.") }, confirmButton = {
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Disconnect this Tower?") }, text = { Text("This Tower's workspaces, drafts and unsent work are removed from the app and move to a private recovery folder it does not read. Removing the identity deletes that folder too.") }, confirmButton = {
         TextButton(onClick = { model.disconnect(); confirm = false; done() }) { Text("Disconnect") }
     }, dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } })
 }

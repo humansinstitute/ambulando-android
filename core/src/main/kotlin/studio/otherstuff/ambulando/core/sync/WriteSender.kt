@@ -111,7 +111,7 @@ sealed class WriteOutcome {
  */
 class WriteSender(
     val store: LocalStore,
-    val engine: SyncEngine,
+    val engine: SyncScheduler,
     val identity: IdentityService,
     val transport: HttpTransport,
     /** Directory holding staged upload bytes until their write is accepted. */
@@ -119,6 +119,8 @@ class WriteSender(
     /** Out-of-process transfers for presigned uploads (null: uploads run in-process). */
     val transfers: ObjectTransfers? = null,
     private val random: () -> Double = { Math.random() },
+    /** The one workspace this queue belongs to (a runtime's): a request made for another is refused instead of queued here. */
+    private val boundary: studio.otherstuff.ambulando.core.workspaces.WorkspaceBoundary? = null,
 ) {
     /**
      * Called when Tower accepted a "create and link" document, before the write is retired: whoever owns the source document puts
@@ -169,6 +171,8 @@ class WriteSender(
     /** Queues a write for this connection and workspace (never the currently selected one) and starts sending. */
     suspend fun submit(intent: WriteIntent, connection: ConnectionRecord, workspace: WorkspaceRecord, id: String = newRequestId()): WriteItem {
         if (workspace.id.isEmpty() || connection.id.isEmpty()) throw TowerError.UnsafePath
+        // A screen that kept its own workspace across a switch must never queue the change in the workspace now in front.
+        boundary?.requireOwns(connection, workspace)
         if (UploadToken.containsAny(intent.payload.toString())) throw ComposerUploadException(ComposerUploadError.UNRESOLVED)
         val item = store.writer.enqueueWrite(connection, workspace.id, workspace.appNpub, intent, id)
         kick(connection)

@@ -30,7 +30,7 @@ import java.util.UUID
 @Composable internal fun NativeFiles(model: AppModel, fileId: String? = null) {
     val w = model.workspace ?: return; val c = model.connection ?: return
     val context = LocalContext.current
-    val cache = remember { FileCache(File(context.cacheDir, "AmbulandoFiles")) }
+    val cache = remember(model.activeBoundaryId) { model.fileCache() }
     var uploadChannel by remember { mutableStateOf<String?>(null) }
     var choosingChannel by remember { mutableStateOf(false) }
     val pending by remember(c.id, w.id) { model.store.liveQuery({ it.table == StoreTable.WRITES }) { model.store.reader.workspaceWrites(c.id, w.id).filter { it.kind == WriteKind.FILE_UPLOAD } } }.collectAsState(emptyList())

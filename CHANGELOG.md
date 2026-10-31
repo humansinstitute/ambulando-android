@@ -1,3 +1,20 @@
+# 0.6.0 — Android build 17
+
+Several workspaces, on one Tower or more, can now be enabled together. Each has its own storage partition, drafts, outbox,
+cursors and sync, so identical workspace ids on two Towers (or identities) can never mix; a shared, bounded scheduler rotates
+between them. A chooser grouped by Tower enables or pauses workspaces, sets a colour, and adds another Tower with the same
+unlocked identity. The sidebar stacks the enabled workspaces under shared Unread & Active rows that keep their source
+workspace; the composer says which workspace it is working in; the header takes a faint tint. Each workspace's section,
+open records, context, drafts and queued sends are remembered separately across switching, locking and process death.
+Pausing keeps everything and stops only that workspace; resuming revalidates access before anything queued is sent; losing
+access closes writes and keeps what was already received, readable and labelled. Disconnecting a Tower moves its partitions to a
+private recovery folder the app does not read. The first run after the upgrade keeps the remembered workspace (plus any with
+unsent work) enabled. Before release, runtime lifecycle races were exercised with held requests: a workspace closed by
+Disconnect can no longer be restarted by a late enable, and a workspace paused and resumed quickly is no longer left
+unvalidated by a cancelled predecessor. Not in this build: workspace/group/grant administration and Android push.
+Tested against Tower stand-ins and a synthetic emulator account, not a live Tower, a physical phone or real accounts;
+see docs/multi-workspace-storage.md and docs/parity-matrix.md.
+
 # 0.5.1 — Android build 16
 
 Tasks. A subtask list that was once complete no longer keeps showing an exact count while its refresh is unfinished. If a
