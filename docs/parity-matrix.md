@@ -71,3 +71,20 @@ no fixture was sent to a real channel. Broker-authorized host reads verify some 
 workspace-wide discovery route is outside this worker's authority. Authenticated live in-app member workflows, real
 device vendor WebView differences, multi-device conflicts and OS process/power-loss transfer behavior require field
 review. Those are verification limits, not evidence of tested live parity. See the release notes for the exact build.
+
+## Build 13 (0.3.0) validation record
+
+- Source: core JVM suite 533 tests (0 failures, 1 optional live-contract skip), app JVM suite 29, editor suite 11 tests,
+  `lintDebug` clean.
+- Dedicated Android emulator (API 36, synthetic sample data, no real identity or Tower): the connected suite ran 34 tests;
+  33 passed and one (the live HTTPS download check) was skipped because it needs network reachability. The new
+  `ParityFlowTest` covers wire-name reactions, edit, thread rename, subtask creation and parent navigation, grouped search,
+  default Edit mode (once per visit), document move, and saved-screen restore after a new start. This run also caught and
+  fixed two defects before release (a crash saving screen state inside Compose's read-only snapshot, and a comment field
+  that expanded to fill its row).
+- Update path: the signed 0.2.5 (12) APK was installed on the emulator and the signed 0.3.0 (13) APK installed over it with
+  `adb install -r`; the install time stayed the same, the version became 13 and the app started with an empty crash log. No
+  authenticated account or physical phone was used, so upgrade retention of a real account's data is not shown by this run.
+- Not exercised against a live Tower: group and channel-grant response shapes, thread rename, document move and subtask
+  relationship reads were exercised against the in-process sample Tower and fakes only.
+
