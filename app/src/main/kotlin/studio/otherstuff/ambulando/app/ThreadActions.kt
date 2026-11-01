@@ -77,6 +77,10 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
 @Composable internal fun MessageMenu(
     model: AppModel, message: MessageRecord?, rootId: String?, reference: String?, autopilot: MessageRecord?,
     enabled: Boolean, prefix: String, label: String, conversationThreadId: String? = message?.threadId, onRename: (() -> Unit)? = null,
+    /** Edit of the author's own message (shown only when given). */
+    onEdit: (() -> Unit)? = null,
+    /** Delete handled by the screen (its dialog outlives a row that scrolls away); otherwise the menu confirms itself. */
+    onDelete: (() -> Unit)? = null,
 ) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
@@ -122,8 +126,10 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                 modifier = Modifier.testTag("$prefix.menu.ref"))
             if (onRename != null) DropdownMenuItem({ Text("Rename thread") }, enabled = writable, onClick = { expanded = false; onRename() },
                 modifier = Modifier.testTag("$prefix.menu.rename"))
+            if (onEdit != null) DropdownMenuItem({ Text("Edit message") }, enabled = writable,
+                onClick = { expanded = false; onEdit() }, modifier = Modifier.testTag("$prefix.menu.edit"))
             if (message != null && !message.deleted && message.senderNpub == c.signerNpub) DropdownMenuItem({ Text("Delete message") }, enabled = writable,
-                onClick = { expanded = false; deleting = true }, modifier = Modifier.testTag("$prefix.menu.delete"))
+                onClick = { expanded = false; if (onDelete != null) onDelete() else deleting = true }, modifier = Modifier.testTag("$prefix.menu.delete"))
         }
     }
     if (gettingItDone && message != null && rootId != null) GetItDoneDialog(model, message, rootId, conversationThreadId, writable) { gettingItDone = false }

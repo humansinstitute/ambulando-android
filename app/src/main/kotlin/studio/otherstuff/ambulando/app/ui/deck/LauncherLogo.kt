@@ -58,6 +58,6 @@ fun LauncherLogo(sources: List<LauncherLogoSource>, title: String, size: Dp = 38
     Box(modifier.size(size).clip(CircleShape).border(2.dp, Amb.colors.border, CircleShape)) {
         val loaded = image
         if (loaded != null) Image(loaded, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size).testTag("launcher.logo"))
-        else InitialsAvatar(title, size)
+        else InitialsAvatar(title, size, container = Amb.colors.muted, content = Amb.colors.mutedForeground)
     }
 }

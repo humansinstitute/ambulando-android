@@ -8,6 +8,14 @@ import androidx.compose.foundation.content.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.semantics.contentDescription
+import studio.otherstuff.ambulando.app.ui.chat.ConversationCard
+import studio.otherstuff.ambulando.app.ui.chat.DaySeparator
+import studio.otherstuff.ambulando.app.ui.chat.MessageRowLayout
+import studio.otherstuff.ambulando.app.ui.chat.RepliesBar
+import studio.otherstuff.ambulando.app.ui.chat.readingWidth
+import studio.otherstuff.ambulando.app.ui.nav.PersonAvatar
+import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import studio.otherstuff.ambulando.app.media.readBounded
@@ -26,13 +34,19 @@ import studio.otherstuff.ambulando.core.docs.*
 import studio.otherstuff.ambulando.core.transport.*
 import studio.otherstuff.ambulando.core.deck.DeckActivity
 
+/**
+ * Deck's New thread: the channel's own composer with no conversation above it (iOS `DeckThreadComposer` reuses `Composer`). The
+ * channel is the one the member chose, not the current context; [onEnqueued] gets the request id of exactly the send made here.
+ */
+internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Unit)
+
 /** Only local database reads occur in these native surfaces. */
-@Composable internal fun ConnectedChat(model: AppModel, threadId: String?) {
+@Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
     val threadChannel by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.thread(w.id, it)?.channelId } } }.collectAsState(null)
     LaunchedEffect(w.id, threadId) { if (threadId != null) model.sync.ensureThread(c, w, threadId) }
-    val channel = if (threadId != null) threadChannel else model.context.channelId
+    val channel = if (threadId != null) threadChannel else composeOnly?.channelId ?: model.context.channelId
     if (channel == null) {
         if (threadId != null) { Text("Opening conversation…"); return }
         LazyColumn { items(model.channels.filter { model.context.scopeId == null || it.scopeId == model.context.scopeId }, key = { it.id }) { row ->
@@ -48,6 +62,8 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
     } }.collectAsState(null)
     val posts = feed ?: emptyList()
     val messages = posts.map { it.message }
+    val people by remember(c.id, w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == StoreTable.PROFILES }) { model.store.reader.people(c.id, w.id) } }.collectAsState(null)
+    val dayStarts = remember(posts) { studio.otherstuff.ambulando.app.ui.chat.ChatDay.breaks(posts, { it.id }, { it.message.createdAt }).first }
     val pending by remember(target) { model.store.liveQuery({ it.table == StoreTable.OUTBOX }) { model.store.reader.outbox(target) } }.collectAsState(emptyList())
     val field = remember(target) { ComposerField() }
     var text by field::text
@@ -120,19 +136,25 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
         ChatFollowsNewest(listState, target, feed != null, posts.map { it.id } + pending.map { it.id }, model.chatPositions[target.draftKey], sent) {
             model.chatPositions[target.draftKey] = it
         }
-        if (feed == null) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        if (composeOnly != null) Spacer(Modifier.weight(1f))
+        else if (feed == null) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
             Text("Loading conversation…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.loading"))
         } else if (posts.isEmpty() && pending.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
             Text(if (threadId == null) "No messages yet" else "No replies yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.empty"))
-        } else LazyColumn(Modifier.weight(1f).testTag("chat.messages"), state = listState, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.TopCenter) {
+          LazyColumn(Modifier.readingWidth().fillMaxHeight().testTag("chat.messages"), state = listState, contentPadding = PaddingValues(vertical = 8.dp)) {
             items(posts, key = { it.id }) { post ->
                 val message = post.message
-                Column(Modifier.fillMaxWidth().testTag("chat.message.${message.id}").clickable(enabled = threadId == null && message.threadId != null) {
+                val sender = people?.person(message.senderNpub, message.senderLabel)
+                    ?: studio.otherstuff.ambulando.core.profiles.PersonDisplay.unknown(message.senderNpub ?: "")
+                Column {
+                dayStarts[post.id]?.let { DaySeparator(it.label) }
+                ConversationCard(Modifier.testTag("chat.message.${message.id}").clickable(enabled = threadId == null && message.threadId != null, onClickLabel = "Open conversation") {
                     message.threadId?.let { services.open(WorkRoute.Thread(w.id, channel, it)); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT }
                 }) {
-                    Text(message.createdAt.take(10), style = MaterialTheme.typography.labelSmall)
-                    Text(message.senderLabel ?: message.senderNpub?.take(18) ?: "Member", style = MaterialTheme.typography.labelSmall)
-                    if (message.deleted) Text("Message deleted") else {
+                    Column {
+                        MessageRowLayout(sender, studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(message.createdAt), avatar = { PersonAvatar(sender) }) {
+                    if (message.deleted) Text("Message deleted", fontSize = AmbType.footnote, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground) else {
                         if (message.body.isNotBlank()) RichBlocks(DocumentRender.markdownBlocks(message.body), actions = richActions)
                         MessageAttachment.from(message.raw).filter { it.isText }.forEach { attachment ->
                             val preview by produceState<String?>(null, c.id, c.origin, w.id, attachment.storageObjectId) {
@@ -154,25 +176,35 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                                 modifier = Modifier.testTag("chat.file.${attachment.storageObjectId}")) { Text(attachment.filename) }
                         }
                     }
-                    if (threadId == null && message.threadId != null) ThreadSummaryRow(post) {
-                        services.open(WorkRoute.Thread(w.id, channel, message.threadId!!)); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT
+                        }
+                        if (threadId == null && message.threadId != null && post.replyCount > 0) RepliesBar(post.replyCount, post.lastReplyAt, Modifier.testTag("chat.thread.${message.threadId}"))
+                        if (!message.deleted) ChatMessageReactions(model, message, !removed, Modifier.padding(start = studio.otherstuff.ambulando.app.ui.chat.MessageTextInset, end = 16.dp))
                     }
-                    ChatMessageActions(model, message, !removed, onEdit = { editing = it }, onDelete = { deleting = it })
-                    message.threadId?.let { RecordPin(model, studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.THREAD, it, !removed) }
+                    ChatMessageControls(model, message, !removed, onEdit = { editing = it }, onDelete = { deleting = it },
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).offset(x = (-4).dp, y = (-4).dp))
+                }
                 }
             }
             items(pending, key = { it.id }) { item ->
-                if (item.body.isNotBlank()) Text(item.body)
-                item.attachments.filter { it.isText }.forEach { a ->
-                    TextAttachmentCard(a.filename, a.sizeBytes, a.text?.lines, null, if (a.complete) "Uploaded" else "Waiting to upload", "chat.pending.attachment.${a.id}", onOpen = null)
-                }
-                Text(item.lastError ?: item.state.wire, style = MaterialTheme.typography.labelSmall)
-                if (item.state == OutboxState.FAILED || item.state == OutboxState.RETRYING) {
-                    TextButton(onClick = { model.act { model.outbox.retry(item.id, c) } }) { Text("Retry") }
-                    TextButton(onClick = { model.act { model.outbox.discard(item.id, true); text = model.store.reader.draft(target)?.text ?: text } }) { Text("Edit draft") }
-                    TextButton(onClick = { model.act { model.outbox.discard(item.id, false) } }) { Text("Discard") }
+                val me = people?.person(c.signerNpub) ?: studio.otherstuff.ambulando.core.profiles.PersonDisplay.unknown(c.signerNpub ?: "")
+                ConversationCard {
+                  MessageRowLayout(me, "", avatar = { PersonAvatar(me) }) {
+                    if (item.body.isNotBlank()) Text(item.body, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground)
+                    item.attachments.filter { it.isText }.forEach { a ->
+                        TextAttachmentCard(a.filename, a.sizeBytes, a.text?.lines, null, if (a.complete) "Uploaded" else "Waiting to upload", "chat.pending.attachment.${a.id}", onOpen = null)
+                    }
+                    Text(item.lastError ?: item.state.wire, fontSize = AmbType.caption, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground)
+                    if (item.state == OutboxState.FAILED || item.state == OutboxState.RETRYING) {
+                        androidx.compose.foundation.layout.FlowRow {
+                            TextButton(onClick = { model.act { model.outbox.retry(item.id, c) } }) { Text("Retry") }
+                            TextButton(onClick = { model.act { model.outbox.discard(item.id, true); text = model.store.reader.draft(target)?.text ?: text } }) { Text("Edit draft") }
+                            TextButton(onClick = { model.act { model.outbox.discard(item.id, false) } }) { Text("Discard") }
+                        }
+                    }
+                  }
                 }
             }
+          }
         }
         if (removed) Text("No longer available to you", Modifier.padding(12.dp))
         uploadRows.filter { it.target == target && it.markdown == null }.forEach { upload ->
@@ -209,13 +241,17 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
         val pills = remember(mentions, amb) {
             studio.otherstuff.ambulando.app.ui.chat.MentionPills(mentions, androidx.compose.ui.text.SpanStyle(color = amb.primary, background = amb.muted, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
         }
-        Row(Modifier.fillMaxWidth().imePadding().clickable(enabled = composing) { composerFocus.requestFocus(); keyboard?.show() }.testTag("chat.composer.area").padding(start = 2.dp, end = 6.dp, top = 4.dp, bottom = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
+        Column(Modifier.fillMaxWidth().background(amb.card).imePadding()) {
+        HorizontalDivider(thickness = 1.dp, color = amb.border)
+        Row(Modifier.readingWidth().align(androidx.compose.ui.Alignment.CenterHorizontally).clickable(enabled = composing) { composerFocus.requestFocus(); keyboard?.show() }.testTag("chat.composer.area").padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onPick = { picker.launch(arrayOf("image/*", "*/*")) }, onPaste = {
                 val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
                 clipboard.primaryClip?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::pasteUri) }
             }, onMention = { field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); model.saveDraft(target, text, mentions) })
-            OutlinedTextField(field.value, { value ->
-                if (value.text == field.value.text) { field.value = value; return@OutlinedTextField }
+            val channelName = model.channels.firstOrNull { it.id == channel }?.name
+            Column(Modifier.weight(1f)) {
+            androidx.compose.foundation.text.BasicTextField(field.value, { value ->
+                if (value.text == field.value.text) { field.value = value; return@BasicTextField }
                 var decision = ComposerPaste.decide(field.value.text, value.text, selectionStart = field.value.selection.start, selectionEnd = field.value.selection.end)
                 // A short paste that would pass the cap looks like typing; the clipboard tells them apart (read only then).
                 if (decision == ComposerPaste.Decision.Reject) {
@@ -229,14 +265,23 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
                     // A big paste: the field keeps its text and selection; the pasted text becomes a staged file.
                     is ComposerPaste.Decision.Attach -> if (ready) model.addPastedText(target, decision.text) { justAdded = it }
                 }
-            }, enabled = composing, maxLines = 8, placeholder = { Text(if (threadId == null) "Message" else "Reply") },
-                visualTransformation = pills, shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-                supportingText = if (PastedTextPolicy.showsCounter(text)) ({ Text("${PastedTextPolicy.remaining(text)} characters left", modifier = Modifier.testTag("chat.counter")) }) else null,
-                modifier = Modifier.weight(1f).then(Modifier.focusRequester(composerFocus)).testTag("chat.composer").contentReceiver(receiver))
+            }, enabled = composing, maxLines = 8, visualTransformation = pills,
+                textStyle = androidx.compose.ui.text.TextStyle(color = amb.foreground, fontSize = AmbType.body),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(amb.primary),
+                decorationBox = { inner ->
+                    Box(Modifier.fillMaxWidth().heightIn(min = studio.otherstuff.ambulando.app.ui.chat.ComposerMinHeight).background(amb.muted, androidx.compose.foundation.shape.RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 10.dp), contentAlignment = androidx.compose.ui.Alignment.TopStart) {
+                        if (text.isEmpty()) Text(if (composeOnly != null) "Start a new thread…" else if (threadId == null) channelName?.let { "Message #$it" } ?: "Message" else "Reply", fontSize = AmbType.body, color = amb.mutedForeground)
+                        inner()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().then(Modifier.focusRequester(composerFocus)).testTag("chat.composer").contentReceiver(receiver))
+            if (PastedTextPolicy.showsCounter(text)) Text("${PastedTextPolicy.remaining(text)} characters left", fontSize = AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(start = 12.dp, top = 2.dp).testTag("chat.counter"))
+            }
             studio.otherstuff.ambulando.app.ui.chat.SendButton(composing && (text.isNotBlank() || draftAttachments.any { it.isText }) && !UploadToken.containsAny(text)) {
                 val body = text
-                model.send(target, body, c, w, mentions) { if (text == body) text = ""; sent++ }
+                model.send(target, body, c, w, mentions, enqueued = { composeOnly?.onEnqueued?.invoke(it) }) { if (text == body) text = ""; sent++ }
             }
+        }
         }
         openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
         ChatMessageDialogs(model, editing.takeIf { !removed }, deleting.takeIf { !removed }, onEditDone = { editing = null }, onDeleteDone = { deleting = null })
@@ -370,22 +415,6 @@ data class ChatPosition(val key: Any?, val offset: Int, val follow: Boolean)
 
 /** Scrolling to the last row with a large offset lands on the end of the list (the offset is clamped). */
 private const val FOLLOW_OFFSET = 1_000_000
-
-/** A channel post's thread: reply count and latest activity; opens the conversation. */
-@Composable internal fun ThreadSummaryRow(post: FeedPost, onOpen: () -> Unit) {
-    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
-    Row(
-        Modifier.fillMaxWidth().padding(top = 4.dp).clickable(onClickLabel = "Open conversation", onClick = onOpen)
-            .background(amb.muted, androidx.compose.foundation.shape.RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp)
-            .testTag("chat.thread.${post.message.threadId}"),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-    ) {
-        val replies = if (post.replyCount == 1) "1 reply" else "${post.replyCount} replies"
-        val last = post.lastReplyAt?.let { " · last ${studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(it)}" }.orEmpty()
-        Text(replies + last, style = MaterialTheme.typography.labelMedium, color = amb.primary, modifier = Modifier.weight(1f))
-        Text("Open", style = MaterialTheme.typography.labelMedium, color = amb.primary)
-    }
-}
 
 /** An upload's state in words. */
 internal fun uploadPhase(phase: ComposerUpload.Phase): String = when (phase) {

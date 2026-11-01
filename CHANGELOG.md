@@ -1,3 +1,20 @@
+# 0.8.0 — Android build 20
+
+Visual and tablet parity with the iPhone, iPad and Mac apps.
+
+- **Chat and Deck** are drawn from the Swift components: message cards with avatar, name, time and sync dot, the overflow menu, reaction pills,
+  reply bar and day separators; a filled composer; tinted Deck inbox cards with kind icon, kicker, time and unread edge, icon filters,
+  search and Hello app cards. Wide windows keep an 860dp reading width.
+- **Tablet shell**: a window 760dp or wider keeps the sections and the Home / scopes / channels list in a permanent sidebar (the menu button
+  folds it away); narrower windows keep the drawer and bottom bar. Resizing keeps each section's state.
+- **New thread** in Deck (floating + and the Inbox +): pick a channel (preselected from the context), write the first message in the channel's
+  own composer and the thread Tower creates for exactly that send opens; a replayed request never duplicates it, and rotation keeps it.
+- The composer starts two lines tall with text at the top; Canvas and Pinned rows follow the Swift rows.
+- Typing in the text-attachment editor no longer re-splits the page being edited under the keyboard.
+
+Not in this build: Android OS push (Tower has no Android registration contract). Tested with unit tests and a synthetic emulator
+account, not a live Tower, a physical phone or real accounts; a few emulator tests still fail intermittently on this host (docs/parity-matrix.md).
+
 # 0.7.1 — Android build 19
 
 Stabilisation of chat, document saving and the text editor after 0.7.0.

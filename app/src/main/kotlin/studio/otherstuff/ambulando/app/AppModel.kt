@@ -226,10 +226,12 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         composerCommands.trySend { ownerOf(target).store.writer.saveDraft(target, Draft(text, mentions)) }
     }
     /** The composer's staged text attachments are read in the same ordered step, so none added just before Send is missed. */
-    fun send(target: ChatTarget, text: String, connection: ConnectionRecord, workspace: WorkspaceRecord, mentions: List<Mention> = emptyList(), accepted: () -> Unit) {
+    fun send(target: ChatTarget, text: String, connection: ConnectionRecord, workspace: WorkspaceRecord, mentions: List<Mention> = emptyList(), enqueued: (String) -> Unit = {}, accepted: () -> Unit) {
         composerCommands.trySend {
             val owner = runtimeMap.values.firstOrNull { it.boundary == WorkspaceBoundary.of(connection, workspace) } ?: error("That workspace is not open on this device")
-            owner.outbox.send(text, mentions, target, connection, workspace, owner.store.reader.draft(target)?.attachments ?: emptyList()); accepted()
+            val item = owner.outbox.send(text, mentions, target, connection, workspace, owner.store.reader.draft(target)?.attachments ?: emptyList()); accepted()
+            // The outbox row's id is the request id Tower replays by: the New thread composer follows exactly this send.
+            item?.let { enqueued(it.id) }
         }
     }
     /** Pasted text becomes a staged `.txt` attachment (ordered with draft saves and sends). */

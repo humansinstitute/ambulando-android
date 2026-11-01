@@ -437,6 +437,11 @@ internal fun SqlConnection.messageRow(workspaceId: String, id: String): MessageR
 
 suspend fun StoreReader.message(workspaceId: String, id: String): MessageRecord? = read { messageRow(workspaceId, id) }
 
+/** Exactly the acknowledged send (its `client_request_id`), even while other messages arrive (iOS `sentMessage`). */
+suspend fun StoreReader.sentMessage(workspaceId: String, clientRequestId: String): MessageRecord? = read {
+    first("SELECT ${Rows.MESSAGE_COLUMNS} FROM messages WHERE workspace_id = ? AND client_request_id = ? AND deleted = 0 LIMIT 1", workspaceId, clientRequestId) { Rows.message(it, workspaceId) }
+}
+
 internal fun SqlConnection.threadRow(workspaceId: String, id: String): ThreadRecord? = first(
     "SELECT id, channel_id, source_message_id, title, latest, archived, deleted, row_version, updated_at, raw, access_removed FROM threads WHERE workspace_id = ? AND id = ?",
     workspaceId, id,

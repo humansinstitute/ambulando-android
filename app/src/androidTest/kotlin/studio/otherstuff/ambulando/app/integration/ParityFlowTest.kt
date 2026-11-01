@@ -30,7 +30,7 @@ class ParityFlowTest {
             val model = app.activeModel!!
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
-            try { block(model) } finally {
+            try { captureOnFailure(compose, model, "parity") { block(model) } } finally {
                 // The model and the sample store outlive one test: leave neither the editor nor the Edit default behind.
                 compose.runOnIdle { model.editorDoc = null; model.documentOpensInEdit = false; model.autoEditedDoc = null }
                 runBlocking { model.catalog.writer.setState("settings.documentOpening", "view") }
@@ -61,7 +61,8 @@ class ParityFlowTest {
         compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("reaction.heart") and inMessage).fetchSemanticsNodes().isNotEmpty() }
 
         // Edit through the dialog; the body changes and nothing else about the message does.
-        compose.onNodeWithTag("message.edit.${root.id}").performClick()
+        compose.onNodeWithTag("message.${root.id}.actions").performClick()
+        compose.onNodeWithTag("message.${root.id}.menu.edit").performClick()
         // The edit dialog is its own window: wait for it to be composed before typing into it.
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.field").fetchSemanticsNodes().isNotEmpty() }
         val edited = "$text (edited)"
@@ -70,8 +71,8 @@ class ParityFlowTest {
         compose.waitUntil(20_000) { runBlocking { model.store.reader.message(SampleIds.STUDIO, root.id)?.body == edited } }
 
         // Rename the conversation: the typed route answers and the stored title follows.
-        compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.thread.${root.threadId}"))
-        compose.onNodeWithTag("chat.thread.${root.threadId}").performClick()
+        compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
+        compose.onNodeWithTag("chat.message.${root.id}").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("thread.actions").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("thread.actions").performClick()
         compose.onNodeWithTag("thread.menu.rename").performClick()
@@ -90,12 +91,13 @@ class ParityFlowTest {
         compose.waitUntil(20_000) { runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).any { it.message.body == text } } }
         val root = runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).first { it.message.body == text }.message }
         compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
-        compose.onNodeWithTag("message.edit.${root.id}").performClick()
+        compose.onNodeWithTag("message.${root.id}.actions").performClick()
+        compose.onNodeWithTag("message.${root.id}.menu.edit").performClick()
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.field").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("chat.edit.field").performTextReplacement("$text (half edited)")
         // The row is composed only while it is near the viewport: scroll to the oldest message and it is gone.
         compose.onNodeWithTag("chat.messages").performScrollToIndex(0)
-        compose.waitUntil(20_000) { compose.onAllNodesWithTag("message.edit.${root.id}").fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("message.${root.id}.actions").fetchSemanticsNodes().isEmpty() }
         compose.waitForIdle()
         compose.onNodeWithTag("chat.edit.field").assertExists()
         compose.onNodeWithTag("chat.edit.save").performClick()

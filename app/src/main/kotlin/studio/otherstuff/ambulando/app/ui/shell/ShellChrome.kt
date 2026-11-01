@@ -119,7 +119,7 @@ fun SectionBar(sections: List<AppSection>, current: AppSection, onSelect: (AppSe
 fun WorkspaceAvatar(label: String, size: androidx.compose.ui.unit.Dp = 26.dp) {
     val amb = Amb.colors
     Box(Modifier.size(size).background(amb.primary, RoundedCornerShape(size * 0.25f)), contentAlignment = Alignment.Center) {
-        Text(label.trim().firstOrNull()?.uppercase() ?: "A", color = amb.primaryForeground, fontWeight = FontWeight.SemiBold, fontSize = (size.value * 0.5f).sp)
+        Text(label.trim().firstOrNull()?.uppercase() ?: "A", color = amb.primaryForeground, fontWeight = FontWeight.SemiBold, fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { (size * 0.5f).toSp() })
     }
 }
 
@@ -184,11 +184,11 @@ private fun describe(scope: String?, channel: String?): String = when {
 
 /** Initials avatar used when no picture is available (sol `getInitials`: first letter of each word, up to two). */
 @Composable
-fun InitialsAvatar(name: String, size: androidx.compose.ui.unit.Dp) {
+fun InitialsAvatar(name: String, size: androidx.compose.ui.unit.Dp, container: androidx.compose.ui.graphics.Color? = null, content: androidx.compose.ui.graphics.Color? = null) {
     val amb = Amb.colors
-    val initials = name.split(Regex("\\s+")).filter { it.isNotEmpty() }.take(2).joinToString("") { it.first().uppercase() }.ifEmpty { "?" }
-    Box(Modifier.size(size).background(amb.primary, CircleShape), contentAlignment = Alignment.Center) {
-        Text(initials, color = amb.primaryForeground, fontSize = (size.value * 0.4f).sp, fontWeight = FontWeight.SemiBold)
+    val initials = studio.otherstuff.ambulando.core.profiles.PersonInitials.of(name)
+    Box(Modifier.size(size).background(container ?: amb.primary, CircleShape), contentAlignment = Alignment.Center) {
+        Text(initials, color = content ?: amb.primaryForeground, fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { (size * 0.4f).toSp() }, fontWeight = FontWeight.SemiBold)
     }
 }
 

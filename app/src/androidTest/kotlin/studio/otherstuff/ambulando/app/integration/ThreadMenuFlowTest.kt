@@ -39,8 +39,8 @@ class ThreadMenuFlowTest {
             compose.onNodeWithTag("chat.send").performClick()
             compose.waitUntil(20_000) { runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).any { it.message.body == text } } }
             val root = runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).first { it.message.body == text }.message }
-            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.thread.${root.threadId}"))
-            compose.onNodeWithTag("chat.thread.${root.threadId}").performClick()
+            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
+            compose.onNodeWithTag("chat.message.${root.id}").performClick()
             compose.waitUntil(20_000) { compose.onAllNodesWithTag("thread.actions").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("thread.actions").performClick()
             compose.onNodeWithTag("thread.menu.ref").assertIsDisplayed()
@@ -73,8 +73,8 @@ class ThreadMenuFlowTest {
             // Reopening retains the thread and draft, then an own root can be deleted only after confirmation.
             compose.onNodeWithTag("chat.composer").performTextReplacement("Retained thread draft")
             compose.onNodeWithTag("thread.close").performClick()
-            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.thread.${root.threadId}"))
-            compose.onNodeWithTag("chat.thread.${root.threadId}").performClick()
+            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
+            compose.onNodeWithTag("chat.message.${root.id}").performClick()
             compose.waitUntil(10_000) { compose.onAllNodesWithText("Retained thread draft").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("thread.actions").performClick()
             compose.onNodeWithTag("thread.menu.delete").performClick()

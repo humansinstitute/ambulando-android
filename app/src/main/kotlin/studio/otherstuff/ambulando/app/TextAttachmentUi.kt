@@ -13,6 +13,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -86,7 +89,16 @@ import studio.otherstuff.ambulando.core.transport.MessageAttachment
     fun markDirty() { dirty = true }
     fun markSaved() { dirty = false }
 
-    /** Applies an edit of one chunk. A chunk that grows large (a big paste) is split again, never held whole. */
+    /** Bumped whenever an edit had to be re-split under the field, so the field starts again from the text the page now holds. */
+    var rewrites by mutableIntStateOf(0); private set
+    /** Where the caret goes on the page the editor moves to after a re-split (a local offset), read once by that page. */
+    var caretHint: Int? = null
+
+    /**
+     * Applies an edit of one chunk. The page being edited may grow without being split, so the text field's own text is never
+     * rewritten under the keyboard while a person types. Only a paste past [EDIT_CAP] or growth past [HARD_CAP] is split, here;
+     * [normalize] restores bounded pages when the editor is left.
+     */
     fun update(index: Int, value: String) {
         val old = chunks[index]
         fun boundary(left: String?, right: String?) = if (left?.endsWith("\r") == true && right?.startsWith("\n") == true) 1 else 0
@@ -94,17 +106,42 @@ import studio.otherstuff.ambulando.core.transport.MessageAttachment
         bytes += PastedTextPolicy.utf8Bytes(value) - PastedTextPolicy.utf8Bytes(old)
         breaks += breaksIn(value) - breaksIn(old)
         dirty = true
-        val parts = if (value.length > TextChunks.DEFAULT_UNITS) TextChunks.split(value) else listOf(value)
+        // Typing and composing add a few characters at a time and are never split under the keyboard; a paste-sized edit that takes
+        // the page past the cap is, and so is a page that has grown past the hard limit.
+        val splitNow = value.length > HARD_CAP || (value.length > EDIT_CAP && value.length - old.length > PASTE_UNITS)
+        val parts = if (splitNow) TextChunks.split(value) else listOf(value)
         if (parts.size > 1) {
             chunks[index] = parts[0]
             chunks.addAll(index + 1, parts.drop(1))
+            rewrites++
         } else chunks[index] = value
         val inserted = parts.size
-        joinedCrLf += boundary(chunks.getOrNull(index - 1), chunks[index]) +
+        joinedCrLf += parts.zipWithNext().sumOf { (l, r) -> boundary(l, r) } +
+            boundary(chunks.getOrNull(index - 1), chunks[index]) +
             boundary(chunks[index + inserted - 1], chunks.getOrNull(index + inserted))
     }
 
+    /** Splits every page that grew past the page size, so the reader and the next edit see bounded pages. Text is unchanged. */
+    fun normalize() {
+        var i = chunks.size - 1
+        while (i >= 0) {
+            if (chunks[i].length > TextChunks.DEFAULT_UNITS) {
+                val parts = TextChunks.split(chunks[i])
+                chunks[i] = parts[0]
+                chunks.addAll(i + 1, parts.drop(1))
+            }
+            i--
+        }
+        joinedCrLf = chunks.zipWithNext().count { (a, b) -> a.endsWith("\r") && b.startsWith("\n") }
+    }
+
     companion object {
+        /** The most a page may hold while it is being edited: three pages' worth. */
+        const val EDIT_CAP = 3 * TextChunks.DEFAULT_UNITS
+        /** An edit that adds more than this at once is a paste, not typing. */
+        const val PASTE_UNITS = 4_000
+        /** A page being edited is split regardless of how it grew once it passes this. */
+        const val HARD_CAP = 10 * TextChunks.DEFAULT_UNITS
         private fun breaksIn(text: String): Int {
             var n = 0; var i = 0
             while (i < text.length) {
@@ -129,23 +166,75 @@ import studio.otherstuff.ambulando.core.transport.MessageAttachment
 }
 
 /**
- * What one page of the editor does with a value the text field reports. An edit that makes the page too long is split, so the
- * field is then given back a shorter value than the one it reported. The field's input buffer still holds the longer text until
- * it is next composed; an input-method event in that gap (finishing a composition, for example) reports that buffer again,
- * and applying it again would insert the same edit twice (`INSERTED` doubled on a full page on the emulator).
+ * What one page of the editor does with a value the text field reports. A page may grow while it is edited, so
+ * ordinary typing, composing and undo never see the page's text rewritten under the keyboard. Only a large paste that takes the
+ * page past [ChunkedText.EDIT_CAP] (or a page past [ChunkedText.HARD_CAP]) is split, so the field is then given back a shorter value than the one it reported. Until the field has been
+ * composed with that value its input buffer still holds the longer text, and an input-method event in that gap is made against the
+ * stale buffer: a plain echo reports it unchanged, and a real keystroke reports it plus the keystroke.
+ *
+ * The gap is closed by an event, never by comparing text or waiting: [fieldShows] is called once the field has been composed with
+ * the value this returned. While it is open an unchanged stale buffer is dropped as the echo, and any other value is read as an
+ * edit of the stale buffer and re-applied to the page as it is now. Once it is closed every value is a person's edit, so typing
+ * exactly the characters that were cut off, or the same insert twice, is applied.
  */
 internal class ChunkPageEdit(private val doc: ChunkedText, private val page: Int) {
-    private var splitFrom: String? = null
+    private var stale: String? = null
 
     /** Applies [value] to the page and returns what the field must show next; [shown] is what it shows now. */
     fun apply(value: TextFieldValue, shown: TextFieldValue): TextFieldValue {
+        val base = stale
         val kept = doc.chunks[page]
-        if (value.text == splitFrom) return TextFieldValue(kept, TextRange(minOf(value.selection.end, kept.length)))
-        if (value.text != shown.text) doc.update(page, value.text)
+        if (base != null) {
+            if (value.text == base) return TextFieldValue(kept, TextRange(clamp(kept, value.selection.end)))
+            return commit(rebase(base, value, kept), value)
+        }
+        if (value.text == shown.text) return value
+        return commit(value.text, value)
+    }
+
+    /** The field has been composed with what [apply] returned, so its input buffer holds that text and no echo can follow. */
+    fun fieldShows(shown: TextFieldValue) {
+        if (stale != null && shown.text == doc.chunks[page]) stale = null
+    }
+
+    private fun commit(text: String, value: TextFieldValue): TextFieldValue {
+        val before = doc.chunks.size
+        doc.update(page, text)
         val now = doc.chunks[page]
-        splitFrom = if (now == value.text) null else value.text
-        // A big paste is split in place: stay on this page and keep the caret inside what it still holds.
-        return if (now == value.text) value else TextFieldValue(now, TextRange(minOf(value.selection.end, now.length)))
+        stale = if (now == text && text == value.text) null else value.text
+        if (now == value.text) return value
+        // The edit was split in place. If the caret now lies beyond this page, the person is typing on a later one: go there, so
+        // what they type next lands after the text they just put in rather than before it.
+        var local = value.selection.end
+        var target = page
+        val last = page + doc.chunks.size - before
+        while (target < last && local > doc.chunks[target].length) { local -= doc.chunks[target].length; target++ }
+        if (target != page) { doc.caretHint = clamp(doc.chunks[target], local); doc.page = target }
+        return TextFieldValue(now, TextRange(clamp(now, value.selection.end)))
+    }
+
+    /** [value] is an edit of the stale buffer [base]; the same edit made to [kept], which is what the page holds now. */
+    private fun rebase(base: String, value: TextFieldValue, kept: String): String {
+        val t = value.text
+        var start = 0
+        val limit = minOf(base.length, t.length)
+        while (start < limit && base[start] == t[start]) start++
+        var tail = 0
+        while (tail < limit - start && base[base.length - 1 - tail] == t[t.length - 1 - tail]) tail++
+        // Never cut a surrogate pair: move the edges out to whole characters.
+        if (start > 0 && start < base.length && Character.isLowSurrogate(base[start]) && Character.isHighSurrogate(base[start - 1])) start--
+        val cutAt = base.length - tail
+        if (tail > 0 && cutAt > 0 && cutAt < base.length && Character.isLowSurrogate(base[cutAt]) && Character.isHighSurrogate(base[cutAt - 1])) tail--
+        val removedEnd = base.length - tail
+        val inserted = t.substring(start, t.length - tail)
+        val from = clamp(kept, start)
+        val to = clamp(kept, maxOf(removedEnd, from))
+        return kept.substring(0, from) + inserted + kept.substring(to)
+    }
+
+    private fun clamp(text: String, index: Int): Int {
+        val i = index.coerceIn(0, text.length)
+        return if (i in 1 until text.length && Character.isLowSurrogate(text[i]) && Character.isHighSurrogate(text[i - 1])) i - 1 else i
     }
 }
 
@@ -153,19 +242,32 @@ internal class ChunkPageEdit(private val doc: ChunkedText, private val page: Int
 @Composable private fun ChunkEditor(doc: ChunkedText, modifier: Modifier) {
     val count = doc.chunks.size
     val page = doc.page.coerceIn(0, count - 1)
-    var field by remember(doc, page) { mutableStateOf(TextFieldValue(doc.chunks[page])) }
+    var field by remember(doc, page) {
+        val text = doc.chunks[page]
+        mutableStateOf(TextFieldValue(text, TextRange((doc.caretHint ?: 0).coerceIn(0, text.length)).also { doc.caretHint = null }))
+    }
     val edit = remember(doc, page) { ChunkPageEdit(doc, page) }
+    // Pages are bounded again when the editor is left.
+    DisposableEffect(doc) { onDispose { doc.normalize() } }
+    var wantsFocus by remember(doc) { mutableStateOf(false) }
     Column(modifier) {
         if (count > 1) Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(enabled = page > 0, onClick = { doc.page = page - 1 }, modifier = Modifier.testTag("text.prev")) { Text("Previous") }
+            TextButton(enabled = page > 0, onClick = { doc.normalize(); doc.page = page - 1 }, modifier = Modifier.testTag("text.prev")) { Text("Previous") }
             Text("Page ${page + 1} of $count", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).testTag("text.page"))
-            TextButton(enabled = page < count - 1, onClick = { doc.page = page + 1 }, modifier = Modifier.testTag("text.next")) { Text("Next") }
+            TextButton(enabled = page < count - 1, onClick = { doc.normalize(); doc.page = page + 1 }, modifier = Modifier.testTag("text.next")) { Text("Next") }
         }
-        OutlinedTextField(
-            field, { value -> field = edit.apply(value, field) },
-            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
-            modifier = Modifier.fillMaxWidth().weight(1f).testTag("text.editor"),
-        )
+        // A new field for each page and after each re-split: its undo history and the keyboard's view of it then start from the
+        // text the page holds, so undo can never apply an older page's text to this one.
+        key(page, doc.rewrites) {
+            val focus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { if (wantsFocus) focus.requestFocus() }
+            OutlinedTextField(
+                field, { value -> field = edit.apply(value, field) },
+                textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
+                modifier = Modifier.fillMaxWidth().weight(1f).testTag("text.editor").focusRequester(focus).onFocusChanged { if (it.isFocused) wantsFocus = true },
+            )
+        }
+        SideEffect { edit.fieldShows(field) }
     }
 }
 

@@ -69,5 +69,9 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
         override fun discardPinWrite(writeId: String) { model.act { model.store.writer.discardWrite(writeId) } }
     } }
     LaunchedEffect(c.id, w.id) { model.sync.refreshPins(c, w) }
-    DeckScreen(model.store, screen, navigation, pins.value, intents, active = model.section == AppSection.DECK)
+    DeckScreen(model.store, screen, navigation, pins.value, intents, active = model.section == AppSection.DECK,
+        newThread = { opened, current, close ->
+            DeckNewThread(model.store, opened, current, navigation, close, onCreated = { channelId, threadId -> intents.openInChat(channelId, threadId) },
+                composer = { channelId, onEnqueued -> ConnectedChat(model, null, ComposeOnly(channelId, onEnqueued)) })
+        })
 }

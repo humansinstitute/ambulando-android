@@ -100,6 +100,15 @@ object Amb {
     val colors: AmbColors @Composable get() = LocalAmbColors.current
 }
 
+/** The iOS text styles the Swift views use (`.subheadline`, `.caption`, …) at their default size, in `sp` so the user's font scale applies. */
+object AmbType {
+    val body = 17.sp
+    val subheadline = 15.sp
+    val footnote = 13.sp
+    val caption = 12.sp
+    val caption2 = 11.sp
+}
+
 val LocalAmbColors = staticCompositionLocalOf { AmbLight }
 
 enum class AppearancePreference { SYSTEM, LIGHT, DARK }

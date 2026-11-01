@@ -151,7 +151,8 @@ class BatchInteractionTest {
             compose.waitUntil(10_000) { compose.onAllNodesWithTag("deck.page.pinned").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("deck.page.pinned").performClick()
             val task = rows().first { it.pin.resourceId == SampleIds.CANVAS_TASK }
-            compose.onNodeWithContentDescription("Unpin ${task.title}").performTouchInput { click() }
+            // The Inbox card (a neighbouring page, kept composed) carries a pin for the same task: this is the Pinned card's.
+            compose.onNode(hasContentDescription("Unpin ${task.title}") and hasAnyAncestor(hasTestTag("deck.card.pinned"))).performTouchInput { click() }
             waitSaved(ended.filter { it != SampleIds.CANVAS_TASK })
             compose.onNodeWithTag("pin.drag.${SampleIds.CANVAS_TASK}").assertDoesNotExist()
             compose.onAllNodesWithTag("task.title").assertCountEquals(0)

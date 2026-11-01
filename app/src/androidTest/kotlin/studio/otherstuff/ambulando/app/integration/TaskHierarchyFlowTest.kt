@@ -42,7 +42,7 @@ class TaskHierarchyFlowTest {
             val model = app.activeModel!!
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
-            block(model)
+            captureOnFailure(compose, model, "hierarchy") { block(model) }
         }
     }
 

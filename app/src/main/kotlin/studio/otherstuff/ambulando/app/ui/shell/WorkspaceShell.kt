@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +47,11 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,7 +60,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +71,7 @@ import studio.otherstuff.ambulando.app.ui.nav.PersonAvatar
 import studio.otherstuff.ambulando.app.ui.nav.WorkRoute
 import studio.otherstuff.ambulando.app.ui.nav.fullScreen
 import studio.otherstuff.ambulando.app.ui.theme.Amb
+import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import studio.otherstuff.ambulando.core.profiles.PersonDisplay
 
 /**
@@ -158,40 +168,91 @@ fun WorkspaceShell(
     val opened = remember { mutableStateListOf<AppSection>() }
     if (chrome.section !in opened) opened.add(chrome.section)
     Box(Modifier.fillMaxSize().background(amb.background)) {
-        Column(Modifier.fillMaxSize()) {
-            Layout(
-                content = {
-                    opened.forEach { section ->
-                        Box(Modifier.fillMaxSize().then(if (section != chrome.section) Modifier.clearAndSetSemantics { } else Modifier)) {
-                            SectionStackView(section, chrome, actions, stacks, sectionRoot, routeScreen, pinControl)
-                        }
-                    }
-                },
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-            ) { measurables, constraints ->
-                val placeables = measurables.map { it.measure(constraints) }
-                layout(constraints.maxWidth, constraints.maxHeight) {
-                    val index = opened.indexOf(chrome.section)
-                    if (index >= 0) placeables[index].place(0, 0)
-                }
+        // As on the iPad (`TabletNavigation`): a window this wide keeps the navigation beside the content; the menu button
+        // then folds it away instead of opening the drawer. Resizing only moves the sidebar in or out of the Row, so the
+        // section hosts, their stacks and any draft keep their state.
+        // Read from the window's configuration, not measured: no subcomposition, so the section hosts compose in the ordinary pass.
+        val tablet = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp >= TabletMinWidth
+        var folded by rememberSaveable { mutableStateOf(false) }
+        val sidebarShown = tablet && !folded
+        val shellActions = remember(actions, tablet) {
+            if (!tablet) actions else object : ShellActions by actions { override fun openSidebar() { folded = !folded } }
+        }
+        LaunchedEffect(tablet, chrome.sidebarOpen) { if (tablet && chrome.sidebarOpen) { actions.closeSidebar(); folded = false } }
+        Row(Modifier.fillMaxSize()) {
+            if (sidebarShown) {
+                TabletSidebar(chrome, actions, sidebar)
+                VerticalDivider(thickness = 1.dp, color = amb.border)
             }
-            // A full-screen record (a canvas) replaces the global section bar with its own bottom controls.
-            if (stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
-                SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect)
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                Layout(
+                    content = {
+                        opened.forEach { section ->
+                            Box(Modifier.fillMaxSize().then(if (section != chrome.section) Modifier.clearAndSetSemantics { } else Modifier)) {
+                                SectionStackView(section, chrome, shellActions, stacks, sectionRoot, routeScreen, pinControl)
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                ) { measurables, constraints ->
+                    val placeables = measurables.map { it.measure(constraints) }
+                    layout(constraints.maxWidth, constraints.maxHeight) {
+                        val index = opened.indexOf(chrome.section)
+                        if (index >= 0) placeables[index].place(0, 0)
+                    }
+                }
+                // A full-screen record (a canvas) replaces the global section bar with its own bottom controls; the
+                // permanent sidebar takes the bar's place on a wide window.
+                if (!sidebarShown && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
+                    SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect)
+                }
             }
         }
         overlay()
-        AnimatedVisibility(chrome.sidebarOpen, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(chrome.sidebarOpen && !tablet, enter = fadeIn(), exit = fadeOut()) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)).clickable(onClick = actions::closeSidebar)
                 .semantics { contentDescription = "Close navigation" }.testTag("sidebar.backdrop"))
         }
-        AnimatedVisibility(chrome.sidebarOpen, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
+        AnimatedVisibility(chrome.sidebarOpen && !tablet, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
             Box(Modifier.fillMaxHeight().statusBarsPadding()
                 .pointerInput(Unit) { detectHorizontalDragGestures { _, drag -> if (drag < -24) actions.closeSidebar() } }) {
                 sidebar()
             }
         }
-        BackHandler(enabled = chrome.sidebarOpen) { actions.closeSidebar() }
+        BackHandler(enabled = chrome.sidebarOpen && !tablet) { actions.closeSidebar() }
+    }
+}
+
+/** The window width from which the navigation stays beside the content (the iPad's rule). */
+val TabletMinWidth = 760.dp
+
+/**
+ * The permanent navigation on a wide window (iOS `TabletSidebar`): the sections as a list, then the same Home / scopes /
+ * channels content the drawer shows.
+ */
+@Composable
+private fun TabletSidebar(chrome: ShellChromeState, actions: ShellActions, context: @Composable () -> Unit) {
+    val amb = Amb.colors
+    Column(Modifier.width(280.dp).fillMaxHeight().background(amb.card).statusBarsPadding().navigationBarsPadding().testTag("tablet.sidebar")) {
+        Column(Modifier.padding(12.dp).testTag("section.bar").semantics { contentDescription = "Sections" }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            chrome.sections.forEach { section ->
+                val selected = section == chrome.section
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                        .background(if (selected) amb.selectedFill else Color.Transparent, RoundedCornerShape(Amb.radiusControl))
+                        .clickable(role = Role.Tab) { if (selected) actions.reselect(section) else actions.select(section) }
+                        .semantics { this.selected = selected; contentDescription = section.title }.testTag("section.${section.key}")
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(section.icon, null, tint = if (selected) amb.selectedForeground else amb.foreground, modifier = Modifier.size(22.dp))
+                    Text(section.title, fontSize = AmbType.body, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (selected) amb.selectedForeground else amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        HorizontalDivider(thickness = 1.dp, color = amb.border)
+        Box(Modifier.weight(1f).fillMaxWidth(), propagateMinConstraints = true) { context() }
     }
 }
 

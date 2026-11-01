@@ -18,7 +18,15 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +51,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import studio.otherstuff.ambulando.app.ui.nav.ScreenScope
 import studio.otherstuff.ambulando.app.ui.theme.Amb
+import studio.otherstuff.ambulando.app.ui.theme.AmbType
+import studio.otherstuff.ambulando.app.ui.chat.readingWidth
 import studio.otherstuff.ambulando.core.store.LocalStore
 
 /**
@@ -71,6 +81,7 @@ enum class DeckCard(val key: String, val title: String) {
  * @param active Deck is the current section (out of sight, every card pauses).
  * @param inboxRequests Incremented by the app model when a sidebar choice should show the Inbox card.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DeckScreen(
     store: LocalStore,
@@ -82,7 +93,11 @@ fun DeckScreen(
     status: SurfaceStatusLookup = SurfaceStatusLookup.NONE,
     active: Boolean = true,
     inboxRequests: Int = 0,
+    /** Draws the New thread composer over Deck (null: the host cannot start threads, so no button is shown). */
+    newThread: (@Composable (opened: Pair<String, String>, current: ScreenScope, onClose: () -> Unit) -> Unit)? = null,
 ) {
+    var composing by rememberSaveable { mutableStateOf(false) }
+    val keyboardUp = androidx.compose.foundation.layout.WindowInsets.isImeVisible
     val cards = DeckCard.visible(pins.visibleItems.isNotEmpty())
     var stored by rememberSaveable { mutableStateOf(DeckCard.INBOX.key) }
     val initial = cards.indexOf(DeckCard.fromKey(stored) ?: DeckCard.INBOX).takeIf { it >= 0 } ?: cards.indexOf(DeckCard.INBOX)
@@ -108,24 +123,52 @@ fun DeckScreen(
         }
     }
     val shown = cards.getOrNull(pager.currentPage)
-    Column(modifier.fillMaxSize().background(Amb.colors.background)) {
-        HorizontalPager(
-            state = pager, beyondViewportPageCount = DeckCard.entries.size,
-            key = { cards[it].key }, modifier = Modifier.weight(1f).fillMaxWidth().testTag("deck.track"),
-        ) { page ->
-            val card = cards[page]
-            val visible = active && shown == card
-            when (card) {
-                DeckCard.HELLO -> DeckHelloCard(store, screen, navigation, intents, status, visible)
-                DeckCard.INBOX -> DeckInboxCard(store, screen, navigation, pins, intents, status, visible)
-                DeckCard.PINNED -> DeckPinnedCard(screen, pins, intents)
-                DeckCard.CANVAS -> DeckCanvasCard(store, screen, intents, status, visible)
-                DeckCard.FEED -> DeckFeedCard()
-                DeckCard.RECENT -> DeckRecentCard(store, screen, navigation, intents, visible)
+    val openedIds = rememberSaveable(composing) { screen.connectionId to screen.workspaceId }
+    Box(modifier.fillMaxSize().background(Amb.colors.background)) {
+    Column(Modifier.fillMaxSize()) {
+        // Above the dots, so it never covers them or the section bar; hidden while the keyboard is up (iOS `DeckNewThreadButton`).
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            CompositionLocalProvider(LocalDeckBottomInset provides if (newThread != null) DeckNewThreadButtonSize + 24.dp else 16.dp) {
+                HorizontalPager(
+                    state = pager, beyondViewportPageCount = DeckCard.entries.size,
+                    key = { cards[it].key }, modifier = Modifier.fillMaxSize().testTag("deck.track"),
+                ) { page ->
+                    val card = cards[page]
+                    val visible = active && shown == card
+                    when (card) {
+                        DeckCard.HELLO -> DeckHelloCard(store, screen, navigation, intents, status, visible)
+                        DeckCard.INBOX -> DeckInboxCard(store, screen, navigation, pins, intents, status, visible, onNewThread = newThread?.let { { composing = true } })
+                        DeckCard.PINNED -> DeckPinnedCard(screen, pins, intents)
+                        DeckCard.CANVAS -> DeckCanvasCard(store, screen, intents, status, visible)
+                        DeckCard.FEED -> DeckFeedCard()
+                        DeckCard.RECENT -> DeckRecentCard(store, screen, navigation, intents, visible)
+                    }
+                }
             }
+            if (newThread != null && !keyboardUp && !composing) DeckNewThreadButton({ composing = true }, Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 12.dp))
         }
         DeckPagination(cards, shown) { card -> scope.launch { pager.animateScrollToPage(cards.indexOf(card)) } }
     }
+    if (composing && newThread != null) newThread(openedIds, screen) { composing = false }
+    }
+}
+
+/** The floating New thread button's side. */
+internal val DeckNewThreadButtonSize = 56.dp
+
+/** Room left under each card's last row so the floating button never sits on it for good. */
+internal val LocalDeckBottomInset = androidx.compose.runtime.compositionLocalOf { 16.dp }
+
+/** Deck's floating New thread button (iOS `DeckNewThreadButton`): a 56dp primary circle with a plus, lower right. */
+@Composable
+private fun DeckNewThreadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val amb = Amb.colors
+    Box(
+        modifier.size(DeckNewThreadButtonSize).shadow(6.dp, CircleShape).background(amb.primary, CircleShape).clip(CircleShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "New thread" }.testTag("deck.fab.new"),
+        contentAlignment = Alignment.Center,
+    ) { Icon(Icons.Filled.Add, null, tint = amb.primaryForeground, modifier = Modifier.size(28.dp)) }
 }
 
 /** The dots under Deck (sol `.deck-mobile-pagination`). Each is a button labelled with its card. */
@@ -160,19 +203,21 @@ internal fun DeckCardFrame(
     content: LazyListScope.() -> Unit,
 ) {
     val amb = Amb.colors
-    Column(Modifier.fillMaxSize().testTag("deck.card.$identifier")) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    Column(Modifier.readingWidth().fillMaxSize().testTag("deck.card.$identifier")) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 title, Modifier.weight(1f).semantics { heading() }.testTag("deck.card.title"),
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = amb.foreground,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                fontSize = AmbType.body, fontWeight = FontWeight.SemiBold, color = amb.foreground,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.width(4.dp))
             actions()
         }
         LazyColumn(
-            Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 16.dp),
+            Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = LocalDeckBottomInset.current),
             verticalArrangement = Arrangement.spacedBy(8.dp), content = content,
         )
+    }
     }
 }

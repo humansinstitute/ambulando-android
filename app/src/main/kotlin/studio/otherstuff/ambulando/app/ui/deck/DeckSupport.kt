@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import studio.otherstuff.ambulando.app.ui.nav.LocalAppServices
 import studio.otherstuff.ambulando.app.ui.theme.Amb
+import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import studio.otherstuff.ambulando.app.ui.theme.AmbColors
 import studio.otherstuff.ambulando.core.context.NavChannel
 import studio.otherstuff.ambulando.core.context.NavScope
@@ -124,7 +125,7 @@ fun Modifier.deckRow(colors: AmbColors, unread: Boolean = false): Modifier = thi
 fun DeckNote(text: String, modifier: Modifier = Modifier) {
     Text(
         text, modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
-        style = MaterialTheme.typography.bodySmall, color = Amb.colors.mutedForeground,
+        fontSize = AmbType.footnote, color = Amb.colors.mutedForeground,
     )
 }
 

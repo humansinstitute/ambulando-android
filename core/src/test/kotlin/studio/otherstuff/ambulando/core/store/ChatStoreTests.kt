@@ -148,8 +148,11 @@ class ChatStoreTests {
             val thread = "00000000-0000-4000-8000-0000000000f2"
             val ack = message("00000000-0000-4000-8000-0000000000a1", "first", "2026-10-01T00:00:00.000Z", thread = thread,
                 source = "00000000-0000-4000-8000-0000000000a1", clientRequestId = first.id)
+            assertNull("nothing is acknowledged yet", store.reader.sentMessage(W, first.id))
             store.writer.acknowledgeSend(first.id, ack, ThreadRecord(W, thread, Fixtures.CHANNEL_1, ack.id, "first", updatedAt = ack.createdAt))
             assertNull(store.reader.outboxItem(first.id))
+            assertEquals("the acknowledged send is found by its request id and carries the new thread", thread, store.reader.sentMessage(W, first.id)?.threadId)
+            assertNull("another workspace never resolves it", store.reader.sentMessage("00000000-0000-4000-8000-00000000ffff", first.id))
             assertEquals("first", store.reader.thread(W, thread)?.title)
             // A synced copy carrying this sender's client_request_id retires the row (no duplicate message).
             val second = h.enqueue("second")

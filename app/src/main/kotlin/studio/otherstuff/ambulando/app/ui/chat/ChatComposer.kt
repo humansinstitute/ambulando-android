@@ -16,7 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ContentPaste
@@ -36,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
@@ -148,6 +150,23 @@ fun MentionLookahead(candidates: List<MentionCandidate>, onPick: (Mention) -> Un
     }
 }
 
+/** One stacked composer tool: the 44dp touch width, 40dp tall, so the two of them set the field's two-line starting height. */
+private val ComposerToolHeight = 40.dp
+
+/** The text box starts two tools tall (iOS: the box is as tall as the tool column), so it opens at two lines, not one. */
+val ComposerMinHeight = ComposerToolHeight * 2
+
+/** A plain icon button of the exact tool size (Material's IconButton would pad it out to 48dp and push the field taller). */
+@Composable
+private fun ComposerTool(enabled: Boolean, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, onClick: () -> Unit) {
+    val amb = Amb.colors
+    Box(
+        Modifier.size(Amb.touchTarget, ComposerToolHeight).clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .semantics { contentDescription = label }.testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, null, tint = if (enabled) amb.foreground else amb.mutedForeground, modifier = Modifier.size(22.dp)) }
+}
+
 /**
  * The composer's controls stacked at its left (attach above mention) so the text field takes the width. Attach offers
  * the photo/file picker and pasting an attachment from the clipboard.
@@ -157,9 +176,7 @@ fun ComposerControls(enabled: Boolean, onPick: () -> Unit, onPaste: () -> Unit, 
     var menu by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
         Box {
-            IconButton(onClick = { menu = true }, enabled = enabled, modifier = Modifier.size(36.dp).testTag("chat.attach")) {
-                Icon(Icons.Outlined.AttachFile, "Attach image or file", modifier = Modifier.size(20.dp))
-            }
+            ComposerTool(enabled, "Attach image or file", Icons.Outlined.Image, "chat.attach") { menu = true }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Photo or file…") }, leadingIcon = { Icon(Icons.Outlined.Image, null) },
                     onClick = { menu = false; onPick() }, modifier = Modifier.testTag("chat.attach.pick"))
@@ -167,18 +184,17 @@ fun ComposerControls(enabled: Boolean, onPick: () -> Unit, onPaste: () -> Unit, 
                     onClick = { menu = false; onPaste() }, modifier = Modifier.testTag("chat.attach.paste"))
             }
         }
-        IconButton(onClick = onMention, enabled = enabled, modifier = Modifier.size(36.dp).testTag("chat.mention")) {
-            Icon(Icons.Outlined.AlternateEmail, "Mention", modifier = Modifier.size(20.dp))
-        }
+        ComposerTool(enabled, "Mention", Icons.Outlined.AlternateEmail, "chat.mention", onMention)
     }
 }
 
-/** The round send button at the composer's right. */
+/** The round send button at the composer's right (iOS arrow-up circle): 30dp in primary, the border colour while there is nothing to send. */
 @Composable
 fun SendButton(enabled: Boolean, onSend: () -> Unit) {
     val amb = Amb.colors
-    IconButton(
-        onClick = onSend, enabled = enabled,
-        modifier = Modifier.padding(start = 4.dp).size(40.dp).background(if (enabled) amb.primary else amb.muted, CircleShape).testTag("chat.send"),
-    ) { Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = if (enabled) amb.primaryForeground else amb.mutedForeground, modifier = Modifier.size(18.dp)) }
+    IconButton(onClick = onSend, enabled = enabled, modifier = Modifier.size(Amb.touchTarget).testTag("chat.send")) {
+        Box(Modifier.size(30.dp).background(if (enabled) amb.primary else amb.border, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.ArrowUpward, "Send", tint = if (enabled) amb.primaryForeground else amb.card, modifier = Modifier.size(18.dp))
+        }
+    }
 }
