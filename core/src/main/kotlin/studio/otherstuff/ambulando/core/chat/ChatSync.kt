@@ -16,6 +16,8 @@ import studio.otherstuff.ambulando.core.store.replaceMembers
 import studio.otherstuff.ambulando.core.store.saveChannelSync
 import studio.otherstuff.ambulando.core.store.setState
 import studio.otherstuff.ambulando.core.store.state
+import studio.otherstuff.ambulando.core.store.upsertEffectiveThreadPage
+import studio.otherstuff.ambulando.core.store.finishEffectiveThread
 import studio.otherstuff.ambulando.core.store.upsertMessages
 import studio.otherstuff.ambulando.core.store.upsertThreads
 import studio.otherstuff.ambulando.core.sync.SyncPriority
@@ -99,15 +101,15 @@ suspend fun WorkspaceSync.refreshThread(
         val seen = HashSet<String>()
         val started = TowerTime.now()
         do {
-            val page = api.messagesPage(workspace.id, workspace.appNpub, channelId, threadId = threadId, cursor = cursor)
+            val page = api.messagesPage(workspace.id, workspace.appNpub, channelId, threadId = threadId, cursor = cursor, effectiveTranscript = true)
             checkCancelled()
-            store.writer.upsertMessages(page.messages)
+            store.writer.upsertEffectiveThreadPage(workspace.id, channelId, threadId, page.messages)
             for (m in page.messages) keep.add(m.id)
             page.messages.lastOrNull()?.let { last = MessageKey(it.createdAt, it.id) }
             cursor = page.nextCursor
             cursor?.let { if (!seen.add(it)) throw TowerError.Malformed("messages cursor") }
         } while (cursor != null)
-        store.writer.reconcileMessages(workspace.id, channelId, threadId = threadId, after = null, through = last ?: MessageKey(started, ""), keep = keep)
+        store.writer.finishEffectiveThread(workspace.id, channelId, threadId, keep)
         val thread = api.thread(workspace.id, workspace.appNpub, threadId)
         if (thread.workspaceId == workspace.id && thread.channelId == channelId) store.writer.upsertThreads(workspace.id, listOf(thread))
     }

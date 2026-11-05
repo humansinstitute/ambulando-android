@@ -57,6 +57,11 @@ object Schema {
               PRIMARY KEY(workspace_id, parent_id, child_id))""",
             "CREATE INDEX task_relationship_children ON task_relationship_members(workspace_id, child_id)",
         )),
+        Migration(8, listOf(
+            """CREATE TABLE thread_message_members(workspace_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+              message_id TEXT NOT NULL, PRIMARY KEY(workspace_id, thread_id, message_id))""",
+            "CREATE INDEX thread_message_member_message ON thread_message_members(workspace_id, message_id)",
+        )),
     )
 
     val VERSION: Int get() = migrations.maxOf { it.version }
@@ -74,7 +79,7 @@ object Schema {
 
     /** Workspace-scoped tables, cleared with a workspace that no connection on the device lists any more. */
     internal val workspaceTables = listOf(
-        "scopes", "channels", "messages", "threads", "members", "channel_sync",
+        "scopes", "channels", "messages", "threads", "thread_message_members", "members", "channel_sync",
         "tasks", "task_relationships", "task_relationship_members", "comments", "docs", "doc_bodies", "files", "folders", "view_states", "reactions", "list_sync",
         "context_components", "context_references", "canvases", "canvas_snapshots", "board_scenes", "board_links",
         "workspace_agents", "agent_activities", "personal_wapps", "pins",

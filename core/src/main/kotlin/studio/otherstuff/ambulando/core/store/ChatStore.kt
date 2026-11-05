@@ -424,12 +424,20 @@ suspend fun StoreReader.channelFeed(workspaceId: String, channelId: String, limi
     ) { FeedPost(Rows.message(it, workspaceId), it.int(14), it.text(15)) }.asReversed()
 }
 
-/** Messages of one thread (root first), newest `limit`, oldest first. */
+/** Latest visible rows of the effective transcript, oldest first, without a fixed history ceiling. */
 suspend fun StoreReader.threadMessages(workspaceId: String, threadId: String, limit: Int): List<MessageRecord> = read {
     query(
-        "SELECT ${Rows.MESSAGE_COLUMNS} FROM messages WHERE workspace_id = ? AND thread_id = ? AND deleted = 0 ORDER BY created_at DESC, id DESC LIMIT ?",
-        workspaceId, threadId, limit,
-    ) { Rows.message(it, workspaceId) }.asReversed()
+        """SELECT ${Rows.MESSAGE_COLUMNS} FROM messages WHERE workspace_id = ? AND deleted = 0 AND
+          (thread_id = ? OR id IN (SELECT message_id FROM thread_message_members WHERE workspace_id = ? AND thread_id = ?))
+          ORDER BY created_at DESC, id DESC LIMIT ?""",
+        workspaceId, threadId, workspaceId, threadId, limit,
+    ) { Rows.message(it, workspaceId).copy(effectiveThreadId = threadId) }.asReversed()
+}
+
+suspend fun StoreReader.threadMessageCount(workspaceId: String, threadId: String): Int = read {
+    first("""SELECT COUNT(*) FROM messages WHERE workspace_id = ? AND deleted = 0 AND
+      (thread_id = ? OR id IN (SELECT message_id FROM thread_message_members WHERE workspace_id = ? AND thread_id = ?))""",
+      workspaceId, threadId, workspaceId, threadId) { it.int(0) } ?: 0
 }
 
 internal fun SqlConnection.messageRow(workspaceId: String, id: String): MessageRecord? =

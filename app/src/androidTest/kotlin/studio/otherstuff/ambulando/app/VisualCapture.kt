@@ -14,6 +14,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import studio.otherstuff.ambulando.app.ui.shell.AppSection
 import studio.otherstuff.ambulando.core.sample.SampleIds
+import studio.otherstuff.ambulando.core.store.contextTree
+import studio.otherstuff.ambulando.core.surfaces.refreshContextTree
 
 /**
  * Renders Chat and the Deck cards from the synthetic sample data and saves screenshots for the iOS-versus-Android visual review.
@@ -82,6 +84,58 @@ class VisualCapture {
             compose.runOnIdle { model.section = AppSection.CHAT }
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             shoot(tag, "chat-composer")
+        }
+    }
+
+    /** Every other section (Tasks, Docs, Files, Agents, Context, Toolbox) and Settings, for the section-by-section parity review. */
+    @Test fun captureSections() {
+        val args = InstrumentationRegistry.getArguments()
+        val tag = args.getString("visualTag") ?: "untagged"
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<MainActivity>(intent).use {
+            val app = context.applicationContext as AmbulandoApplication
+            compose.waitUntil(20_000) { app.activeModel?.workspaces?.size == 2 }
+            val model = app.activeModel!!
+            compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
+            compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
+            compose.runOnIdle { val c = model.channels.first { it.id == SampleIds.GENERAL }; model.selectContext(c.scopeId, c.id) }
+            for (section in listOf(AppSection.TASKS, AppSection.DOCS, AppSection.FILES, AppSection.AGENTS, AppSection.CONTEXT, AppSection.TOOLBOX)) {
+                compose.runOnIdle { model.showAgents = true; model.showContext = true; model.section = section }
+                Thread.sleep(1_500)
+                if (section == AppSection.CONTEXT) {
+                    // The sample Tower's tree is read by the screen too; force the same read here so the capture does not depend on its timing.
+                    val scope = model.context.scopeId!!
+                    kotlinx.coroutines.runBlocking { model.sync.refreshContextTree(model.connection!!, model.workspace!!, scope, force = true) }
+                    val until = System.currentTimeMillis() + 20_000
+                    while (System.currentTimeMillis() < until && (kotlinx.coroutines.runBlocking { model.store.reader.contextTree(model.workspace!!.id, scope) } as List<*>).isEmpty()) Thread.sleep(500)
+                    Thread.sleep(800)
+                }
+                shoot(tag, "section-${section.key}")
+            }
+            fun detail(section: AppSection, text: String, name: String) {
+                compose.runOnIdle { model.section = section }
+                Thread.sleep(1_000)
+                if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isEmpty()) return
+                compose.onAllNodesWithText(text)[0].performClick()
+                Thread.sleep(2_000)
+                shoot(tag, name)
+                compose.runOnIdle { model.section = AppSection.DECK; model.section = section }
+            }
+            detail(AppSection.TASKS, "Review the native inbox", "task-detail")
+            detail(AppSection.DOCS, "Native app plan (sample)", "doc-detail")
+            detail(AppSection.FILES, "sync-results.txt", "file-detail")
+            compose.runOnIdle { model.section = AppSection.DECK }
+            Thread.sleep(500)
+            compose.onNodeWithContentDescription("Settings").performClick()
+            Thread.sleep(1_500)
+            shoot(tag, "settings")
+            compose.onRoot().performTouchInput { swipeUp(startY = bottom * 0.9f, endY = top + 200f) }
+            Thread.sleep(800)
+            shoot(tag, "settings-2")
+            compose.onRoot().performTouchInput { swipeUp(startY = bottom * 0.9f, endY = top + 200f) }
+            Thread.sleep(800)
+            shoot(tag, "settings-3")
         }
     }
 }

@@ -22,17 +22,18 @@ data class MessagePage(val messages: List<MessageRecord>, val nextCursor: String
 const val MESSAGE_PAGE_LIMIT = 200
 
 suspend fun TowerAPI.messagesPage(
-    workspaceId: String, appNpub: String, channelId: String, threadId: String? = null, cursor: String?, limit: Int = MESSAGE_PAGE_LIMIT,
+    workspaceId: String, appNpub: String, channelId: String, threadId: String? = null, cursor: String?, limit: Int = MESSAGE_PAGE_LIMIT, effectiveTranscript: Boolean = false,
 ): MessagePage {
     val query = mutableListOf("limit" to limit.toString())
     if (threadId != null) query.add("thread_id" to TowerAPI.uuid(threadId))
+    if (effectiveTranscript) { require(threadId != null); query.add("effective_transcript" to "true") }
     if (cursor != null) query.add("cursor" to cursor)
     val data = client.request(path = TowerAPI.base(workspaceId) + "/channels/" + TowerAPI.uuid(channelId) + "/messages", query = query, appNpub = appNpub)
     val o = parseJsonObject(data, "messages")
     val rows = o.objects("messages") ?: throw TowerError.Malformed("messages")
     val messages = rows.map { MessageRecord.parse(it) }
     // A page that does not belong to the requested channel is never materialised.
-    if (!messages.all { it.workspaceId == workspaceId && it.channelId == channelId && (threadId == null || it.threadId == threadId) }) {
+    if (!messages.all { it.workspaceId == workspaceId && it.channelId == channelId && (threadId == null || if (effectiveTranscript) it.effectiveThreadId == threadId || (it.effectiveThreadId == null && it.threadId == threadId) else it.threadId == threadId) }) {
         throw TowerError.Malformed("messages")
     }
     val next = o.string("next_cursor")

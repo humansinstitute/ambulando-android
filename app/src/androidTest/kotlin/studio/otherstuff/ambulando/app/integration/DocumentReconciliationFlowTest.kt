@@ -182,6 +182,33 @@ class DocumentReconciliationFlowTest {
         compose.waitUntil(20_000) { model.editorDoc == null }
     }
 
+    @Test fun theFormatBarAppliesHeadingLevelsAndAUrlLinkAndShowsWhatIsActive() = launch { model ->
+        val plan = cachedDoc(model, "Native app plan (sample)")
+        runBlocking { model.store.writer.deleteDocDraft(key(model, plan), SampleIds.STUDIO) }
+        model.sampleTower!!.work.resetEditing(plan)
+        compose.runOnIdle { model.editorDoc = plan }
+        compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("doc.editor.format.bold") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("doc.editor.style").performClick()
+        compose.onNodeWithText("Heading 2").performClick()
+        compose.waitUntil(20_000) { runBlocking { model.store.reader.docDraft(key(model, plan)) }?.let { String(it.body).contains("## ") } == true }
+        // The style control now names the level at the caret.
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("doc.editor.style") and hasText("Heading 2")).fetchSemanticsNodes().isNotEmpty() }
+        // A block format changes the document, so the page reports it and the button shows as active (a caret-only mark change is not reported by the page).
+        compose.onNodeWithTag("doc.editor.format.bulletList").performClick()
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("doc.editor.format.bulletList") and isSelected()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("doc.editor.format.bulletList").performClick()
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("doc.editor.format.bulletList") and isSelected()).fetchSemanticsNodes().isEmpty() }
+        // A bare address becomes an https link; the dialog refuses an unsafe scheme.
+        compose.onNodeWithTag("doc.editor.format.url").performClick()
+        compose.onNodeWithTag("doc.editor.link.field").performTextReplacement("javascript:alert(1)")
+        compose.onNodeWithTag("doc.editor.link.apply").assertIsNotEnabled()
+        compose.onNodeWithTag("doc.editor.link.field").performTextReplacement("example.org/format-bar")
+        compose.onNodeWithTag("doc.editor.link.apply").performClick()
+        compose.waitUntil(20_000) { runBlocking { model.store.reader.docDraft(key(model, plan)) }?.let { String(it.body).contains("https://example.org/format-bar") } == true }
+        compose.onNodeWithTag("doc.editor.back").performClick()
+        compose.waitUntil(20_000) { model.editorDoc == null }
+    }
+
     @Test fun theLinkPickerLinksAnExistingPageAndCreatesAndLinksANewOne() = launch { model ->
         val plan = cachedDoc(model, "Native app plan (sample)")
         runBlocking { model.store.writer.deleteDocDraft(key(model, plan), SampleIds.STUDIO) }

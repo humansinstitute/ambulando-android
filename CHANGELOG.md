@@ -1,3 +1,10 @@
+## 0.8.1 (21)
+
+- Conversations include inherited branch history while preserving canonical ownership and attachment metadata.
+- Inherited rows are labelled and read only; nested branches use the conversation being viewed.
+- Load earlier messages in 50-row steps without a fixed history ceiling.
+- Includes the existing document reading/menu/comment layout refinements.
+
 # 0.8.0 — Android build 20
 
 Visual and tablet parity with the iPhone, iPad and Mac apps.

@@ -24,7 +24,7 @@ suspend fun StoreReader.threadMenu(workspaceId: String, threadId: String): Threa
     ) { it.text(0) }
     val root = sourceId?.let { messageRow(workspaceId, it) }?.takeIf {
         it.channelId == record.channelId && !it.deleted
-    }
+    }?.copy(effectiveThreadId = threadId)
     // Scan only candidate session rows, newest updated first, independently of the visible message window.
     val session = query(
         "SELECT ${Rows.MESSAGE_COLUMNS} FROM messages WHERE workspace_id = ? AND thread_id = ? AND deleted = 0 AND raw LIKE '%autopilot_session%' ORDER BY updated_at DESC, rowid DESC",
@@ -35,13 +35,15 @@ suspend fun StoreReader.threadMenu(workspaceId: String, threadId: String): Threa
 
 /** Existing Tower branch route, as used by iPhone/web. The response remains Tower's authority. */
 suspend fun WorkspaceSync.branchThread(connection: ConnectionRecord, workspace: WorkspaceRecord, message: MessageRecord,
-    recipient: String?, requestId: String = "branch:${UUID.randomUUID()}"): ThreadRecord =
+    recipient: String?, requestId: String = "branch:${UUID.randomUUID()}", effectiveThreadId: String? = message.effectiveThreadId ?: message.threadId): ThreadRecord =
     engine.perform("branch:${workspace.id}:${message.id}", SyncPriority.USER) {
         identity.requireReader(connection.signerNpub)
+        require(effectiveThreadId != null)
         require(message.workspaceId == workspace.id && message.threadId != null && !message.deleted && !message.accessRemoved && !workspace.accessRemoved)
         require(!store.reader.isChannelAccessRemoved(workspace.id, message.channelId) &&
-            !store.reader.isAccessRemoved(workspace.id, FlaggedTable.THREADS, message.threadId) &&
+            !store.reader.isAccessRemoved(workspace.id, FlaggedTable.THREADS, effectiveThreadId) &&
             !store.reader.isAccessRemoved(workspace.id, FlaggedTable.MESSAGES, message.id))
+        if (effectiveThreadId != message.threadId) require(store.reader.isEffectiveThreadMember(workspace.id, message.channelId, effectiveThreadId, message.id))
         val payload = buildJsonObject {
             put("branch_point_message_id", message.id); put("client_request_id", requestId)
             putJsonObject("metadata") {
@@ -49,7 +51,7 @@ suspend fun WorkspaceSync.branchThread(connection: ConnectionRecord, workspace: 
                 recipient?.takeIf(NostrKeys::isValidNpub)?.let { put("inherited_agent_recipient_npub", it) }
             }
         }
-        val path = TowerAPI.base(workspace.id) + "/channels/" + TowerAPI.uuid(message.channelId) + "/threads/" + TowerAPI.uuid(message.threadId) + "/branches"
+        val path = TowerAPI.base(workspace.id) + "/channels/" + TowerAPI.uuid(message.channelId) + "/threads/" + TowerAPI.uuid(effectiveThreadId) + "/branches"
         val response = api(connection).client.exchange(method = "POST", path = path, appNpub = workspace.appNpub,
             jsonBody = jsonBody(payload))
         if (response.status !in 200..299) throw TowerError.Http(response.status, "branch_failed", null)

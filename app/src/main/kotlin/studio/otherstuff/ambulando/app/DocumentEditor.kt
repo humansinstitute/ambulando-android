@@ -2,7 +2,17 @@ package studio.otherstuff.ambulando.app
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import studio.otherstuff.ambulando.core.chat.*
 import studio.otherstuff.ambulando.app.media.readBounded
@@ -85,6 +95,9 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
     var notice by remember(docId) { mutableStateOf<String?>(null) }
     var ready by remember(docId) { mutableStateOf(false) }
     var hasSelection by remember(docId) { mutableStateOf(false) }
+    var active by remember(docId) { mutableStateOf(FormatState()) }
+    var linkDraft by remember(docId) { mutableStateOf<String?>(null) }
+    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
     var anchor by remember(docId) { mutableStateOf<JSONObject?>(null) }
     var showReview by remember(docId) { mutableStateOf(false) }
     var showTakeover by remember(docId) { mutableStateOf(false) }
@@ -214,7 +227,7 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
                 when (event.optString("type")) {
                     "ready" -> { ready = true; controller.pageAttached(page) }
                     "change" -> controller.pageChanged(event.getString("content"))
-                    "state" -> hasSelection = event.optJSONObject("active")?.optBoolean("selection") == true
+                    "state" -> event.optJSONObject("active")?.let { a -> hasSelection = a.optBoolean("selection"); active = FormatState.of(a) }
                     "anchor" -> anchor = event.optJSONObject("anchor")
                     "wiki" -> {
                         val from = if (event.has("from") && !event.isNull("from")) event.getInt("from") else null
@@ -262,15 +275,41 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
             TextButton(enabled = ready && !saving && !s.permissionDenied, modifier = Modifier.testTag("doc.editor.versions"), onClick = { showVersions = true }) { Text("Versions") }
         }
         OutlinedTextField(s.title, { controller.setTitle(it) }, label = { Text("Title") }, enabled = !s.followingRemote && !s.permissionDenied, modifier = Modifier.fillMaxWidth().testTag("doc.editor.title"))
-        Row(Modifier.horizontalScroll(rememberScrollState())) {
-            listOf("bold" to "Bold", "italic" to "Italic", "heading" to "Heading", "bulletList" to "Bullets", "orderedList" to "Numbered", "taskList" to "Checklist", "blockquote" to "Quote", "codeBlock" to "Code", "undo" to "Undo", "redo" to "Redo").forEach { (command, label) ->
-                TextButton(enabled = canType, onClick = { host?.call("window.ambulandoDocument.command", command, "{}") }) { Text(label) }
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            val send = { name: String, args: String -> host?.call("window.ambulandoDocument.command", name, args); Unit }
+            var styleMenu by remember { mutableStateOf(false) }
+            Box {
+                Text(if (active.heading in 1..3) "Heading ${active.heading}" else "Text", fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                    color = if (canType) amb.foreground else amb.mutedForeground,
+                    modifier = Modifier.width(92.dp).heightIn(min = 44.dp).clickable(enabled = canType) { styleMenu = true }.testTag("doc.editor.style").padding(horizontal = 8.dp, vertical = 12.dp))
+                DropdownMenu(expanded = styleMenu, onDismissRequest = { styleMenu = false }) {
+                    DropdownMenuItem(text = { Text("Text") }, onClick = { styleMenu = false; send("paragraph", "{}") })
+                    (1..3).forEach { level -> DropdownMenuItem(text = { Text("Heading $level") }, onClick = { styleMenu = false; send("heading", "{\"level\":$level}") }) }
+                }
             }
+            FormatDivider()
+            FormatButton(Icons.Outlined.FormatBold, "Bold", "bold", active.bold, canType) { send("bold", "{}") }
+            FormatButton(Icons.Outlined.FormatItalic, "Italic", "italic", active.italic, canType) { send("italic", "{}") }
+            FormatButton(Icons.Outlined.FormatStrikethrough, "Strikethrough", "strike", active.strike, canType) { send("strike", "{}") }
+            FormatButton(Icons.Outlined.Code, "Inline code", "code", active.code, canType) { send("code", "{}") }
+            FormatButton(Icons.Outlined.Link, "Link", "url", active.link != null, canType) { linkDraft = active.link ?: "https://" }
+            FormatButton(Icons.Outlined.AddLink, "Link to a document or note", "link", false, canType, tag = "doc.editor.link") { scope.launch { wiki.openToolbarPicker() } }
+            FormatDivider()
+            FormatButton(Icons.AutoMirrored.Outlined.FormatListBulleted, "Bulleted list", "bulletList", active.bulletList, canType) { send("bulletList", "{}") }
+            FormatButton(Icons.Outlined.FormatListNumbered, "Numbered list", "orderedList", active.orderedList, canType) { send("orderedList", "{}") }
+            FormatButton(Icons.Outlined.Checklist, "Task list", "taskList", active.taskList, canType) { send("taskList", "{}") }
+            FormatButton(Icons.Outlined.FormatQuote, "Quote", "blockquote", active.blockquote, canType) { send("blockquote", "{}") }
+            FormatButton(Icons.Outlined.DataObject, "Code block", "codeBlock", active.codeBlock, canType) { send("codeBlock", "{}") }
+            FormatButton(Icons.Outlined.HorizontalRule, "Divider", "horizontalRule", false, canType) { send("horizontalRule", "{}") }
+            FormatDivider()
+            FormatButton(Icons.AutoMirrored.Outlined.Undo, "Undo", "undo", false, canType && active.canUndo) { send("undo", "{}") }
+            FormatButton(Icons.AutoMirrored.Outlined.Redo, "Redo", "redo", false, canType && active.canRedo) { send("redo", "{}") }
+            FormatDivider()
             TextButton(enabled = canType, onClick = { picker.launch(arrayOf("*/*")) }) { Text("Attach") }
-            TextButton(enabled = canType, onClick = { scope.launch { wiki.openToolbarPicker() } }, modifier = Modifier.testTag("doc.editor.link")) { Text("Link") }
             TextButton(enabled = canType && hasSelection && !s.dirty, onClick = { host?.call("window.ambulandoDocument.captureAnchor") },
                 modifier = Modifier.testTag("doc.editor.comment")) { Text("Comment") }
         }
+        linkDraft?.let { draft -> LinkDialog(draft, hasLink = active.link != null, onCancel = { linkDraft = null }) { href -> linkDraft = null; host?.call("window.ambulandoDocument.command", "link", org.json.JSONObject().put("href", href).toString()) } }
         uploadRows.filter { it.target == uploadTarget && it.markdown == null }.forEach { upload -> Row { Text(upload.filename); if (upload.retryable) TextButton(onClick = { model.uploads.retry(upload.id) }) { Text("Retry") }; TextButton(onClick = { model.uploads.remove(upload.id); inserted.remove(upload.token) }) { Text("Remove") } } }
         if (hasSelection && s.dirty) Text("Save your changes before commenting on a selection.", Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
 
@@ -332,4 +371,61 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
             })
         }))) dismiss()
     }) { Text("Comment") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
+}
+
+/** The editor page's active formatting (its `state` event), so the toolbar can show what applies at the caret. */
+internal data class FormatState(
+    val bold: Boolean = false, val italic: Boolean = false, val strike: Boolean = false, val code: Boolean = false, val heading: Int = 0,
+    val bulletList: Boolean = false, val orderedList: Boolean = false, val taskList: Boolean = false, val blockquote: Boolean = false,
+    val codeBlock: Boolean = false, val link: String? = null, val canUndo: Boolean = false, val canRedo: Boolean = false,
+) {
+    companion object {
+        fun of(a: JSONObject) = FormatState(
+            a.optBoolean("bold"), a.optBoolean("italic"), a.optBoolean("strike"), a.optBoolean("code"), a.optInt("heading"),
+            a.optBoolean("bulletList"), a.optBoolean("orderedList"), a.optBoolean("taskList"), a.optBoolean("blockquote"),
+            a.optBoolean("codeBlock"), a.optString("link", "").takeIf { it.isNotBlank() && it != "null" }, a.optBoolean("canUndo"), a.optBoolean("canRedo"),
+        )
+    }
+}
+
+/** One toolbar glyph: 30x28 in a 44dp target, a filled tile while its format is active (iOS `iconButton`). */
+@Composable private fun FormatButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, key: String, on: Boolean, enabled: Boolean, tag: String = "doc.editor.format.$key", onClick: () -> Unit,
+) {
+    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
+    Box(Modifier.defaultMinSize(44.dp, 44.dp).clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+        .semantics { contentDescription = label; selected = on }.testTag(tag), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        Box(Modifier.size(30.dp, 28.dp).background(if (on) amb.primary else androidx.compose.ui.graphics.Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            Icon(icon, null, Modifier.size(20.dp), tint = when { !enabled -> amb.mutedForeground.copy(alpha = 0.5f); on -> amb.primaryForeground; else -> amb.foreground })
+        }
+    }
+}
+
+@Composable private fun FormatDivider() {
+    Box(Modifier.padding(horizontal = 4.dp).size(1.dp, 18.dp).background(studio.otherstuff.ambulando.app.ui.theme.Amb.colors.border))
+}
+
+/** The URL prompt (iOS "Link" alert): http, https and mailto only; a bare address gets https://. An empty result removes the link. */
+@Composable private fun LinkDialog(initial: String, hasLink: Boolean, onCancel: () -> Unit, onApply: (String) -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    val normalized = remember(text) { normalizeLink(text) }
+    AlertDialog(onDismissRequest = onCancel, title = { Text("Link") },
+        text = { Column {
+            OutlinedTextField(text, { text = it }, singleLine = true, placeholder = { Text("https://") }, modifier = Modifier.testTag("doc.editor.link.field"))
+            Text("Links open outside the editor.", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+        } },
+        confirmButton = { TextButton(enabled = normalized != null, onClick = { onApply(normalized!!) }, modifier = Modifier.testTag("doc.editor.link.apply")) { Text("Apply") } },
+        dismissButton = { Row {
+            if (hasLink) TextButton(onClick = { onApply("") }, modifier = Modifier.testTag("doc.editor.link.remove")) { Text("Remove link", color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.destructive) }
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        } })
+}
+
+/** `https://` is added to a bare address; only http, https and mailto are accepted. */
+internal fun normalizeLink(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty() || trimmed == "https://") return null
+    val withScheme = if (Regex("^[A-Za-z][A-Za-z0-9+.-]*:").containsMatchIn(trimmed)) trimmed else "https://$trimmed"
+    val scheme = withScheme.substringBefore(':').lowercase()
+    return if (scheme in setOf("http", "https", "mailto") && withScheme.length > scheme.length + 1) withScheme else null
 }

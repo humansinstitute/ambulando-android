@@ -16,6 +16,10 @@ import studio.otherstuff.ambulando.app.ui.chat.RepliesBar
 import studio.otherstuff.ambulando.app.ui.chat.readingWidth
 import studio.otherstuff.ambulando.app.ui.nav.PersonAvatar
 import studio.otherstuff.ambulando.app.ui.theme.AmbType
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.shadow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import studio.otherstuff.ambulando.app.media.readBounded
@@ -56,9 +60,13 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
     val services = LocalAppServices.current
     val scopedTextAttachments = remember(c.id, c.origin, c.signerNpub, w.id) { model.textAttachments(c, w.id) }
+    var visibleMessageLimit by remember(target) { mutableIntStateOf(50) }
+    val threadCount by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
+        threadId?.let { model.store.reader.threadMessageCount(w.id, it) } ?: 0
+    } }.collectAsState(0)
     // One Messages list (no separate Threads view): channel posts carry their thread's reply count and open the thread.
-    val feed by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
-        if (threadId == null) model.store.reader.channelFeed(w.id, channel, 300) else model.store.reader.threadMessages(w.id, threadId, 300).map { FeedPost(it, 0, null) }
+    val feed by remember(target, visibleMessageLimit) { model.store.liveQuery({ it.workspaceId == w.id }) {
+        if (threadId == null) model.store.reader.channelFeed(w.id, channel, 300) else model.store.reader.threadMessages(w.id, threadId, visibleMessageLimit).map { FeedPost(it, 0, null) }
     } }.collectAsState(null)
     val posts = feed ?: emptyList()
     val messages = posts.map { it.message }
@@ -143,6 +151,11 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             Text(if (threadId == null) "No messages yet" else "No replies yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.empty"))
         } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.TopCenter) {
           LazyColumn(Modifier.readingWidth().fillMaxHeight().testTag("chat.messages"), state = listState, contentPadding = PaddingValues(vertical = 8.dp)) {
+            if (threadId != null && threadCount > posts.size) item(key = "earlier-messages") {
+                TextButton(onClick = { visibleMessageLimit += 50 }, modifier = Modifier.fillMaxWidth().testTag("chat.loadEarlier")) {
+                    Text("Load earlier messages (${threadCount - posts.size})")
+                }
+            }
             items(posts, key = { it.id }) { post ->
                 val message = post.message
                 val sender = people?.person(message.senderNpub, message.senderLabel)
@@ -154,6 +167,8 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 }) {
                     Column {
                         MessageRowLayout(sender, studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(message.createdAt), avatar = { PersonAvatar(sender) }) {
+                    if (message.inherited) Text("Inherited history · read only", style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("chat.inherited.${message.id}"))
                     if (message.deleted) Text("Message deleted", fontSize = AmbType.footnote, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground) else {
                         if (message.body.isNotBlank()) RichBlocks(DocumentRender.markdownBlocks(message.body), actions = richActions)
                         MessageAttachment.from(message.raw).filter { it.isText }.forEach { attachment ->
@@ -301,30 +316,60 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         LaunchedEffect(docId, editable, model.documentOpensInEdit) {
             if (model.documentOpensInEdit && editable && model.autoEditedDoc != docId) { model.autoEditedDoc = docId; model.editorDoc = docId }
         }
-        LazyColumn(contentPadding = PaddingValues(16.dp)) { item {
-            Row {
-                TextButton(onClick = { model.editorDoc = docId }, enabled = body != null && record?.accessRemoved == false && !w.accessRemoved) { Text("Edit") }
-                record?.let { MoveDocument(model, it, !it.accessRemoved && !w.accessRemoved) }
+        val c0 = model.connection
+        val drafts by remember(c0?.id, w.id) { model.store.liveQuery({ it.table == StoreTable.DOC_DRAFTS }) { if (c0 == null) emptySet() else model.store.reader.docDraftIds(c0.id, w.id) } }.collectAsState(emptySet())
+        val hasDraft = docId in drafts
+        val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
+        var actionsMenu by remember { mutableStateOf(false) }
+        var openMove by remember { mutableStateOf<(() -> Unit)?>(null) }
+        val canEdit = body != null && record?.accessRemoved == false && !w.accessRemoved
+        Column(Modifier.fillMaxSize().background(studio.otherstuff.ambulando.app.ui.theme.Amb.paperSurround)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp, androidx.compose.ui.Alignment.End)) {
+                record?.let { doc ->
+                    MoveDocument(model, doc, !doc.accessRemoved && !w.accessRemoved) { open -> SideEffect { openMove = open } }
+                    Box {
+                        IconButton(onClick = { actionsMenu = true }, modifier = Modifier.testTag("doc.actions")) { Icon(Icons.Outlined.MoreHoriz, "Document actions") }
+                        DropdownMenu(expanded = actionsMenu, onDismissRequest = { actionsMenu = false }) {
+                            DropdownMenuItem(text = { Text("Move…") }, enabled = !doc.accessRemoved && !w.accessRemoved && services.unlocked, modifier = Modifier.testTag("doc.move"),
+                                onClick = { actionsMenu = false; openMove?.invoke() })
+                        }
+                    }
+                }
+                TextButton(onClick = { model.editorDoc = docId }, enabled = canEdit, modifier = Modifier.testTag("doc.edit")) { Text(if (hasDraft) "Continue editing" else "Edit", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) }
             }
-            val c = model.connection
-            val readerScope = rememberCoroutineScope()
-            val epoch = remember(docId) { mutableIntStateOf(0) }
-            val readerWiki = if (c != null) remember(docId, c.id, w.id) {
-                studio.otherstuff.ambulando.core.docs.WikiLinkController(docId, appWikiEnvironment(model, c, w, docId,
-                    visit = { studio.otherstuff.ambulando.core.docs.WikiVisit(model.connection?.id, model.workspace?.id ?: "", true, epoch.intValue, c.signerNpub, model.wikiContextEpoch) },
-                    beforeLeaving = { true }, navigate = { id -> services.openMention("document", id) }))
-            } else null
-            DisposableEffect(docId) { onDispose { epoch.intValue++ } }
-            body?.let { RichDocument(model, it, record?.accessRemoved == false, readerWiki) } ?: Text("Document body not cached yet")
-            LinkedFrom(model, docId)
-            DocumentComments(model, docId, record?.accessRemoved == false && !w.accessRemoved)
-        } }
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item {
+                val c = model.connection
+                val readerScope = rememberCoroutineScope()
+                val epoch = remember(docId) { mutableIntStateOf(0) }
+                val readerWiki = if (c != null) remember(docId, c.id, w.id) {
+                    studio.otherstuff.ambulando.core.docs.WikiLinkController(docId, appWikiEnvironment(model, c, w, docId,
+                        visit = { studio.otherstuff.ambulando.core.docs.WikiVisit(model.connection?.id, model.workspace?.id ?: "", true, epoch.intValue, c.signerNpub, model.wikiContextEpoch) },
+                        beforeLeaving = { true }, navigate = { id -> services.openMention("document", id) }))
+                } else null
+                DisposableEffect(docId) { onDispose { epoch.intValue++ } }
+                // The paper: white, 4dp corners, a hairline and a soft shadow, as on the iPhone's reader.
+                Column(Modifier.fillMaxWidth().shadow(3.dp, androidx.compose.foundation.shape.RoundedCornerShape(4.dp), ambientColor = amb.primary.copy(alpha = 0.06f), spotColor = amb.primary.copy(alpha = 0.06f))
+                    .background(androidx.compose.ui.graphics.Color.White, androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                    .border(1.dp, androidx.compose.ui.graphics.Color(0xFFE4DFF0), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)).padding(horizontal = 14.dp, vertical = 12.dp).testTag("doc.paper"),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    record?.let { doc ->
+                        val place = model.channels.firstOrNull { it.id == doc.channelId }
+                        val meta = listOfNotNull(place?.let { ch -> model.scopes.firstOrNull { it.id == ch.scopeId }?.name }, place?.let { "#" + it.name },
+                            studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(doc.updatedAt).takeIf { it.isNotBlank() }).joinToString(" · ")
+                        if (meta.isNotEmpty()) Text(meta, fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.footnote, color = amb.mutedForeground, modifier = Modifier.testTag("doc.meta"))
+                        if (hasDraft && canEdit) Box(Modifier.clickable { model.editorDoc = docId }.testTag("doc.draftNotice")) {
+                            studio.otherstuff.ambulando.app.ui.theme.Notice(studio.otherstuff.ambulando.app.ui.theme.NoticeTone.INFO, "You have unsaved edits on this phone. Continue editing to save or discard them.")
+                        }
+                        if (doc.accessRemoved) studio.otherstuff.ambulando.app.ui.theme.Notice(studio.otherstuff.ambulando.app.ui.theme.NoticeTone.INFO, "You can no longer edit this document. Open it on the web to edit.")
+                    }
+                    body?.let { RichDocument(model, it, record?.accessRemoved == false, readerWiki) } ?: Text("Document body not cached yet", color = amb.mutedForeground)
+                    LinkedFrom(model, docId)
+                }
+                DocumentComments(model, docId, record?.accessRemoved == false && !w.accessRemoved)
+            } }
+        }
     } else {
-        val rows by remember(w.id, model.context) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.docs(w.id, model.context) } }.collectAsState(emptyList())
-        LazyColumn { item { CreateDocument(model) }; items(rows, key = { it.id }) { doc ->
-            TextButton(onClick = { services.open(WorkRoute.Doc(w.id, doc.id)) }) { Text(doc.title) }
-            if (doc.accessRemoved) Text("No longer available to you")
-        } }
+        DocsList(model)
     }
 }
 
@@ -429,18 +474,27 @@ internal fun uploadPhase(phase: ComposerUpload.Phase): String = when (phase) {
 @Composable internal fun LinkedFrom(model: AppModel, docId: String) {
     val w = model.workspace ?: return
     val services = LocalAppServices.current
+    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
     val links by remember(w.id, docId) { model.store.liveQuery({ it.workspaceId == w.id && (it.table == StoreTable.DOCS || it.table == StoreTable.DOC_BODIES) }) { model.store.reader.docBacklinks(w.id, docId) } }.collectAsState(null)
     val found = links ?: return
-    Column(Modifier.padding(vertical = 8.dp).testTag("doc.linkedfrom")) {
-        Text("Linked from " + found.docs.size, style = MaterialTheme.typography.titleMedium)
-        found.docs.forEach { page ->
-            val place = model.channels.firstOrNull { it.id == page.channelId }?.let { channel ->
-                listOfNotNull(model.scopes.firstOrNull { it.id == channel.scopeId }?.name, "#" + channel.name).joinToString(" · ")
-            }
-            TextButton(onClick = { services.open(WorkRoute.Doc(w.id, page.id)) }, modifier = Modifier.testTag("doc.linkedfrom.${page.id}")) {
-                Column { Text(page.title); place?.let { Text(it, style = MaterialTheme.typography.labelSmall) } }
-            }
+    var open by remember(docId) { mutableStateOf(false) }
+    Column(Modifier.padding(top = 8.dp).testTag("doc.linkedfrom"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable { open = !open }.testTag("doc.linkedfrom.toggle"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Linked from", Modifier.weight(1f), fontSize = AmbType.subheadline, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = amb.foreground)
+            Icon(if (open) androidx.compose.material.icons.Icons.Outlined.ExpandLess else androidx.compose.material.icons.Icons.Outlined.ExpandMore, null, tint = amb.mutedForeground)
         }
-        Text("Checked ${found.checked} saved page" + (if (found.checked == 1) "" else "s") + " on this device.", style = MaterialTheme.typography.labelSmall)
+        if (open) {
+            found.docs.forEach { page ->
+                val place = model.channels.firstOrNull { it.id == page.channelId }?.let { channel ->
+                    listOfNotNull(model.scopes.firstOrNull { it.id == channel.scopeId }?.name, "#" + channel.name).joinToString(" / ")
+                }
+                Column(Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable { services.open(WorkRoute.Doc(w.id, page.id)) }.testTag("doc.linkedfrom.${page.id}"), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(page.title, fontSize = AmbType.body, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = amb.foreground)
+                    place?.let { Text(it, fontSize = AmbType.caption, color = amb.mutedForeground) }
+                }
+            }
+            if (found.docs.isEmpty()) Text("No page saved on this device links here.", fontSize = AmbType.footnote, color = amb.mutedForeground)
+            Text("Checked ${found.checked} saved page" + (if (found.checked == 1) "" else "s") + " on this device.", fontSize = AmbType.caption, color = amb.mutedForeground)
+        }
     }
 }

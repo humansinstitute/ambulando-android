@@ -37,7 +37,7 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
         MessageMenu(model, message, message.threadSourceId ?: message.takeIf { it.isThreadRoot }?.id,
             "@[Chat message](mention:chat:${message.channelId}#${message.id})", message.takeIf { AutopilotSessionLink.sessionId(it.raw) != null },
             enabled, "message.${message.id}", "Message actions",
-            onEdit = { onEdit(message) }.takeIf { message.senderNpub == c.signerNpub && !message.deleted },
+            onEdit = { onEdit(message) }.takeIf { message.senderNpub == c.signerNpub && !message.deleted && !message.readOnly },
             onDelete = { onDelete(message) })
     }
 }
@@ -47,7 +47,7 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
     val w = model.workspace ?: return; val c = model.connection ?: return
     val reactions by remember(message.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.reactions(w.id, listOf(message.id)) } }.collectAsState(emptyList())
     fun payload(block: JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
-    ReactionBar(reactions, c.signerNpub, enabled, modifier) { emoji, existing ->
+    ReactionBar(reactions, c.signerNpub, enabled && !message.readOnly && !message.accessRemoved, modifier) { emoji, existing ->
         model.submit(if (existing == null) WriteIntent(WriteKind.REACTION_ADD, message.id, payload { put("target_type", "message"); put("emoji", emoji.wire) })
         else WriteIntent(WriteKind.REACTION_REMOVE, message.id, payload { put("reaction_id", existing.id) }))
     }
@@ -61,13 +61,13 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
 @Composable internal fun ChatMessageDialogs(model: AppModel, edit: MessageRecord?, delete: MessageRecord?, onEditDone: () -> Unit, onDeleteDone: () -> Unit) {
     val w = model.workspace ?: return
     fun payload(block: JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
-    edit?.let { editing -> studio.otherstuff.ambulando.app.ui.chat.MessageEditDialog(model, w.id, editing.body, onSave = { encoded ->
+    edit?.takeUnless { it.readOnly }?.let { editing -> studio.otherstuff.ambulando.app.ui.chat.MessageEditDialog(model, w.id, editing.body, onSave = { encoded ->
         model.submit(WriteIntent(WriteKind.MESSAGE_EDIT, editing.id, payload {
             put("channel_id", editing.channelId); editing.threadId?.let { put("thread_id", it) }; put("body", encoded.body); put("row_version", editing.rowVersion)
             put("mentions", JsonArray(encoded.mentions.map { m -> buildJsonObject { m.requestObject.forEach { (k, v) -> put(k, v) } } }))
         })); onEditDone()
     }, onDismiss = { onEditDone() }) }
-    delete?.let { message -> AlertDialog(onDismissRequest = { onDeleteDone() }, title = { Text("Delete message?") }, confirmButton = { TextButton(onClick = {
+    delete?.takeUnless { it.readOnly }?.let { message -> AlertDialog(onDismissRequest = { onDeleteDone() }, title = { Text("Delete message?") }, confirmButton = { TextButton(onClick = {
         model.submit(WriteIntent(WriteKind.MESSAGE_DELETE, message.id, payload { put("channel_id", message.channelId); put("row_version", message.rowVersion); message.threadId?.let { put("thread_id", it) } })); onDeleteDone()
     }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { onDeleteDone() }) { Text("Cancel") } }) }
 }

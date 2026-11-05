@@ -29,7 +29,8 @@ class ConnectionSettingsTest {
                     setContent { MaterialTheme { NativeSettings(model) {} } }
                 })
             }
-            compose.onNodeWithText("Status: Connected").assertIsDisplayed()
+            compose.onNodeWithTag("settings.status").performScrollTo().assertIsDisplayed()
+            compose.onNode(hasText("Connected") and hasAnyAncestor(hasTestTag("settings.status")), useUnmergedTree = true).assertIsDisplayed()
             compose.onNodeWithText("Retry", useUnmergedTree = true).assertIsEnabled().performClick()
             val instrumentation = InstrumentationRegistry.getInstrumentation()
             val chooser = instrumentation.addMonitor(android.content.IntentFilter(Intent.ACTION_CHOOSER), null, true)

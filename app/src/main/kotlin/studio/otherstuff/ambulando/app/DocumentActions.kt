@@ -1,8 +1,11 @@
 package studio.otherstuff.ambulando.app
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowCircleUp
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.verticalScroll
 import studio.otherstuff.ambulando.core.docs.moveDocument
@@ -66,49 +69,58 @@ import java.util.UUID
     val pending by remember(docId) { model.store.liveQuery({ it.table == StoreTable.WRITES }) { model.store.reader.workspaceWrites(c.id, w.id, docId).filter { it.kind == WriteKind.DOC_COMMENT } } }.collectAsState(emptyList())
     val actions = studio.otherstuff.ambulando.app.ui.work.workRichActions()
     val roots = rows.filter { it.parentCommentId == null || rows.none { other -> other.id == it.parentCommentId } }
+    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
     @Composable fun commentRow(row: CommentRecord, reply: Boolean) {
         val author = row.authorNpub(members)
-        Column(Modifier.padding(start = if (reply) 24.dp else 0.dp, top = 8.dp).testTag("doc.comment.${row.id}")) {
+        Column(Modifier.padding(start = if (reply) 14.dp else 0.dp, top = if (reply) 6.dp else 0.dp).testTag("doc.comment.${row.id}"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val quote = row.raw.obj("metadata")?.let { studio.otherstuff.ambulando.core.docs.DocumentAnchor.fromMetadata(it) }?.quote
-            if (quote != null) Text("“" + quote.take(160) + "”", style = MaterialTheme.typography.bodySmall, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("doc.comment.quote"))
+            if (quote != null) Text("“" + quote.take(160) + "”", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.footnote, color = amb.primary, maxLines = 4,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.testTag("doc.comment.quote"))
             studio.otherstuff.ambulando.app.ui.work.CommentRow(row, studio.otherstuff.ambulando.app.ui.work.personFor(people, author, c.signerNpub, names), actions)
-            Row {
-                if (!reply) TextButton(enabled = enabled && !row.accessRemoved, onClick = { replyTo = row.id }, modifier = Modifier.testTag("doc.comment.reply")) { Text("Reply") }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!reply) TextButton(enabled = enabled && !row.accessRemoved, onClick = { replyTo = row.id }, modifier = Modifier.testTag("doc.comment.reply")) { Text("Reply", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.caption) }
                 TextButton(enabled = enabled && !row.accessRemoved, onClick = { model.submit(WriteIntent(WriteKind.DOC_COMMENT_STATUS, row.id, buildJsonObject {
                     put("doc_id", docId); put("status", if (row.status == "resolved") "open" else "resolved"); put("row_version", row.rowVersion)
-                })) }) { Text(if (row.status == "resolved") "Reopen" else "Resolve") }
+                })) }) { Text(if (row.status == "resolved") "Reopen" else "Resolve", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.caption) }
             }
         }
     }
-    Text("Comments", style = MaterialTheme.typography.titleMedium)
-    roots.forEach { root ->
-        commentRow(root, false)
-        rows.filter { it.parentCommentId == root.id }.forEach { commentRow(it, true) }
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Comments", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.body, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = amb.primary)
+        if (roots.isEmpty() && pending.isEmpty()) Text("No comments yet.", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.footnote, color = amb.mutedForeground)
+        roots.forEach { root ->
+            Column(Modifier.fillMaxWidth().background(amb.muted, androidx.compose.foundation.shape.RoundedCornerShape(8.dp)).padding(10.dp)) {
+                commentRow(root, false)
+                rows.filter { it.parentCommentId == root.id }.forEach { commentRow(it, true) }
+            }
+        }
+        pending.forEach { item -> Column(Modifier.padding(top = 4.dp)) {
+            Text(item.string("body")?.let(studio.otherstuff.ambulando.core.chat.MentionCodec::plain) ?: "Comment", color = amb.mutedForeground)
+            studio.otherstuff.ambulando.app.ui.work.WriteStatusLine(item, "Comment", studio.otherstuff.ambulando.app.rememberWriteActions(model))
+        } }
+        replyTo?.let { id -> Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Replying to " + (rows.firstOrNull { it.id == id }?.let { studio.otherstuff.ambulando.app.ui.work.displayName(it.authorNpub(members) ?: "", names, c.signerNpub) } ?: "a comment"), Modifier.weight(1f), fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.caption, color = amb.mutedForeground)
+            TextButton(onClick = { replyTo = null }) { Text("Cancel") }
+        } }
+        Row(verticalAlignment = androidx.compose.ui.Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            studio.otherstuff.ambulando.app.ui.work.MentionTextEntry(draft.text, { draft.text = it }, draft.mentions, { draft.mentions = it },
+                { query -> model.store.reader.mentionCandidates(w.id, query, viewerNpub = c.signerNpub) }, if (replyTo != null) "Reply" else "Comment on this document", Modifier.weight(1f).padding(vertical = 8.dp), Modifier.fillMaxWidth().testTag("doc.comment.field"), enabled = enabled)
+            IconButton(enabled = enabled && !draft.isBlank, modifier = Modifier.testTag("doc.comment.send"), onClick = {
+                val encoded = draft.encoded()
+                if (model.submit(WriteIntent(WriteKind.DOC_COMMENT, docId, buildJsonObject {
+                    put("body", encoded.body); replyTo?.let { put("parent_comment_id", it) }
+                }))) { draft.clear(); replyTo = null }
+            }) { Icon(Icons.Filled.ArrowCircleUp, "Send comment", Modifier.size(30.dp), tint = if (enabled && !draft.isBlank) amb.primary else amb.mutedForeground) }
+        }
     }
-    pending.forEach { item -> Column(Modifier.padding(top = 8.dp)) { Text(item.string("body")?.let(studio.otherstuff.ambulando.core.chat.MentionCodec::plain) ?: "Comment"); Text(item.lastError ?: item.state.wire, style = MaterialTheme.typography.labelSmall)
-        Row { TextButton(onClick = { model.act { model.writes.retry(item.id, c) } }) { Text("Retry") }; TextButton(onClick = { model.act { model.store.writer.discardWrite(item.id) } }) { Text("Discard") } }
-    } }
-    replyTo?.let { id -> Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text("Replying to " + (rows.firstOrNull { it.id == id }?.let { studio.otherstuff.ambulando.app.ui.work.displayName(it.authorNpub(members) ?: "", names, c.signerNpub) } ?: "a comment"), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-        TextButton(onClick = { replyTo = null }) { Text("Cancel") }
-    } }
-    studio.otherstuff.ambulando.app.ui.work.MentionTextEntry(draft.text, { draft.text = it }, draft.mentions, { draft.mentions = it },
-        { query -> model.store.reader.mentionCandidates(w.id, query, viewerNpub = c.signerNpub) }, "Add comment", Modifier.fillMaxWidth().padding(vertical = 8.dp), Modifier.fillMaxWidth().testTag("doc.comment.field"), enabled = enabled)
-    TextButton(enabled = enabled && !draft.isBlank, modifier = Modifier.testTag("doc.comment.send"), onClick = {
-        val encoded = draft.encoded()
-        if (model.submit(WriteIntent(WriteKind.DOC_COMMENT, docId, buildJsonObject {
-            put("body", encoded.body); replyTo?.let { put("parent_comment_id", it) }
-        }))) { draft.clear(); replyTo = null }
-    }) { Text("Comment") }
 }
 
-@Composable internal fun CreateDocument(model: AppModel) {
+@Composable internal fun CreateDocument(model: AppModel, trigger: @Composable (open: () -> Unit) -> Unit = { open -> TextButton(onClick = open) { Text("New document") } }) {
     val w = model.workspace ?: return; val c = model.connection ?: return
     var selectedChannel by remember(model.context) { mutableStateOf(model.context.channelId) }
     var showing by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
-    TextButton(onClick = { showing = true }) { Text("New document") }
+    trigger { showing = true }
     if (showing) AlertDialog(onDismissRequest = { showing = false }, title = { Text("New document") }, text = { Column {
         OutlinedTextField(title, { title = it }, label = { Text("Title") })
         model.channels.filter { !it.accessRemoved && (model.context.scopeId == null || it.scopeId == model.context.scopeId) }.forEach { channel -> TextButton(onClick = { selectedChannel = channel.id }) { Text((if (selectedChannel == channel.id) "✓ " else "") + channel.name) } }
@@ -133,7 +145,8 @@ import java.util.UUID
  * scope changes, entering or leaving a private conversation needs an explicit acknowledgement) before anything is sent,
  * and reports exactly what Tower confirmed, including "not known" when an answer was lost.
  */
-@Composable internal fun MoveDocument(model: AppModel, doc: studio.otherstuff.ambulando.core.transport.DocRecord, enabled: Boolean) {
+@Composable internal fun MoveDocument(model: AppModel, doc: studio.otherstuff.ambulando.core.transport.DocRecord, enabled: Boolean,
+    trigger: (@Composable (open: () -> Unit) -> Unit)? = null) {
     val w = model.workspace ?: return; val c = model.connection ?: return
     val services = studio.otherstuff.ambulando.app.ui.nav.LocalAppServices.current
     var open by remember(doc.id) { mutableStateOf(false) }
@@ -143,7 +156,8 @@ import java.util.UUID
     var outcome by remember(doc.id) { mutableStateOf<String?>(null) }
     val source = model.channels.firstOrNull { it.id == doc.channelId }
     val names by produceState(emptyMap<String, String>(), w.id) { value = model.store.reader.directoryMembers(w.id).associate { it.npub to it.label } }
-    TextButton(enabled = enabled && source != null && services.unlocked, onClick = { open = true; outcome = null }, modifier = Modifier.testTag("doc.move")) { Text("Move…") }
+    if (trigger != null) trigger { if (enabled && source != null && services.unlocked) { open = true; outcome = null } }
+    else TextButton(enabled = enabled && source != null && services.unlocked, onClick = { open = true; outcome = null }, modifier = Modifier.testTag("doc.move")) { Text("Move…") }
     if (!open || source == null) return
     val plan = destination?.let { studio.otherstuff.ambulando.core.docs.DocMovePlan.consequences(source, it, c.signerNpub, names) }
     AlertDialog(onDismissRequest = { if (!working) open = false }, title = { Text("Move document") }, text = {

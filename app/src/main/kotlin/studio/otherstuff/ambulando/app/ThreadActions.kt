@@ -76,7 +76,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
 /** Shared header/message menu; all mutation controls also respect local access loss and author identity. */
 @Composable internal fun MessageMenu(
     model: AppModel, message: MessageRecord?, rootId: String?, reference: String?, autopilot: MessageRecord?,
-    enabled: Boolean, prefix: String, label: String, conversationThreadId: String? = message?.threadId, onRename: (() -> Unit)? = null,
+    enabled: Boolean, prefix: String, label: String, conversationThreadId: String? = message?.effectiveThreadId ?: message?.threadId, onRename: (() -> Unit)? = null,
     /** Edit of the author's own message (shown only when given). */
     onEdit: (() -> Unit)? = null,
     /** Delete handled by the screen (its dialog outlives a row that scrolls away); otherwise the menu confirms itself. */
@@ -93,6 +93,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     var branching by remember(message?.id) { mutableStateOf(false) }
     val branchRequestId = remember(message?.id) { "branch:${java.util.UUID.randomUUID()}" }
     val writable = enabled && services.unlocked && message?.accessRemoved != true
+    val canMutate = writable && message?.readOnly != true
     fun copy(text: String) { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(label, text)) }
     Box {
         IconButton(onClick = { expanded = true }, enabled = message != null || reference != null || autopilot != null || onRename != null,
@@ -109,7 +110,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                         try {
                             val recipient = model.store.reader.members(w.id).firstOrNull { it.npub == message.senderNpub && it.isAgent }?.npub
                                 ?: model.store.reader.workspaceAgents(w.id).firstOrNull { it.agentNpub == message.senderNpub }?.agentNpub
-                            val created = model.sync.branchThread(c, w, message, recipient, branchRequestId)
+                            val created = model.sync.branchThread(c, w, message, recipient, branchRequestId, conversationThreadId)
                             services.open(WorkRoute.Thread(w.id, created.channelId, created.id))
                         } finally { branching = false }
                     }
@@ -126,9 +127,9 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                 modifier = Modifier.testTag("$prefix.menu.ref"))
             if (onRename != null) DropdownMenuItem({ Text("Rename thread") }, enabled = writable, onClick = { expanded = false; onRename() },
                 modifier = Modifier.testTag("$prefix.menu.rename"))
-            if (onEdit != null) DropdownMenuItem({ Text("Edit message") }, enabled = writable,
+            if (onEdit != null && message?.readOnly != true) DropdownMenuItem({ Text("Edit message") }, enabled = canMutate,
                 onClick = { expanded = false; onEdit() }, modifier = Modifier.testTag("$prefix.menu.edit"))
-            if (message != null && !message.deleted && message.senderNpub == c.signerNpub) DropdownMenuItem({ Text("Delete message") }, enabled = writable,
+            if (message != null && !message.deleted && message.senderNpub == c.signerNpub && !message.readOnly) DropdownMenuItem({ Text("Delete message") }, enabled = writable,
                 onClick = { expanded = false; if (onDelete != null) onDelete() else deleting = true }, modifier = Modifier.testTag("$prefix.menu.delete"))
         }
     }

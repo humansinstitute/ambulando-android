@@ -42,6 +42,8 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -110,7 +112,7 @@ fun BrowserScreen(browser: BrowserModel) {
                 unavailable != null && tab == null -> Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Notice(NoticeTone.WARNING, unavailable, Modifier.testTag("browser.unavailable"))
                 }
-                tab == null || tab.isBlank && !tab.loading -> EmptyTab()
+                tab == null || tab.isBlank && !tab.loading -> BrowserStartPage(browser)
                 else -> key(tab.id) {
                     AndroidView(
                         factory = { (tab.webView.parent as? ViewGroup)?.removeView(tab.webView); tab.webView },
@@ -163,19 +165,6 @@ fun BrowserScreen(browser: BrowserModel) {
 
 @Composable
 private fun key(id: Any, content: @Composable () -> Unit) = androidx.compose.runtime.key(id) { content() }
-
-@Composable
-private fun EmptyTab() {
-    val amb = Amb.colors
-    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
-        PassageMark(48.dp)
-        Text("Enter an address below", style = MaterialTheme.typography.titleMedium, color = amb.foreground)
-        Text(
-            "Pages open here with your Nostr key available through window.nostr. Each site asks before it can see your key, and every signature asks you first.",
-            style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground, textAlign = TextAlign.Center,
-        )
-    }
-}
 
 @Composable
 private fun BottomBar(browser: BrowserModel, tab: BrowserTab?) {
@@ -240,6 +229,12 @@ private fun BottomBar(browser: BrowserModel, tab: BrowserTab?) {
                                     menu = false
                                     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)) }
                                 })
+                            }
+                            if (browser.canSaveFavourite(tab)) {
+                                val saved = browser.favourite(tab) != null
+                                DropdownMenuItem(text = { Text(if (saved) "Remove from favourites" else "Add to favourites") },
+                                    leadingIcon = { Icon(if (saved) Icons.Filled.Star else Icons.Outlined.StarOutline, null) },
+                                    onClick = { menu = false; browser.toggleFavourite(tab) }, modifier = Modifier.testTag("browser.menu.favourite"))
                             }
                             HorizontalDivider()
                             DropdownMenuItem(text = { Text("New tab") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { menu = false; browser.open(null) })

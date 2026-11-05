@@ -108,6 +108,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     LaunchedEffect(model.identityState) {
         val key = "${studio.otherstuff.ambulando.core.browser.NIP07Sites.STATE_KEY}:${c.signerNpub}"
         browser.configure(false, studio.otherstuff.ambulando.core.browser.NIP07Sites.decode(model.catalog.reader.state(key)), { model.identity.publicKeyHex() }, { model.identity.sign(it) }, NIP07SitePersistence { sites -> model.act { model.catalog.writer.setState(key, studio.otherstuff.ambulando.core.browser.NIP07Sites.encode(sites)) } })
+        browser.configureFavourites(studio.otherstuff.ambulando.app.browser.StoreFavouritesPersistence(model.catalog))
     }
     DisposableEffect(browser) { onDispose { browser.updateLocked(true) } }
     /** Hands a stored attachment to Android's share sheet (downloading it into the private cache first). */
@@ -189,7 +190,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         model.notice?.let { message -> AlertDialog(onDismissRequest = model::clearNotice, title = { Text("Not completed") }, text = { Text(message) }, confirmButton = { TextButton(onClick = model::clearNotice) { Text("Dismiss") } }) }
         viewingImage?.let { (id, title) -> StoredImageViewer(model, id, title, onShare = { shareStorage(id) }) { viewingImage = null } }
         if (chooser) { studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceChooser(model) { chooser = false }; return@CompositionLocalProvider }
-        if (settings) { NativeSettings(model) { settings = false }; return@CompositionLocalProvider }
+        if (settings) { NativeSettings(model, onManage = { settings = false; model.workspace?.let { ws -> management = ManagementTarget(AdminRoute.Home, model.activeBoundaryId) } }) { settings = false }; return@CompositionLocalProvider }
         management?.let { target -> WorkspaceManagement(model, target) { management = null }; return@CompositionLocalProvider }
         if (search) { NativeSearch(model) { search = false }; return@CompositionLocalProvider }
         if (notifications) { NativeNotifications(model) { notifications = false }; return@CompositionLocalProvider }

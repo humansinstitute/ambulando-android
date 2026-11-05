@@ -169,7 +169,7 @@ internal fun WriteTx.writeMessages(records: List<MessageRecord>): Int {
                 if (r.channelId !in blocked) {
                     val n = s.run(
                         r.workspaceId, r.id, r.channelId, r.threadId, r.threadSourceId, r.body, r.senderNpub, r.senderLabel, r.clientRequestId,
-                        r.createdAt, r.updatedAt, r.rowVersion, r.deleted, canonical(r.raw),
+                        r.createdAt, r.updatedAt, r.rowVersion, r.deleted, canonical(kotlinx.serialization.json.JsonObject((r.raw.filterKeys { it !in setOf("effective_thread_id", "inherited", "read_only", "owning_thread_id") } + ("thread_id" to kotlinx.serialization.json.JsonPrimitive(r.threadId))))),
                     )
                     if (n > 0) { changed += 1; emit(StoreTable.MESSAGES, r.workspaceId) }
                 }

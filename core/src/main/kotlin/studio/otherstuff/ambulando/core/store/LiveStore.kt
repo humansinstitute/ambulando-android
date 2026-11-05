@@ -28,8 +28,13 @@ suspend fun StoreWriter.applyTombstones(workspaceId: String, tombstones: Set<Tom
             if (n > 0) { removed += n; for (t in tables) emit(t, workspaceId) }
         }
         for (t in tombstones) when (t) {
-            is Tombstone.Message -> run("DELETE FROM messages WHERE workspace_id = ? AND id = ?", t.id, StoreTable.MESSAGES)
+            is Tombstone.Message -> {
+                run("DELETE FROM thread_message_members WHERE workspace_id = ? AND message_id = ?", t.id, StoreTable.MESSAGES)
+                run("DELETE FROM messages WHERE workspace_id = ? AND id = ?", t.id, StoreTable.MESSAGES)
+            }
             is Tombstone.Thread -> {
+                run("DELETE FROM thread_message_members WHERE workspace_id = ? AND thread_id = ?", t.id, StoreTable.MESSAGES)
+                if (db.run("DELETE FROM thread_message_members WHERE workspace_id = ? AND message_id IN (SELECT id FROM messages WHERE workspace_id = ? AND thread_id = ?)", workspaceId, workspaceId, t.id) > 0) emit(StoreTable.MESSAGES, workspaceId)
                 run("DELETE FROM threads WHERE workspace_id = ? AND id = ?", t.id, StoreTable.THREADS, StoreTable.MESSAGES)
                 run("DELETE FROM messages WHERE workspace_id = ? AND thread_id = ?", t.id, StoreTable.MESSAGES)
             }

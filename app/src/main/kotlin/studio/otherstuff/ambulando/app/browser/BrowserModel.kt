@@ -23,6 +23,7 @@ import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -34,6 +35,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import studio.otherstuff.ambulando.app.web.WebProfiles
 import studio.otherstuff.ambulando.app.web.WebSurfaceUnavailable
+import studio.otherstuff.ambulando.core.browser.BrowserFavourite
+import studio.otherstuff.ambulando.core.browser.BrowserFavourites
 import studio.otherstuff.ambulando.core.browser.BrowserURLPolicy
 import studio.otherstuff.ambulando.core.browser.NIP07Broker
 import studio.otherstuff.ambulando.core.browser.NIP07Context
@@ -45,6 +48,9 @@ import studio.otherstuff.ambulando.core.browser.NIP07SitePersistence
 import studio.otherstuff.ambulando.core.nostr.NostrEvent
 import studio.otherstuff.ambulando.core.nostr.NostrEventTemplate
 import studio.otherstuff.ambulando.core.nostr.WireJson
+import studio.otherstuff.ambulando.core.store.LocalStore
+import studio.otherstuff.ambulando.core.store.setState
+import studio.otherstuff.ambulando.core.store.state
 import java.net.URI
 import java.util.UUID
 
@@ -68,6 +74,18 @@ class BrowserTab internal constructor(val webView: WebView) {
 
     val isBlank: Boolean get() = url == null || url?.startsWith("about:") == true
     val displayTitle: String get() = title.ifEmpty { url?.let { runCatching { URI(it).host }.getOrNull() } ?: "New tab" }
+}
+
+/** Where the favourites list is kept: device app state (`BrowserFavourites.STATE_KEY`). Null clears it. */
+interface BrowserFavouritesPersistence {
+    suspend fun load(): String?
+    suspend fun save(text: String?)
+}
+
+/** Favourites in this device's local store, apart from website data, Nostr permissions and any connection. */
+class StoreFavouritesPersistence(private val store: LocalStore) : BrowserFavouritesPersistence {
+    override suspend fun load(): String? = store.reader.state(BrowserFavourites.STATE_KEY)
+    override suspend fun save(text: String?) { store.writer.setState(BrowserFavourites.STATE_KEY, text) }
 }
 
 /** A JavaScript `alert()` or `confirm()` waiting for the user. */
@@ -113,6 +131,19 @@ class BrowserModel(private val context: Context) {
          * NIP-07 for the top frame of HTTPS pages. Every call goes to the native listener, which checks the calling frame
          * and origin itself; the page only ever receives the public key and events the user approved.
          */
+        /**
+         * The icon the page names for home screens (`apple-touch-icon`), else its largest `icon`, else `/favicon.ico`.
+         * Only an HTTPS answer is kept, and it is only ever shown as a picture.
+         */
+        val SITE_ICON_SCRIPT = """
+            (() => {
+              const links = [...document.querySelectorAll('link[rel][href]')].map(l => ({ rel: l.rel.toLowerCase(), href: l.href, size: parseInt((l.sizes && l.sizes.value || '0').split('x')[0]) || 0 }));
+              const touch = links.filter(l => l.rel.includes('apple-touch-icon')).sort((a, b) => b.size - a.size)[0];
+              const icon = links.filter(l => l.rel.split(/\s+/).includes('icon')).sort((a, b) => b.size - a.size)[0];
+              return (touch || icon || {}).href || (location.origin + '/favicon.ico');
+            })()
+        """.trimIndent()
+
         val NOSTR_SCRIPT = """
             (() => {
               if (window.top !== window || location.protocol !== 'https:') return;
@@ -172,6 +203,14 @@ class BrowserModel(private val context: Context) {
     var unavailable by mutableStateOf<String?>(null)
         private set
 
+    /** Sites saved to the new-tab page, kept on this device apart from website data and Nostr permissions. */
+    var favourites by mutableStateOf<List<BrowserFavourite>>(emptyList())
+        private set
+    private val favouriteList = BrowserFavourites()
+    private var favouritesPersistence: BrowserFavouritesPersistence? = null
+    /** Favourites writes run one after another, so the stored list is always the latest. */
+    private var favouritesWrite: Job? = null
+
     /** Sample-data mode and tests only: this HTML answers for the URL's host instead of the network. */
     var samplePage: Pair<String, String>? = null
 
@@ -194,6 +233,73 @@ class BrowserModel(private val context: Context) {
         broker = made
         this.locked = locked
         sites = savedSites
+    }
+
+    // Favourites
+
+    /** Loads the saved favourites and keeps later changes in [persistence]. */
+    suspend fun configureFavourites(persistence: BrowserFavouritesPersistence) {
+        val loaded = BrowserFavourites.decode(persistence.load())
+        favouritesPersistence = persistence
+        favouriteList.replaceWith(loaded)
+        favourites = favouriteList.items
+    }
+
+    fun favourite(tab: BrowserTab?): BrowserFavourite? = tab?.takeUnless { it.isBlank }?.url?.let { favouriteList.favourite(it) }
+
+    /** Whether the menu can offer to save this tab's page (an HTTPS page the browser opens). */
+    fun canSaveFavourite(tab: BrowserTab?): Boolean = tab?.url?.takeUnless { tab.isBlank }?.let { BrowserFavourites.opens(it) } == true
+
+    /** Adds the tab's page to the favourites (or removes it if it is one), then looks for the icon the page advertises. */
+    fun toggleFavourite(tab: BrowserTab) {
+        val url = tab.url?.takeUnless { tab.isBlank } ?: return
+        favouriteList.favourite(url)?.let { removeFavourite(it.id); return }
+        val saved = runCatching { favouriteList.add(tab.title, url) }.getOrElse { tab.refusal = it.message; return }
+        persistFavourites()
+        val documentId = tab.documentId
+        tab.webView.evaluateJavascript(SITE_ICON_SCRIPT) { found ->
+            // Only the page that was saved answers; the reply is a JSON string literal (or null).
+            if (tab.documentId != documentId) return@evaluateJavascript
+            val icon = runCatching { WireJson.parseToJsonElement(found).jsonPrimitive.content }.getOrNull()?.takeIf { found != "null" }
+            favouriteList.setSiteIcon(icon, saved.id)
+            persistFavourites()
+        }
+    }
+
+    /** Saves an edited favourite, or a new one typed on the start page. Throws the reason it was refused. */
+    fun saveFavourite(favourite: BrowserFavourite) {
+        favouriteList.save(favourite)
+        persistFavourites()
+    }
+
+    fun removeFavourite(id: UUID) {
+        favouriteList.remove(id)
+        persistFavourites()
+    }
+
+    fun moveFavourite(id: UUID, by: Int) {
+        favouriteList.moveBy(id, by)
+        persistFavourites()
+    }
+
+    /** Opens a favourite in the tab showing the start page (or a new tab if there is none). */
+    fun openFavourite(favourite: BrowserFavourite) {
+        val tab = selected
+        if (tab != null && tab.isBlank) { load(favourite.url, tab); presented = true } else open(favourite.url)
+    }
+
+    /** Resolves once every favourites change made so far has been written (tests). */
+    suspend fun favouritesSaved() { favouritesWrite?.join() }
+
+    private fun persistFavourites() {
+        favourites = favouriteList.items
+        val persistence = favouritesPersistence ?: return
+        val text = favouriteList.encoded()
+        val previous = favouritesWrite
+        favouritesWrite = scope.launch {
+            previous?.join()
+            runCatching { persistence.save(text) }
+        }
     }
 
     // Tabs

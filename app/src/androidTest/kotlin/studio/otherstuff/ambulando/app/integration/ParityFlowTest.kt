@@ -43,6 +43,39 @@ class ParityFlowTest {
         compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
     }
 
+    @Test fun inheritedHistoryIsReadOnlyAndEarlierRowsBeyondFiveHundredAreReachable() = launch { model ->
+        openGeneralChat(model)
+        val root = runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).first { it.message.threadId != null }.message }
+        compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
+        compose.onNodeWithTag("chat.message.${root.id}").performClick()
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("thread.actions").fetchSemanticsNodes().isNotEmpty() }
+        runBlocking { model.sync.engine.waitUntilIdle() }
+        val thread = root.threadId!!
+        val rows = (0 until 620).map { i -> studio.otherstuff.ambulando.core.transport.MessageRecord(
+            workspaceId = SampleIds.STUDIO, channelId = SampleIds.GENERAL, threadId = "f0000000-0000-4000-8000-000000000001",
+            effectiveThreadId = thread, id = "f1000000-0000-4000-8000-${i.toString().padStart(12, '0')}",
+            body = "Inherited branch row $i", senderNpub = model.connection!!.signerNpub, createdAt = "2030-01-01T00:00:00Z",
+        ) }
+        runBlocking { rows.chunked(200).forEach { model.store.writer.upsertEffectiveThreadPage(SampleIds.STUDIO, SampleIds.GENERAL, thread, it) } }
+        val last = rows.last()
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.inherited.${last.id}", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        val inside = hasAnyAncestor(hasTestTag("chat.message.${last.id}"))
+        compose.onNode(hasTestTag("reaction.quick") and inside).assertIsNotEnabled()
+        compose.onNodeWithTag("message.${last.id}.actions").performClick()
+        compose.onNodeWithTag("message.${last.id}.menu.edit").assertDoesNotExist()
+        compose.onNodeWithTag("message.${last.id}.menu.delete").assertDoesNotExist()
+        compose.onNodeWithTag("message.${last.id}.menu.branch").assertIsEnabled()
+        compose.onNodeWithTag("message.${last.id}.menu.copy").performClick()
+        repeat(12) {
+            compose.onNodeWithTag("chat.messages").performScrollToIndex(0)
+            compose.onNodeWithTag("chat.loadEarlier").performClick()
+            compose.waitForIdle()
+        }
+        compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${rows.first().id}"))
+        compose.onNodeWithTag("chat.inherited.${rows.first().id}", useUnmergedTree = true).assertExists()
+        assertEquals("f0000000-0000-4000-8000-000000000001", runBlocking { model.store.reader.message(SampleIds.STUDIO, rows.first().id)?.threadId })
+    }
+
     @Test fun reactionsGoByWireNameAndAnEditKeepsTheMessageAndItsThreadCanBeRenamed() = launch { model ->
         openGeneralChat(model)
         val text = "Parity flow ${System.nanoTime()}"
@@ -169,7 +202,8 @@ class ParityFlowTest {
         val destination = if (doc.channelId == SampleIds.DESIGN) SampleIds.GENERAL else SampleIds.DESIGN
         compose.waitUntil(20_000) { compose.onAllNodesWithText("Native app plan (sample)").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Native app plan (sample)").performClick()
-        compose.waitUntil(20_000) { compose.onAllNodesWithTag("doc.move").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("doc.actions").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("doc.actions").performClick()
         compose.onNodeWithTag("doc.move").performClick()
         compose.onNodeWithTag("doc.move.dest.$destination").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("The document moves; it is not copied.", substring = true).fetchSemanticsNodes().isNotEmpty() }

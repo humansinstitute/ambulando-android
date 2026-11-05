@@ -114,7 +114,12 @@ data class MessageRecord(
     /** Local store flag (Android: access loss is non-destructive): the record is no longer visible to this identity but kept
      *  readable, labelled and excluded from sync. Always false for records parsed from Tower. */
     val accessRemoved: Boolean = false,
+    /** The conversation this row is being viewed in; canonical ownership remains [threadId]. */
+    val effectiveThreadId: String? = null,
 ) {
+    val inherited: Boolean get() = effectiveThreadId != null && threadId != effectiveThreadId
+    val readOnly: Boolean get() = inherited
+
     /** Channel-level post (thread root), as the web client maps it: `thread_source_message_id == id`, or no thread. */
     val isThreadRoot: Boolean get() = threadId == null || threadSourceId == id
 
@@ -127,10 +132,11 @@ data class MessageRecord(
             val createdAt = raw.string("created_at") ?: ""
             return MessageRecord(
                 workspaceId = workspace.lowercase(), id = id!!.lowercase(), channelId = channel!!.lowercase(),
-                threadId = raw.string("thread_id")?.lowercase(), threadSourceId = raw.string("thread_source_message_id")?.lowercase(),
+                threadId = (raw.string("owning_thread_id") ?: raw.string("thread_id"))?.lowercase(), threadSourceId = raw.string("thread_source_message_id")?.lowercase(),
                 body = raw.string("body") ?: "", senderNpub = raw.string("sender_npub"), senderLabel = raw.string("created_by_actor_label"),
                 clientRequestId = raw.string("client_request_id"), createdAt = createdAt, updatedAt = raw.string("updated_at") ?: createdAt,
                 rowVersion = flexibleLong(raw["row_version"]) ?: 0, deleted = raw.string("record_state") == "deleted", raw = raw,
+                effectiveThreadId = raw.string("effective_thread_id")?.lowercase(),
             )
         }
     }
