@@ -45,7 +45,7 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
 internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Unit)
 
 /** Only local database reads occur in these native surfaces. */
-@Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null) {
+@Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null, family: Boolean = false, writeAllowed: Boolean = true) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
     val threadChannel by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.thread(w.id, it)?.channelId } } }.collectAsState(null)
@@ -133,13 +133,13 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     val ids = messages.map { it.id }
     LaunchedEffect(target, ids) { if (threadId != null) model.markViewed(ViewStateRecord.ResourceType.THREAD, threadId); if (!w.accessRemoved && model.channels.firstOrNull { it.id == channel }?.accessRemoved != true) model.sync.refreshReactions(c, w, threadId ?: channel, ids) }
     val threadRemoved by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.isAccessRemoved(w.id, FlaggedTable.THREADS, it) } ?: false } }.collectAsState(false)
-    val removed = threadRemoved || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true
+    val removed = !writeAllowed || threadRemoved || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true
     val richActions = storedRichActions(model, !removed)
     // The message dialogs live here, outside the list: a row that scrolls away must not take an open dialog with it.
     var editing by remember(target) { mutableStateOf<MessageRecord?>(null) }
     var deleting by remember(target) { mutableStateOf<MessageRecord?>(null) }
     Column(Modifier.fillMaxSize()) {
-        if (threadId != null) ThreadHeader(model, threadId, !removed)
+        if (threadId != null && !family) ThreadHeader(model, threadId, !removed)
         val listState = remember(target) { androidx.compose.foundation.lazy.LazyListState() }
         ChatFollowsNewest(listState, target, feed != null, posts.map { it.id } + pending.map { it.id }, model.chatPositions[target.draftKey], sent) {
             model.chatPositions[target.draftKey] = it
@@ -193,9 +193,9 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                     }
                         }
                         if (threadId == null && message.threadId != null && post.replyCount > 0) RepliesBar(post.replyCount, post.lastReplyAt, Modifier.testTag("chat.thread.${message.threadId}"))
-                        if (!message.deleted) ChatMessageReactions(model, message, !removed, Modifier.padding(start = studio.otherstuff.ambulando.app.ui.chat.MessageTextInset, end = 16.dp))
+                        if (!family && !message.deleted) ChatMessageReactions(model, message, !removed, Modifier.padding(start = studio.otherstuff.ambulando.app.ui.chat.MessageTextInset, end = 16.dp))
                     }
-                    ChatMessageControls(model, message, !removed, onEdit = { editing = it }, onDelete = { deleting = it },
+                    if (!family) ChatMessageControls(model, message, !removed, onEdit = { editing = it }, onDelete = { deleting = it },
                         modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).offset(x = (-4).dp, y = (-4).dp))
                 }
                 }
@@ -213,7 +213,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                         androidx.compose.foundation.layout.FlowRow {
                             TextButton(onClick = { model.act { model.outbox.retry(item.id, c) } }) { Text("Retry") }
                             TextButton(onClick = { model.act { model.outbox.discard(item.id, true); text = model.store.reader.draft(target)?.text ?: text } }) { Text("Edit draft") }
-                            TextButton(onClick = { model.act { model.outbox.discard(item.id, false) } }) { Text("Discard") }
+                            if (!family) TextButton(onClick = { model.act { model.outbox.discard(item.id, false) } }) { Text("Discard") }
                         }
                     }
                   }
@@ -242,14 +242,14 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             TextButton(onClick = { model.removeDraftAttachment(target, added.id); justAdded = null }, modifier = Modifier.testTag("chat.paste.undo")) { Text("Undo") }
         } }
         val composing = ready && !removed
-        if (composing && activeMention != null) mentionResults?.let { results ->
+        if (!family && composing && activeMention != null) mentionResults?.let { results ->
             studio.otherstuff.ambulando.app.ui.chat.MentionLookahead(results, onPick = { mention ->
                 field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.mention(field.value, mention)
                 mentions = (mentions.filter { it.npub != mention.npub || it.type != mention.type } + mention)
                 model.saveDraft(target, text, mentions)
             })
         }
-        studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceComposerContext(model)
+        if (!family) studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceComposerContext(model)
         val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
         val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
         val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
@@ -259,7 +259,8 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         Column(Modifier.fillMaxWidth().background(amb.card).imePadding()) {
         HorizontalDivider(thickness = 1.dp, color = amb.border)
         Row(Modifier.readingWidth().align(androidx.compose.ui.Alignment.CenterHorizontally).clickable(enabled = composing) { composerFocus.requestFocus(); keyboard?.show() }.testTag("chat.composer.area").padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onPick = { picker.launch(arrayOf("image/*", "*/*")) }, onPaste = {
+            if (family) TextButton(onClick = { picker.launch(arrayOf("image/*")) }, enabled = composing) { Text("Photo") }
+            else studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onPick = { picker.launch(arrayOf("image/*", "*/*")) }, onPaste = {
                 val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
                 clipboard.primaryClip?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::pasteUri) }
             }, onMention = { field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); model.saveDraft(target, text, mentions) })
@@ -280,7 +281,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                     // A big paste: the field keeps its text and selection; the pasted text becomes a staged file.
                     is ComposerPaste.Decision.Attach -> if (ready) model.addPastedText(target, decision.text) { justAdded = it }
                 }
-            }, enabled = composing, maxLines = 8, visualTransformation = pills,
+            }, enabled = composing, maxLines = if (family) 3 else 8, visualTransformation = pills,
                 textStyle = androidx.compose.ui.text.TextStyle(color = amb.foreground, fontSize = AmbType.body),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(amb.primary),
                 decorationBox = { inner ->
@@ -292,15 +293,18 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 modifier = Modifier.fillMaxWidth().then(Modifier.focusRequester(composerFocus)).testTag("chat.composer").contentReceiver(receiver))
             if (PastedTextPolicy.showsCounter(text)) Text("${PastedTextPolicy.remaining(text)} characters left", fontSize = AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(start = 12.dp, top = 2.dp).testTag("chat.counter"))
             }
-            studio.otherstuff.ambulando.app.ui.chat.SendButton(composing && (text.isNotBlank() || draftAttachments.any { it.isText }) && !UploadToken.containsAny(text)) {
+            val sendEnabled = composing && (text.isNotBlank() || draftAttachments.any { it.isText }) && !UploadToken.containsAny(text)
+            val sendAction = {
                 val body = text
-                model.send(target, body, c, w, mentions, enqueued = { composeOnly?.onEnqueued?.invoke(it) }) { if (text == body) text = ""; sent++ }
+                model.send(target, body, c, w, mentions, enqueued = { composeOnly?.onEnqueued?.invoke(it) }) { if (text == body) text = ""; sent++ }; Unit
             }
+            if (family) Button(onClick = sendAction, enabled = sendEnabled, modifier = Modifier.heightIn(min = 56.dp).testTag("chat.send")) { Text("Send", style = MaterialTheme.typography.titleMedium) }
+            else studio.otherstuff.ambulando.app.ui.chat.SendButton(sendEnabled, sendAction)
         }
         }
         openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
         ChatMessageDialogs(model, editing.takeIf { !removed }, deleting.takeIf { !removed }, onEditDone = { editing = null }, onDeleteDone = { deleting = null })
-        openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed) { openSent = null } }
+        openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed && !family) { openSent = null } }
     }
 }
 

@@ -49,6 +49,7 @@ fun ConnectScreen(
     checkDescriptor: suspend (origin: String) -> Result<DescriptorSummaryModel>,
     connect: suspend (origin: String) -> Unit,
 ) {
+    val family = studio.otherstuff.ambulando.app.BuildConfig.GRANDPARENT_CHAT
     val amb = Amb.colors
     var origin by remember { mutableStateOf("") }
     var descriptor by remember { mutableStateOf<DescriptorSummaryModel?>(null) }
@@ -62,9 +63,9 @@ fun ConnectScreen(
         Spacer(Modifier.height(32.dp))
         BrandHeader(npub?.let { "Signed in as ${shortNpub(it)}" })
         Column(Modifier.ambCard(amb), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Connect your nStack", style = EditorialStyle, color = amb.primary)
+            Text(if (family) "Connect to your family" else "Connect your nStack", style = EditorialStyle, color = amb.primary)
             Text(
-                "Enter the HTTPS address of your Tower. Ambulando reads its public service descriptor first, then lists the " +
+                if (family) "Enter the connection address your family gave you. We will check which family chats you can join." else "Enter the HTTPS address of your Tower. Ambulando reads its public service descriptor first, then lists the " +
                     "workspaces your identity can access.",
                 style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground,
             )
@@ -75,11 +76,11 @@ fun ConnectScreen(
                 modifier = Modifier.fillMaxWidth().testTag("connect.origin"),
             )
             checkError?.let { Notice(NoticeTone.ERROR, it) }
-            descriptor?.let { DescriptorSummary(it) }
+            descriptor?.let { if (family) Text("Connection found") else DescriptorSummary(it) }
             notice?.let { Notice(NoticeTone.ERROR, it) }
             val current = descriptor
             if (current == null) {
-                PrimaryButton(if (working) "…" else "Check service", enabled = origin.isNotEmpty() && !working, modifier = Modifier.testTag("connect.check"), onClick = {
+                PrimaryButton(if (working) "…" else if (family) "Check connection" else "Check service", enabled = origin.isNotEmpty() && !working, modifier = Modifier.testTag("connect.check"), onClick = {
                     working = true
                     scope.launch {
                         checkDescriptor(origin).fold({ descriptor = it }, { checkError = it.message ?: "The service could not be checked." })
@@ -87,7 +88,7 @@ fun ConnectScreen(
                     }
                 })
             } else {
-                PrimaryButton(if (working) "…" else "Connect and discover workspaces", enabled = !working, modifier = Modifier.testTag("connect.go"), onClick = {
+                PrimaryButton(if (working) "…" else if (family) "Connect" else "Connect and discover workspaces", enabled = !working, modifier = Modifier.testTag("connect.go"), onClick = {
                     working = true
                     scope.launch { try { connect(origin) } finally { working = false } }
                 })

@@ -15,13 +15,14 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /** Retained session owner. UI observes SQLite; all requests use the bounded sync engine. */
-class AppModel(val environment: AppEnvironment, private val androidContext: android.content.Context) : studio.otherstuff.ambulando.app.background.BackgroundEntryPoint {
+class AppModel(val environment: AppEnvironment, private val androidContext: android.content.Context, private val dependencies: AppSessionDependencies? = null) : studio.otherstuff.ambulando.app.background.BackgroundEntryPoint {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /** Work that must finish even though the screen that asked for it is already gone (a recreated activity, for example). */
     fun launchDetached(block: suspend () -> Unit) { viewModelScope.launch(kotlinx.coroutines.NonCancellable) { block() } }
+    val family by lazy { FamilyCoordinator(this) }
     val browser by lazy { studio.otherstuff.ambulando.app.browser.BrowserModel(androidContext) }
-    val identity = environment.identityService()
+    val identity = dependencies?.identity ?: environment.identityService()
     /** Connections, discovered workspace lists and presentation preferences. Never content, drafts or queues (those live in partitions). */
     val catalog = LocalStore(environment.storeFile.parentFile!!)
     val diagnostics = DiagnosticsLog(file = File(environment.baseDir, "diagnostics/connection.json"))
@@ -31,7 +32,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     /** Sample data also has a second synthetic Tower serving the same workspace ids, so adding a Tower can be exercised on a device. */
     private val secondSample = if (environment.isSample) SampleTower(File(environment.baseDir, "tower2"), originUrl = "https://second.sample.invalid") else null
     private val sampleRouter = if (sample != null && secondSample != null) studio.otherstuff.ambulando.core.sample.SampleTowerRouter(listOf(sample, secondSample)) else null
-    val transport = ObservedTransport(sampleRouter ?: OkHttpTransport(), diagnostics)
+    private val sessionTransport = dependencies?.transport ?: sampleRouter ?: OkHttpTransport()
+    val transport = ObservedTransport(if (BuildConfig.GRANDPARENT_CHAT) FamilyGuardTransport(sessionTransport, catalog, identity) else sessionTransport, diagnostics)
     internal val secondSampleTower: SampleTower? get() = secondSample
     /** The in-process synthetic Tower of sample-data mode (null otherwise); connected tests move its documents as "someone else". */
     internal val sampleTower: SampleTower? get() = sample
@@ -40,7 +42,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     /** Descriptor reads and connecting a Tower use the catalog; workspace content never does. */
     val catalogSync = WorkspaceSync(catalog, sharedEngine, identity, transport, transfers = transfers)
-    private val streamTransport = sampleRouter?.events ?: OkHttpEventStreamTransport()
+    private val streamTransport = dependencies?.streams ?: sampleRouter?.events ?: OkHttpEventStreamTransport()
     private val storePool = WorkspaceStorePool(catalog, File(environment.storeFile.parentFile!!, "Workspaces"))
     val runtimes = WorkspaceRuntimes(catalog, storePool) { hook ->
         RuntimeEnvironment(
@@ -660,6 +662,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Foreground refresh of the workspace in front. Other workspaces are kept current by their own streams. */
     fun refresh(force: Boolean = false) {
+        if (BuildConfig.GRANDPARENT_CHAT) act { FamilyBinding.decode(catalog.reader.state(FamilyBinding.KEY))?.let(family::verify) }
         val rt = active ?: return; val w = workspace ?: return
         val c = rt.connection
         if (identityState !is IdentityState.Unlocked || w.accessRemoved) return
@@ -727,3 +730,6 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 /** How often the sidebar structure is re-read while the app is in front, whatever the event stream reports. */
 private const val STRUCTURE_RECONCILE_MILLIS = 60_000L
 private const val BACKGROUND_ROTATION_KEY = "background.rotation"
+
+/** Constructor injection for isolated integration tests; no intent, setting or build mode can enable this seam. */
+data class AppSessionDependencies(val identity: IdentityService, val transport: HttpTransport, val streams: EventStreamTransport)

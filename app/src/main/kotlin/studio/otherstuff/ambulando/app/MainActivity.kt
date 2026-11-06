@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = light
                 }
             }
-            AmbulandoApp(model)
+            if (BuildConfig.GRANDPARENT_CHAT) GrandparentApp(model) else AmbulandoApp(model)
         } }
     }
 }

@@ -36,6 +36,11 @@ public-profile requests, browser isolation and optional background reads.
 Previously received records remain readable when access is removed, with editing disabled. Server deletion tombstones
 still remove records. Keeping a local copy grants no future server access. Disconnecting stops using that Tower's data and moves it to a private recovery folder; removing the identity deletes it.
 
+## Grandparent Chat
+
+A separate native family-chat app shares this core and UI source. It remembers one explicitly selected existing
+conversation, with its own package, identity and caches. See [setup, build and validation](docs/grandparent-chat.md).
+
 ## Build
 
 Use JDK 21, Android SDK platform 37.2, the pinned Gradle wrapper and Bun for the locked editor dependencies:

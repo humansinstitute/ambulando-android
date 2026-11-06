@@ -71,9 +71,9 @@ fun PassageMark(size: Dp = 32.dp) {
 fun BrandHeader(subtitle: String?) {
     val amb = Amb.colors
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        PassageMark(64.dp)
-        Text("Ambulando", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold), color = amb.foreground)
-        subtitle?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = amb.mutedForeground, textAlign = TextAlign.Center) }
+        if (studio.otherstuff.ambulando.app.BuildConfig.GRANDPARENT_CHAT) Image(painterResource(R.drawable.family_mark), "Grandparent Chat", Modifier.size(64.dp)) else PassageMark(64.dp)
+        Text(if (studio.otherstuff.ambulando.app.BuildConfig.GRANDPARENT_CHAT) "Grandparent Chat" else "Ambulando", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold), color = amb.foreground)
+        (if (studio.otherstuff.ambulando.app.BuildConfig.GRANDPARENT_CHAT) "One conversation for your family." else subtitle)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = amb.mutedForeground, textAlign = TextAlign.Center) }
     }
 }
 
@@ -102,6 +102,8 @@ private fun BusyLabel(working: Boolean, text: String) = if (working) "…" else 
 @Composable
 fun ImportIdentityScreen(notice: String?, onImport: suspend (nsec: String, pin: String) -> Unit) {
     val amb = Amb.colors
+    val family = studio.otherstuff.ambulando.app.BuildConfig.GRANDPARENT_CHAT
+    var securityDetails by remember { mutableStateOf(false) }
     var nsec by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
@@ -115,17 +117,21 @@ fun ImportIdentityScreen(notice: String?, onImport: suspend (nsec: String, pin: 
         Spacer(Modifier.height(32.dp))
         BrandHeader("Solvitur ambulando — it is solved by walking.")
         Column(Modifier.ambCard(amb), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Import your identity", style = EditorialStyle, color = amb.primary)
+            Text(if (family) "Sign in" else "Import your identity", style = EditorialStyle, color = amb.primary)
             Text(
-                "Paste the nsec you use with Ambulando. It is encrypted on this device with your PIN and a key held by the " +
+                if (family) "Use the sign-in key you use with Ambulando, then choose a PIN for this phone." else "Paste the nsec you use with Ambulando. It is encrypted on this device with your PIN and a key held by the " +
                     "Android Keystore, and never leaves this app.",
                 style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground,
             )
+            if (family) {
+                androidx.compose.material3.TextButton(onClick = { securityDetails = !securityDetails }) { Text("About your sign-in") }
+                if (securityDetails) Text("Your sign-in key stays encrypted on this device with your PIN and Android Keystore. Keep your own backup; this app cannot recover a forgotten PIN.", style = MaterialTheme.typography.bodySmall)
+            }
             SecretField(nsec, { nsec = it }, "nsec1…", numeric = false, tag = "import.nsec")
             SecretField(pin, { pin = it.filter(Char::isDigit).take(12) }, "PIN (4–12 digits)", numeric = true, tag = "import.pin")
             SecretField(confirm, { confirm = it.filter(Char::isDigit).take(12) }, "Confirm PIN", numeric = true, tag = "import.confirm")
             notice?.let { Notice(NoticeTone.ERROR, it) }
-            PrimaryButton(BusyLabel(working, "Import and encrypt"), enabled = valid && !working, modifier = Modifier.testTag("import.submit"), onClick = {
+            PrimaryButton(BusyLabel(working, if (family) "Continue" else "Import and encrypt"), enabled = valid && !working, modifier = Modifier.testTag("import.submit"), onClick = {
                 working = true
                 scope.launch {
                     try { onImport(nsec.trim(), pin) } finally { nsec = ""; pin = ""; confirm = ""; working = false }

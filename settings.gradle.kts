@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ambulando-android"
-include(":core", ":app")
+include(":core", ":app", ":grandparent")

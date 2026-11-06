@@ -19,7 +19,7 @@ import java.io.File
  *   on every screen. Release builds cannot enter it ([BuildConfig.DEBUG] is false there and the flag is ignored).
  */
 sealed class AppEnvironment(val baseDir: File, val aliasSuffix: String) {
-    class Production(context: Context) : AppEnvironment(context.noBackupFilesDir, "")
+    class Production(context: Context) : AppEnvironment(context.noBackupFilesDir, if (BuildConfig.GRANDPARENT_CHAT) ".grandparent" else "")
     class Sample(context: Context) : AppEnvironment(File(context.cacheDir, AndroidStorage.SAMPLE_DIR), AndroidStorage.SAMPLE_ALIAS_SUFFIX)
 
     val isSample: Boolean get() = this is Sample
@@ -51,7 +51,7 @@ sealed class AppEnvironment(val baseDir: File, val aliasSuffix: String) {
 
         fun select(context: Context, intent: Intent?, instrumentationFlag: Boolean = false): AppEnvironment {
             val wantsSample = intent?.getBooleanExtra(SAMPLE_EXTRA, false) == true || instrumentationFlag
-            return if (BuildConfig.DEBUG && wantsSample) Sample(context) else Production(context)
+            return if (BuildConfig.DEBUG && !BuildConfig.GRANDPARENT_CHAT && wantsSample) Sample(context) else Production(context)
         }
     }
 }
