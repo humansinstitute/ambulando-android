@@ -22,3 +22,5 @@ or colour was redrawn, and non-pixel PNG metadata was removed.
   AndroidX and Jetpack Compose (Apache 2.0), Kotlin standard library, kotlinx.coroutines and kotlinx.serialization
   (Apache 2.0), OkHttp (Apache 2.0), ACINQ secp256k1-kmp with libsecp256k1 (Apache 2.0 / MIT), the bundled SQLite
   driver (Apache 2.0; SQLite itself is public domain).
+
+- UnifiedPush Android connector 3.3.5 and Google Tink cryptography (Apache 2.0), used for local RFC8291 Web Push decryption. No Firebase or Play Services SDK is bundled. Upstream: https://codeberg.org/UnifiedPush/android-connector and https://github.com/tink-crypto/tink-java .

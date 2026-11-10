@@ -25,8 +25,11 @@ Updates signed with the same release certificate retain the identity, connection
 - Native canvas viewport and naplets, task relationships, native Excalidraw previews and bundled board editing.
 - Context references, agents/activity, Toolbox, scope/channel management and an HTTPS browser with explicit NIP-07 consent.
 
-See [feature status and validation](docs/parity-matrix.md). Feed, Android OS push notifications, FIPS transport, pipeline/session
-viewers, workrooms and reports are not supported. iPhone has APNs-specific registration and tap support; Android needs its own supported provider contract. WApp configuration
+Optional Android OS push uses UnifiedPush and requires a distributor plus matching configured Tower support.
+See the [phone/server setup guide](docs/android-push-setup.md); installed source alone does not establish live delivery.
+
+See [feature status and validation](docs/parity-matrix.md). Feed, FIPS transport, pipeline/session
+viewers, workrooms and reports are not supported. WApp configuration
 and personal agent configuration remain in the web app.
 
 ## Privacy

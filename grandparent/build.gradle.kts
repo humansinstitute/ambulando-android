@@ -49,6 +49,8 @@ kotlin {
 }
 
 dependencies {
+    // Shared source includes Ambulando's optional push adapter; the family app does not enroll it.
+    implementation(libs.unifiedpush.connector)
     implementation(project(":core"))
     implementation(libs.secp256k1.jni.android)
     implementation(libs.androidx.core.ktx)

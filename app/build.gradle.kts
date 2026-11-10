@@ -15,8 +15,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 23
-        versionName = "0.8.3"
+        versionCode = 24
+        versionName = "0.8.4"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
@@ -68,6 +68,7 @@ android {
 kotlin { jvmToolchain(21) }
 
 dependencies {
+    implementation(libs.unifiedpush.connector)
     implementation(project(":core"))
     implementation(libs.secp256k1.jni.android)
     implementation(libs.androidx.core.ktx)

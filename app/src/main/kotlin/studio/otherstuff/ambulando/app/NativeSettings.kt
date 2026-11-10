@@ -77,7 +77,10 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
                 SettingsAction("Export diagnostics", tag = "settings.diagnostics.export") { model.exportDiagnostics() }
                 FormDivider(); SettingsAction("Clear diagnostics", tag = "settings.diagnostics.clear") { model.clearDiagnostics() }
             }
-            FormGroup("Notifications") { Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { NativeNotificationSettings(model) } }
+            FormGroup("Notifications") { Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                studio.otherstuff.ambulando.app.push.PushSettings(model)
+                NativeNotificationSettings(model)
+            } }
             FormGroup("Nostr profiles", "Names and pictures from people's public Nostr profiles are saved on this device and shown offline. Profiles are read from relay.primal.net, nos.lol and purplepag.es, as in the web app, and each picture is fetched from the address in the profile, which sees this device's network address. Nothing is signed or sent with them. Turning this off stops all of these requests; saved names and pictures stay until you disconnect.") {
                 SettingsToggle("Public Nostr profiles", profiles, "settings.profiles.toggle") { on -> profiles = on; model.setPublicProfiles(on) }
             }

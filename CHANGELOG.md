@@ -1,3 +1,11 @@
+## 0.8.4 (24) — push candidate, configuration required
+
+- Add optional Google-free UnifiedPush setup, Android notification permission/channel handling and per-workspace device enrollment.
+- Validate encrypted push hints against stored connections and fresh inbox access; show generic alerts and revalidate taps after unlock.
+- Add device opt-out, endpoint renewal, lease/revocation handling and bounded event-triggered delivery follow-up.
+- Document exact phone/server setup and the optional read-only credential required for locked/cold alerts.
+- Requires matching configured Tower support and real provider/device verification before a working-push release claim.
+
 ## 0.8.3 (23)
 
 - Create a new Nostr identity directly on the phone and immediately save it in the PIN-protected, Android Keystore-backed vault.

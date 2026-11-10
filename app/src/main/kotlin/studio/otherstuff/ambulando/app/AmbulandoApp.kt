@@ -97,6 +97,19 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     var management by remember { mutableStateOf<ManagementTarget?>(null) }
     var search by remember { mutableStateOf(false) }
     var notifications by remember { mutableStateOf(false) }
+    LaunchedEffect(model.pushDestination, navRestored) {
+        val pending = model.pushDestination ?: return@LaunchedEffect
+        if (!navRestored || pending.first != model.activeBoundaryId) return@LaunchedEffect
+        val workspace = model.workspace ?: return@LaunchedEffect
+        when (val d = pending.second) {
+            is studio.otherstuff.ambulando.core.notifications.NotificationDestination.Thread -> { model.section = AppSection.CHAT; stacks.push(AppSection.CHAT, WorkRoute.Thread(workspace.id, d.channelId, d.threadId)) }
+            is studio.otherstuff.ambulando.core.notifications.NotificationDestination.Channel -> { model.section = AppSection.CHAT; stacks.push(AppSection.CHAT, WorkRoute.Channel(workspace.id, d.channelId)) }
+            is studio.otherstuff.ambulando.core.notifications.NotificationDestination.Task -> { model.section = AppSection.TASKS; stacks.push(AppSection.TASKS, WorkRoute.Task(workspace.id, d.taskId)) }
+            is studio.otherstuff.ambulando.core.notifications.NotificationDestination.Doc -> { model.section = AppSection.DOCS; stacks.push(AppSection.DOCS, WorkRoute.Doc(workspace.id, d.docId)) }
+            else -> notifications = true
+        }
+        model.pushDestination = null
+    }
     var person by remember { mutableStateOf<String?>(null) }
     var viewingImage by remember(model.workspace?.id) { mutableStateOf<Pair<String, String>?>(null) }
     var chooser by remember { mutableStateOf(false) }

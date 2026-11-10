@@ -16,6 +16,41 @@ import java.io.File
 
 /** Retained session owner. UI observes SQLite; all requests use the bounded sync engine. */
 class AppModel(val environment: AppEnvironment, private val androidContext: android.content.Context, private val dependencies: AppSessionDependencies? = null) : studio.otherstuff.ambulando.app.background.BackgroundEntryPoint {
+    internal val androidPush get() = if (BuildConfig.GRANDPARENT_CHAT) null else (androidContext.applicationContext as? AmbulandoApplication)?.push
+    internal var pendingPushTap by mutableStateOf<Triple<String, String, Long>?>(null)
+    internal var pushDestination by mutableStateOf<Pair<String, studio.otherstuff.ambulando.core.notifications.NotificationDestination>?>(null)
+    internal fun pushTap(intent: android.content.Intent?) {
+        if (environment.isSample || intent?.action != studio.otherstuff.ambulando.app.push.AndroidPush.TAP) return
+        val instance = intent.getStringExtra(studio.otherstuff.ambulando.app.push.AndroidPush.INSTANCE) ?: return
+        val item = intent.getStringExtra(studio.otherstuff.ambulando.app.push.AndroidPush.ITEM) ?: return
+        val seq = intent.getLongExtra(studio.otherstuff.ambulando.app.push.AndroidPush.SEQUENCE, 0)
+        if (!isUUID(instance) || !isUUID(item) || seq <= 0) return
+        // Only a pending intent issued for a locally accepted push can route. External activity intents confer no authority.
+        val row = androidPush?.state?.all()?.firstOrNull { it.instance == instance && it.enabled && (it.seen[item] ?: 0) >= seq } ?: return
+        pendingPushTap = Triple(row.instance, item, seq)
+        act { resolvePushTap() }
+    }
+    private val pushTapLock = kotlinx.coroutines.sync.Mutex()
+    private suspend fun resolvePushTap() { pushTapLock.withLock {
+        val tap = pendingPushTap ?: return
+        if (identityState !is IdentityState.Unlocked) return
+        val row = androidPush?.state?.all()?.firstOrNull { it.instance == tap.first && it.enabled && it.signerNpub == identityState?.npub } ?: run { pendingPushTap = null; return }
+        val entry = entries.firstOrNull { it.connection.id == row.connectionId && it.connection.origin == row.origin && it.connection.signerNpub == row.signerNpub && it.workspace.id == row.workspaceId && it.workspace.appNpub == row.appNpub && !it.workspace.accessRemoved } ?: return
+        try {
+            // A fresh server read recomputes access. Never route directly from push channel/task/doc ids.
+            val item = (towerAPI(entry.connection).notificationItem(row.workspaceId, row.appNpub, tap.second) as? NotificationChange.Upsert)?.item
+            if (!entry.enabled) { entry.enabled = true; preferences = preferences.withEnabled(entry.id, true); WorkspaceCatalog.save(catalog, preferences) }
+            activate(entry)
+            if (activeBoundaryId != entry.id || pendingPushTap != tap) return
+            val destination = item?.takeIf { it.accessible && it.status == "active" &&
+                (it.expiresAt == null || runCatching { java.time.Instant.parse(it.expiresAt).isAfter(java.time.Instant.now()) }.getOrDefault(false))
+            }?.let(studio.otherstuff.ambulando.core.notifications.NotificationRouting::destination)
+                ?: studio.otherstuff.ambulando.core.notifications.NotificationDestination.Unavailable
+            pushDestination = entry.id to destination
+            pendingPushTap = null
+            // Opening the alert does not change inbox read state; viewing the subject follows normal read bookkeeping.
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { showNotificationMessage("Could not verify this alert. Unlock and reconnect to retry.") }
+    } }
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /** Work that must finish even though the screen that asked for it is already gone (a recreated activity, for example). */
@@ -58,6 +93,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var foreground = true; private set
     fun foreground(active: Boolean) = act {
         foreground = active
+        if (active && !environment.isSample) { androidPush?.launch { reconcile(this@AppModel) }; viewModelScope.launch { resolvePushTap() } }
         browser.updateLocked(!active || identityState !is IdentityState.Unlocked)
         browser.tabs.forEach { if (active) it.webView.onResume() else it.webView.onPause() }
         runStructureTicker(active)
@@ -345,7 +381,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         identityState = identity.createIdentity(pin)
         restore()
     }
-    suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); resumeEnabled(force = true); refresh() }
+    suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); resumeEnabled(force = true); refresh(); androidPush?.launch { reconcile(this@AppModel) }; resolvePushTap() }
     /** Locking pauses every runtime (jobs, streams, leases); the enabled set is kept, so unlocking resumes exactly it. */
     fun lock() = act { browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }
     suspend fun descriptor(origin: String) = catalogSync.checkDescriptor(TowerOrigin(origin))
@@ -394,6 +430,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Deletes what is outside SQLite for a connection (staged bytes, text caches, file caches), then retires its runtimes and partitions. */
     private suspend fun clearConnection(c: ConnectionRecord) {
+        if (!environment.isSample) androidPush?.disable(this, c.id)
         val listed = storeWorkspaces(c)
         val stagedWrites = ArrayList<String>(); val attachments = ArrayList<String>()
         for (w in listed) {
@@ -450,7 +487,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         catalogObservation = viewModelScope.launch {
             // The value is the listing itself: a query that returns an unchanged constant would never publish a change.
             catalog.liveQuery(matches = { it.table == StoreTable.WORKSPACES || it.table == StoreTable.CONNECTIONS }) { WorkspaceCatalog.listings(catalog, identityState?.npub) }.collect {
-                try { applyListings() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = "Could not open a workspace safely: ${ConnectionFailure.userMessage(e) ?: "try again"}" }
+                try { applyListings(); resolvePushTap() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = "Could not open a workspace safely: ${ConnectionFailure.userMessage(e) ?: "try again"}" }
             }
         }
     }

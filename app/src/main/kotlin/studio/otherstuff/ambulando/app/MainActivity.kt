@@ -7,10 +7,18 @@ import androidx.activity.compose.setContent
 import studio.otherstuff.ambulando.app.ui.theme.AmbulandoTheme
 
 class MainActivity : ComponentActivity() {
+    private var currentModel: AppModel? = null
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        currentModel?.pushTap(intent)
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val environment = AppEnvironment.select(applicationContext, intent)
         val model = (application as AmbulandoApplication).model(environment)
+        currentModel = model
+        model.pushTap(intent)
         model.restoreNavigation = environment.restoresNavigation(intent)
         lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
             override fun onStart(owner: androidx.lifecycle.LifecycleOwner) { model.foreground(true) }

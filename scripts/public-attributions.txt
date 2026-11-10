@@ -30,3 +30,7 @@ troygoode@gmail.com
 kekee000@gmail.com
 junmer@foxmail.com
 ebrahim@gnu.org
+
+# Protocol Buffers schema attribution bundled by UnifiedPush's Tink dependency (protobuf-java 4.33.6).
+kenton@google.com
+protobuf-global-extension-registry@google.com

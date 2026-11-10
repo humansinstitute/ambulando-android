@@ -103,8 +103,7 @@ no remembered state, query or editor can follow a switch into another workspace.
 ## 7. Platform limits
 
 - Background execution is opportunistic and decided by Android.
-- Android OS push notifications are not available: this app needs a supported Android provider and Tower device-registration contract. iPhone's APNs contract is separate. The
-  in-app notification inbox (§8) is supported and works without push.
+- Optional UnifiedPush OS notifications require configured Tower delivery, a distributor and permission; see [setup](android-push-setup.md). Locked/cold fetch requires the optional GET-only credential. The inbox works without push.
 - FIPS transport is not offered; the app is HTTPS-only and never falls back silently.
 
 ## 8. Notifications
@@ -141,8 +140,7 @@ every consuming app). Android reads it through the same single sync owner as eve
   record uses the existing view-state flow, and Tower derives notification read from it.
 - **Redaction and access.** An unavailable item shows no text and cannot be opened; a content-free tombstone removes the
   row; a 403 purges stored notification text for that workspace; a missing route (older Tower) is reported as unsupported.
-- **Not offered.** Alerts, phone push, quiet hours and per-device settings (not implemented by Tower; no push provider is
-  configured) are described as unavailable rather than shown as controls.
+- **Phone push.** Optional UnifiedPush uses encrypted routing hints and a fresh authenticated inbox-item read. The client never follows a payload origin or record URL. Canonical installation/transport enrollment is scoped to the saved connection, signer and workspace; generic OS alerts, per-device opt-out, renewal and cold-tap validation use that binding. Source/tests do not imply configured live delivery. Quiet hours are not offered.
 
 ## 9. Workspace administration
 

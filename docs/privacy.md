@@ -87,3 +87,13 @@ copy. Uninstall/clear app storage also removes it. No diagnostic upload occurs a
 creates a text file with the installed version/build, Android API level and UTC export time and opens Android's
 share chooser. Its cache copy is replaced on the next export and removed on the next interactive app session or Clear
 diagnostics; Android may evict it earlier. A chosen receiving app controls any copy it saves or shares onward.
+
+## Optional Android push
+
+UnifiedPush is opt-in for each workspace and requires a separately installed distributor. Tower sends encrypted Web
+Push routing hints through the selected push service. That service sees traffic metadata and endpoint use; it does
+not receive private message text from Ambulando. The app fetches the current inbox item from the saved trusted Tower
+before displaying purpose-only alerts. Endpoint capabilities and Web Push registration material stay in private
+no-backup app storage and are never included in diagnostics. The connector maintains its own app-private encryption
+keys. No FCM SDK or Google Play Services is included. Locked/cold delivery additionally requires the existing optional
+read-only background credential; push never restores an interactive signing session. See [setup](android-push-setup.md).

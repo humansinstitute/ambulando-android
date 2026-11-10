@@ -10,6 +10,7 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntimes
 
 /** WorkManager never resumes an interactive signing session after process death. */
 class AmbulandoApplication : Application(), BackgroundHost {
+    val push by lazy { studio.otherstuff.ambulando.app.push.AndroidPush(this) }
     var activeModel: AppModel? = null; private set
     private val models = mutableMapOf<Boolean, AppModel>()
     /** One session owner per storage environment for the process, including time granted to WorkManager. */
