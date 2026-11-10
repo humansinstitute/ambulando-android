@@ -100,16 +100,19 @@ private fun BusyLabel(working: Boolean, text: String) = if (working) "…" else 
  * apps or the browser. The scalar is sealed with the PIN and a non-exportable Android Keystore key.
  */
 @Composable
-fun ImportIdentityScreen(notice: String?, onImport: suspend (nsec: String, pin: String) -> Unit) {
+fun ImportIdentityScreen(notice: String?, onImport: suspend (nsec: String, pin: String) -> Unit,
+                         onCreate: (suspend (pin: String) -> Unit)? = null) {
     val amb = Amb.colors
     val family = studio.otherstuff.ambulando.app.BuildConfig.GRANDPARENT_CHAT
+    var creating by remember { mutableStateOf(false) }
+    var failure by remember { mutableStateOf<String?>(null) }
     var securityDetails by remember { mutableStateOf(false) }
     var nsec by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var working by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val valid = nsec.trim().startsWith("nsec1") && pin.length in 4..12 && pin.all(Char::isDigit) && pin == confirm
+    val valid = (creating || nsec.trim().startsWith("nsec1")) && pin.length in 4..12 && pin.all(Char::isDigit) && pin == confirm
     Column(
         Modifier.fillMaxSize().background(amb.background).verticalScroll(rememberScrollState()).imePadding().padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -117,9 +120,9 @@ fun ImportIdentityScreen(notice: String?, onImport: suspend (nsec: String, pin: 
         Spacer(Modifier.height(32.dp))
         BrandHeader("Solvitur ambulando — it is solved by walking.")
         Column(Modifier.ambCard(amb), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (family) "Sign in" else "Import your identity", style = EditorialStyle, color = amb.primary)
+            Text(if (creating) "Create your identity" else if (family) "Sign in" else "Import your identity", style = EditorialStyle, color = amb.primary)
             Text(
-                if (family) "Use the sign-in key you use with Ambulando, then choose a PIN for this phone." else "Paste the nsec you use with Ambulando. It is encrypted on this device with your PIN and a key held by the " +
+                if (creating) "Create a new Nostr identity on this phone. It is saved immediately, encrypted with your PIN and Android Keystore. The secret is never displayed or copied." else if (family) "Use the sign-in key you use with Ambulando, then choose a PIN for this phone." else "Paste the nsec you use with Ambulando. It is encrypted on this device with your PIN and a key held by the " +
                     "Android Keystore, and never leaves this app.",
                 style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground,
             )
@@ -127,14 +130,28 @@ fun ImportIdentityScreen(notice: String?, onImport: suspend (nsec: String, pin: 
                 androidx.compose.material3.TextButton(onClick = { securityDetails = !securityDetails }) { Text("About your sign-in") }
                 if (securityDetails) Text("Your sign-in key stays encrypted on this device with your PIN and Android Keystore. Keep your own backup; this app cannot recover a forgotten PIN.", style = MaterialTheme.typography.bodySmall)
             }
-            SecretField(nsec, { nsec = it }, "nsec1…", numeric = false, tag = "import.nsec")
+            if (onCreate != null && !family) {
+                androidx.compose.material3.TextButton(enabled = !working, modifier = Modifier.testTag("identity.mode"), onClick = {
+                    creating = !creating; nsec = ""; pin = ""; confirm = ""; failure = null
+                }) { Text(if (creating) "Use an existing nsec instead" else "Create a new identity on this phone") }
+            }
+            if (creating) Text("This identity stays on this phone. There is currently no key export or recovery: losing the phone, uninstalling the app, removing the identity or forgetting the PIN can lose access. A new identity needs its own Tower invitation; it does not inherit your existing workspaces.",
+                style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground, modifier = Modifier.testTag("create.recovery"))
+            if (!creating) SecretField(nsec, { nsec = it }, "nsec1…", numeric = false, tag = "import.nsec")
             SecretField(pin, { pin = it.filter(Char::isDigit).take(12) }, "PIN (4–12 digits)", numeric = true, tag = "import.pin")
             SecretField(confirm, { confirm = it.filter(Char::isDigit).take(12) }, "Confirm PIN", numeric = true, tag = "import.confirm")
-            notice?.let { Notice(NoticeTone.ERROR, it) }
-            PrimaryButton(BusyLabel(working, if (family) "Continue" else "Import and encrypt"), enabled = valid && !working, modifier = Modifier.testTag("import.submit"), onClick = {
+            (failure ?: notice)?.let { Notice(NoticeTone.ERROR, it) }
+            PrimaryButton(BusyLabel(working, if (creating) "Create and save securely" else if (family) "Continue" else "Import and encrypt"), enabled = valid && !working, modifier = Modifier.testTag("import.submit"), onClick = {
+                if (working) return@PrimaryButton
                 working = true
+                failure = null
                 scope.launch {
-                    try { onImport(nsec.trim(), pin) } finally { nsec = ""; pin = ""; confirm = ""; working = false }
+                    try {
+                        if (creating) onCreate?.invoke(pin) else onImport(nsec.trim(), pin)
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                    } catch (e: studio.otherstuff.ambulando.core.crypto.IdentityError) { failure = e.message
+                    } catch (_: Exception) { failure = "Could not save your identity securely. Unlock the phone and try again. Any identity already saved has been kept."
+                    } finally { nsec = ""; pin = ""; confirm = ""; working = false }
                 }
             })
         }

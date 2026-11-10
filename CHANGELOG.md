@@ -1,3 +1,8 @@
+## 0.8.3 (23)
+
+- Create a new Nostr identity directly on the phone and immediately save it in the PIN-protected, Android Keystore-backed vault.
+- Explain device-only recovery limits and new-identity workspace invitations before creation; preserve existing import and account storage.
+
 ## 0.8.1 (21)
 
 - Conversations include inherited branch history while preserving canonical ownership and attachment metadata.

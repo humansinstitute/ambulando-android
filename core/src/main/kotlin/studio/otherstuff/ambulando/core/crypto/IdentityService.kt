@@ -175,6 +175,22 @@ class IdentityService(
         stateLocked()
     }
 
+    /** Generates and durably seals a fresh identity before returning; repeated taps cannot replace it. */
+    suspend fun createIdentity(pin: String): IdentityState = locked {
+        if (vault.exists) throw IdentityError.Exists
+        if (pin.length !in 4..12 || !pin.all { it in '0'..'9' }) throw IdentityError.InvalidPIN
+        val scalar = ByteArray(32)
+        try {
+            val random = java.security.SecureRandom()
+            do { random.nextBytes(scalar) } while (!NostrKeys.isValidSecret(scalar))
+            vault.create(scalar, pin)
+            storeSession()
+            stateLocked()
+        } finally {
+            scalar.fill(0)
+        }
+    }
+
     suspend fun unlock(pin: String): IdentityState = locked {
         vault.unlock(pin)
         storeSession()

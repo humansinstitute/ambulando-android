@@ -8,6 +8,11 @@ do not make workspace content end-to-end encrypted.
 
 The identity vault uses PIN-derived protection and a device-bound Android Keystore secret. Keystore keys are
 non-exportable; their hardware/security level depends on the device and is not universally StrongBox-backed.
+Onboarding can create a valid random secp256k1 identity locally and immediately seal it using the same vault as imports.
+The scalar exists in app memory for generation/signing; Android Keystore protects the AES wrapping key, not the raw
+secp256k1 scalar. Creation never displays, copies or transmits the secret and does not grant Tower membership. This build
+has no identity export or recovery flow: device/app-data loss or a forgotten PIN can make a phone-created identity
+unrecoverable. Creation refuses an existing vault, including a damaged one, and retained Tower accounts.
 Trusted-session material and optional background-read credentials are separately sealed. No raw key is placed in
 WebViews, shared storage, crash reports or application logs.
 

@@ -23,7 +23,7 @@ import javax.crypto.spec.SecretKeySpec
 sealed class IdentityError(message: String) : Exception(message, null, false, false) {
     data object InvalidNsec : IdentityError("Enter a valid Bech32 nsec with a 32-byte Nostr secret key.")
     data object InvalidPIN : IdentityError("PIN must contain 4 to 12 digits.")
-    data object Exists : IdentityError("An identity already exists. Remove it explicitly before importing another.")
+    data object Exists : IdentityError("An identity already exists. Remove it explicitly before creating or importing another.")
     data object Missing : IdentityError("No identity has been imported into this app.")
     data object Locked : IdentityError("Unlock your identity to sign.")
     data object KeychainUnavailable : IdentityError("The Ambulando Keystore secret is unavailable. Your identity has been kept.")
@@ -172,22 +172,28 @@ class IdentityVault(val file: File, private val secrets: VaultSecretStore) {
         if (exists) throw IdentityError.Exists
         if (!validPIN(pin)) throw IdentityError.InvalidPIN
         val scalar = NostrKeys.secretKey(nsec) ?: throw IdentityError.InvalidNsec
-        try {
-            val pubkey = NostrKeys.publicKeyHex(scalar)
-            val secret = secrets.read() ?: random(32).also { secrets.write(it) }
-            val salt = random(16)
-            val combined = seal(scalar, key(pin, secret, salt))
-            file.absoluteFile.parentFile?.mkdirs()
-            if (exists) throw IdentityError.Exists
-            val envelope = Envelope(VERSION, ITERATIONS, b64(salt), b64(combined), pubkey)
-            AtomicFiles.write(file, WireJson.encodeToString(Envelope.serializer(), envelope).toByteArray(Charsets.UTF_8))
-            clear = scalar.copyOf()
-            publicKeyHex = pubkey
-            readProblem = null
-            writePublicKeyHint(pubkey)
-        } finally {
-            scalar.fill(0)
+        try { create(scalar, pin) } finally { scalar.fill(0) }
+    }
+
+    /** Borrows a scalar only until its sealed envelope is durable; never encodes it as displayable text. */
+    internal fun create(scalar: ByteArray, pin: String) {
+        if (exists) throw IdentityError.Exists
+        if (!validPIN(pin)) throw IdentityError.InvalidPIN
+        if (!NostrKeys.isValidSecret(scalar)) throw IdentityError.InvalidNsec
+        val pubkey = NostrKeys.publicKeyHex(scalar)
+        val secret = secrets.read() ?: random(32).also { generated ->
+            try { secrets.write(generated) } catch (e: Exception) { generated.fill(0); throw e }
         }
+        val salt = random(16)
+        val combined = try { seal(scalar, key(pin, secret, salt)) } finally { secret.fill(0) }
+        file.absoluteFile.parentFile?.mkdirs()
+        if (exists) throw IdentityError.Exists
+        val envelope = Envelope(VERSION, ITERATIONS, b64(salt), b64(combined), pubkey)
+        AtomicFiles.write(file, WireJson.encodeToString(Envelope.serializer(), envelope).toByteArray(Charsets.UTF_8))
+        clear = scalar.copyOf()
+        publicKeyHex = pubkey
+        readProblem = null
+        writePublicKeyHint(pubkey)
     }
 
     fun unlock(pin: String) {

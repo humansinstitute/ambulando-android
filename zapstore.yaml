@@ -7,7 +7,8 @@ description: |
   Native Kotlin Android access to your Tower workspaces: chat, tasks, documents, files,
   Deck, canvases, task trees and Nostr-enabled web apps. Shared workspace, scope and
   channel navigation, durable drafts and queued writes, isolated editors and browser,
-  and privacy-stripped photo attachments. Requires your own Nostr identity and HTTPS Tower.
+  and privacy-stripped photo attachments. Create a Nostr identity on the phone or import your own;
+  requires an HTTPS Tower and workspace membership. Phone-created identities have no key export or recovery.
   See the repository feature matrix for unsupported features and validation limits.
 license: MIT
 website: https://github.com/humansinstitute/ambulando-android

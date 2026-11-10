@@ -339,6 +339,12 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = ConnectionFailure.userMessage(e) }
     }
     suspend fun import(nsec: String, pin: String) { identityState = identity.importIdentity(nsec, pin); restore() }
+    suspend fun createIdentity(pin: String) {
+        // A missing vault must never let a new identity take over retained Tower accounts.
+        if (catalog.reader.connections().isNotEmpty()) throw IdentityError.AccountMismatch
+        identityState = identity.createIdentity(pin)
+        restore()
+    }
     suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); resumeEnabled(force = true); refresh() }
     /** Locking pauses every runtime (jobs, streams, leases); the enabled set is kept, so unlocking resumes exactly it. */
     fun lock() = act { browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }

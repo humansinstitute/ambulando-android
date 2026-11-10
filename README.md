@@ -4,8 +4,11 @@ A native Kotlin / Jetpack Compose client for a Wingman Tower. Android 10 or newe
 Main navigation, chat, tasks, documents, files, search, Deck and workspace surfaces are native. The document and
 Excalidraw editors use bundled web editors; WApps open in the isolated in-app browser.
 
-Import your own Nostr identity, protect it with a PIN, then enter your Tower's HTTPS address. Membership and permissions
-come from Tower. Keep your own identity backup: this app does not export an existing identity or recover a forgotten PIN.
+Create a Nostr identity on this phone or import your own, protect it with a PIN, then enter your Tower's HTTPS address.
+Membership and permissions come from Tower; a new identity needs its own invitation. New identities are saved directly
+in Keystore-backed encrypted storage without displaying the secret. There is currently no key export or recovery:
+a phone-created identity is lost if the phone or app data is lost, or its PIN cannot be recovered. For imported identities,
+keep your existing backup.
 Updates signed with the same release certificate retain the identity, connection, history, drafts and unsent work.
 
 ## Workflows
