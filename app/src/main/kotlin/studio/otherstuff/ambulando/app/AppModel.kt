@@ -21,6 +21,11 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     internal var pushDestination by mutableStateOf<Pair<String, studio.otherstuff.ambulando.core.notifications.NotificationDestination>?>(null)
     internal fun pushTap(intent: android.content.Intent?) {
         if (environment.isSample || intent?.action != studio.otherstuff.ambulando.app.push.AndroidPush.TAP) return
+        androidPush?.acceptFcmTap(intent)?.let { tap ->
+            pendingPushTap = tap
+            act { resolvePushTap() }
+            return
+        }
         val instance = intent.getStringExtra(studio.otherstuff.ambulando.app.push.AndroidPush.INSTANCE) ?: return
         val item = intent.getStringExtra(studio.otherstuff.ambulando.app.push.AndroidPush.ITEM) ?: return
         val seq = intent.getLongExtra(studio.otherstuff.ambulando.app.push.AndroidPush.SEQUENCE, 0)
@@ -35,7 +40,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         val tap = pendingPushTap ?: return
         if (identityState !is IdentityState.Unlocked) return
         val row = androidPush?.state?.all()?.firstOrNull { it.instance == tap.first && it.enabled && it.signerNpub == identityState?.npub } ?: run { pendingPushTap = null; return }
-        val entry = entries.firstOrNull { it.connection.id == row.connectionId && it.connection.origin == row.origin && it.connection.signerNpub == row.signerNpub && it.workspace.id == row.workspaceId && it.workspace.appNpub == row.appNpub && !it.workspace.accessRemoved } ?: return
+        val entry = entries.firstOrNull { it.connection.id == row.connectionId && it.connection.origin == row.origin && it.connection.towerNpub == row.towerNpub && it.connection.signerNpub == row.signerNpub && it.workspace.id == row.workspaceId && it.workspace.appNpub == row.appNpub && !it.workspace.accessRemoved } ?: return
         try {
             // A fresh server read recomputes access. Never route directly from push channel/task/doc ids.
             val item = (towerAPI(entry.connection).notificationItem(row.workspaceId, row.appNpub, tap.second) as? NotificationChange.Upsert)?.item
@@ -405,6 +410,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             File(environment.baseDir, "board-drafts").deleteRecursively()
         }
         catalog.writer.setState(WorkspacePreferences.STATE_KEY, null); catalog.writer.setState(WorkspaceCatalog.SELECTED_KEY, null)
+        if (!environment.isSample) androidPush?.removeIdentity()
+        pendingPushTap = null; pushDestination = null
         identityState = identity.remove()
         stopAllEntries(); entries = emptyList(); connections = emptyList(); activeBoundaryId = null; preferences = WorkspacePreferences()
         catalogObservation?.cancel(); catalogObservation = null

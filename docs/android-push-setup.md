@@ -1,111 +1,121 @@
-# Android push setup (UnifiedPush)
+# Android push setup (Firebase Cloud Messaging)
 
-Android push requires both a Tower release that implements `unifiedpush` and a configured UnifiedPush distributor on
-the phone. An installed APK or a saved registration alone does not establish live delivery. The existing inbox still
-works without push. This implementation uses the official UnifiedPush connector 3.3.5; it includes no FCM SDK or Google
-Play Services. Its local Web Push decryption uses the connector's open-source cryptographic library.
+Ambulando uses Firebase Cloud Messaging (FCM) on standard Android phones with Google Play services. Install
+Ambulando and grant notification permission; no distributor or second phone app is required. Push requires a
+matching Firebase Android project configuration and a configured Tower server. A successful APK build or saved
+registration is not evidence of live delivery. The inbox continues to work without push.
 
-## Server operator
+## Required public Android configuration
 
-Use the Tower notification push contract shipped with the matching server release. Keep the existing inbox projector
-and alert worker enabled. APNs settings do not configure Android delivery.
+An authorized Firebase project operator must download the actual `google-services.json` for Android package
+`studio.otherstuff.ambulando.android` from the existing Firebase project and supply it as
+`app/google-services.json` before building. This file is Git-ignored. The Google services Gradle plugin checks the
+package and generates the SDK resources. Do not invent project IDs, sender IDs, API keys or app IDs.
 
-Configure the following in the **Tower service's protected deployment environment**, not in the Android source, an APK,
-a chat, a task comment, or a public repository:
+The required values are `project_info.project_id`, `project_info.project_number` (FCM sender ID),
+`client[].client_info.mobilesdk_app_id`, `client[].client_info.android_client_info.package_name`, and
+`client[].api_key[].current_key` for the matching Android client. These are public Android client identifiers,
+not server signing credentials. Configure any API-key Android restrictions for this package and its actual signing
+certificate. Keep the established APK certificate when building an upgrade.
 
-| Setting | Value / purpose |
-| --- | --- |
-| `UNIFIEDPUSH_ALLOWED_ORIGINS` | Comma-separated exact HTTPS origins of approved push servers, e.g. `https://ntfy.sh` or `https://push.example.org`. No endpoint paths, wildcards, credentials or private hosts. |
-| `UNIFIEDPUSH_VAPID_PUBLIC_KEY` | The public P-256 VAPID key advertised to the phone. |
-| `UNIFIEDPUSH_VAPID_PRIVATE_KEY` | Matching private VAPID key, available only to the Tower service. |
-| `UNIFIEDPUSH_VAPID_SUBJECT` | Operator contact, e.g. `mailto:push-operator@example.org`. |
-| `NOTIF_PUBLIC_ORIGIN` | Public HTTPS Tower origin used in hints; it must match the phone's stored Tower connection. |
-| `NOTIF_ALERTS` | Must not be `off`. |
+Without this file the app still builds, but settings report **no Firebase Android configuration; phone push is
+unavailable**. Missing/outdated Google Play services also report unavailable. Installing a configuration file after
+an APK was built does not configure that APK: rebuild and install the signed candidate. No Firebase Analytics
+SDK is included. Messaging auto-initialization, delivery metrics export and notification delegation are disabled;
+the token is requested explicitly when the person enables a workspace.
 
-An authorized operator must generate a dedicated VAPID pair using the server's existing Web Push tooling in a protected environment; this implementation does not generate or install credentials.
-Install it through your deployment secret facility. Do not reuse or export Nostr identity keys, APNs signing material,
-or browser Web Push credentials. The public VAPID key is safe to advertise; the private key is not. No Firebase project,
-Google account, cloud purchase, or new external account is required by Ambulando itself.
+## Tower operator
 
-Deploy the matching Tower code/schema using its release workflow, with the manager coordinating activation. Missing
-configuration must report not ready. Confirm authenticated `GET /api/v4/flightdeck-pg/workspaces/<workspace>/descriptor`
-contains `notifications.transport_status.unifiedpush.ready=true` and a `vapid_public_key`. This confirms provider
-configuration, not that a particular phone can receive a notification. Do not post the full registration response or
-endpoint in troubleshooting records.
+Enable the matching server's canonical `fcm` transport using its own FCM setup contract. Configure the actual
+project ID, numeric sender ID and Android package, plus dedicated service-account HTTP v1 OAuth signing credentials
+through the protected server deployment configuration. Never place service-account private keys, OAuth access
+tokens or Nostr signing material in Android config, source, task comments or APKs. Firebase Cloud Messaging API
+access and permissions must already be authorized for the configured project; do not use legacy server keys.
 
-Tower must allow only configured public HTTPS endpoint origins. Registration and every send validate destination
-addresses; redirects and private/link-local/loopback destinations are rejected. An allowlist entry does not authorize
-an internal server. Self-hosted distributors therefore need a publicly resolvable, publicly routable HTTPS origin with
-a valid certificate. A local LAN HTTP ntfy instance is deliberately unsupported by this contract.
+Keep the existing notification projector, rules and alert worker enabled, and set the public notification origin
+according to the Tower contract. APNs, browser push and UnifiedPush settings do not configure FCM.
+Authenticated `GET /api/v4/flightdeck-pg/workspaces/<workspace>/descriptor` must advertise
+`notifications.transport_status.fcm` with `ready=true`, `project_id`, `sender_id`, and `package_name`
+matching the compiled Android client. This confirms server configuration, not actual phone delivery.
 
-## Phone
+## On the phone
 
-1. Install a Google-free UnifiedPush distributor. For ntfy, use its F-Droid build or the upstream Google-free APK;
-   see [ntfy Android installation](https://docs.ntfy.sh/subscribe/phone/). Open and configure it before Ambulando setup.
-2. Choose the push server in the distributor. Public `https://ntfy.sh` avoids operating a server; it remains an external
-   service with its own availability and policies. The Tower operator must explicitly allow that origin. For a server
-   you operate, configure the distributor with your public HTTPS server and allow that origin in Tower instead.
-3. Open Ambulando, unlock, connect to the trusted Tower, and select the workspace. Your identity must already be a member.
-4. Open **Settings → Notifications → Set up push**. On Android 13 or later, allow notifications. The UnifiedPush system
-   picker may ask you to choose your distributor. If none is available, install/configure it and choose **Retry setup**.
-5. Read the status. A server or distributor error means setup is incomplete. Android permissions alone do not enable
-   server delivery. Each workspace is separately enrolled on this phone; repeat setup for each workspace you want.
-6. For alerts while the identity is locked or Android has closed the app, turn on **Settings → Background → Refresh
-   while locked**. This is the existing optional GET-only credential for the connected Tower/workspaces. It cannot
-   register devices, change read state, send messages, or unlock the vault. Without it, push fails closed while locked
-   and the inbox catches up when you next open/unlock the app. **Lock now revokes it**; enable it again after unlocking
-   if you want locked alerts. Add the background read permission again after enrolling additional workspaces/Towers.
-7. Under **Android notification settings**, check Ambulando's **Workspace activity** channel. Android can block the
-   entire app or this channel independently. Denial never blocks access to the inbox; retry permission or change it in
-   system settings. Do Not Disturb may silence an otherwise delivered notification.
+1. Install the configured signed Ambulando build and unlock your existing identity.
+2. Connect to the trusted Tower and select a workspace where you are already a member.
+3. Open **Settings → Notifications → Set up push** and allow Android notifications. Repeat for each workspace.
+4. Check the status. Missing Firebase configuration, missing Google services, server/project mismatch or registration
+   failure means setup is incomplete. Android permission alone does not establish server delivery.
+5. In **Android notification settings**, allow Ambulando and its **Workspace activity** channel. Android can block
+   the app and the channel separately. Denial does not block inbox access. Do Not Disturb may silence alerts.
 
-No battery exemption is requested by Ambulando. A distributor may need its own persistent connection/foreground
-notification; follow that distributor's documented setup. Android can delay event-triggered follow-up work during
-Doze or restrict force-stopped apps. Reopen Ambulando and the distributor after force stop or restrictive battery
-settings. Timely delivery is not guaranteed by either a saved registration or periodic background refresh.
+Generic alerts can be shown by FCM/Android while the app is backgrounded, cold or its identity is locked. They do
+not need **Refresh while locked** or any background GET credential. Receiving an alert never unlocks the identity
+or fetches private content. Tapping waits for unlock, rechecks the stored trusted connection and fetches the
+current item before routing. An alert or tap itself never changes read state; existing subject/inbox actions do.
 
-## Self-hosted ntfy option
+Force-stopping the app, missing Google services, network restrictions, Android power settings and provider delays
+can prevent or delay delivery. Reopen after force stop. No battery exemption is requested and no guaranteed
+arrival time is promised.
 
-Prepare a publicly reachable HTTPS ntfy deployment separately. Configure its external `base-url`, TLS/reverse proxy,
-and persistent storage using [ntfy's operator guide](https://docs.ntfy.sh/config/). Use the guide's UnifiedPush access
-control example if the instance otherwise denies anonymous topics: the distributor's randomly generated UnifiedPush
-endpoint must accept server publishing. Keep administrative APIs protected. Android's ntfy distributor must connect
-to that deployment. Ambulando/Tower uses the endpoint returned by the distributor; do not paste an arbitrary topic
-URL into Ambulando or put an ntfy administrative password in Tower's transport body. Endpoint URLs are bearer
-capabilities and must remain private even though payload contents are encrypted.
+## Wire contract and isolation
 
-## Registration and ongoing behavior
+A random installation ID is shared only among this device's workspace enrollments for the same stored Tower
+origin and signer. Separate local workspace rows retain independent opt-in and trusted routing. The signed
+installation PUT sends `client_app_id=ambulando`, `platform=android`, app version and current permission state.
+The signed `PUT .../notifications/installations/<installation>/transports/fcm` sends:
 
-The phone generates a random installation ID for each saved connection/identity/workspace. It signs the canonical
-installation PUT with `platform=android`, `client_app_id=ambulando`, current app version and permission state, then
-PUTs `transports/unifiedpush` with the distributor endpoint and RFC8291 `keys.p256dh`/`keys.auth`, `preview=generic`,
-and a seven-day lease. Endpoint/key changes are saved locally and registered after unlock; a locked phone cannot
-perform those signed writes. Foreground/unlock renews within a day of lease expiry. Open and unlock at least weekly;
-a lease can expire while the app is unused. The status reports renewal failures rather than treating old setup as live.
+```json
+{
+  "device_token": "<actual SDK token>",
+  "project_id": "<actual project ID>",
+  "sender_id": "<actual numeric sender ID>",
+  "package_name": "studio.otherstuff.ambulando.android",
+  "preview": "generic",
+  "lease_seconds": 604800
+}
+```
 
-Only decrypted pushes for a locally enabled instance are accepted. A push triggers bounded one-off WorkManager work
-with retry for temporary read failures; this is event-driven push follow-up, **not polling masquerading as push**.
-The phone validates IDs and matches the exact stored Tower origin/service identity/workspace/actor, then fetches the
-current inbox item using its own permitted credential. Removed, expired, inaccessible, dismissed, archived, read or
-stale items do not produce OS notifications. The foreground app refreshes the inbox and suppresses a duplicate OS
-alert. Item sequence numbers deduplicate provider retries; a later generation replaces that item's system alert.
+FCM uses normal HTTP v1 notification+data: purpose-only fixed text plus `data.fd`, a JSON string with `v:1`,
+`installation_id`, `origin`, `tower_service_npub`, `workspace_id`, `notification_id` and `change_seq`.
+The Android notification uses `channel_id=workspace_activity_v1`,
+`click_action=studio.otherstuff.ambulando.PUSH_TAP`, and a stable tag scoped to installation/workspace/item.
+No private message, title, author name or arbitrary navigation URL is sent to Google. The generic hint identifiers
+and delivery token are still visible to the delivery provider; this is not end-to-end encrypted push.
 
-Notifications show purpose-only text, never server-provided names, titles, message text or arbitrary links. A tap is
-matched to the locally accepted alert, waits for unlock if needed, re-fetches the item and opens its supported native
-thread/channel/task/document destination. Unavailable/producer items fall back to the inbox. A tap does not itself mark
-the notification read; existing subject-view and inbox actions retain control of read state. No payload URL is followed.
+In the foreground, FCM callbacks defer presentation to the existing live inbox instead of duplicating an OS alert.
+Background notification+data is displayed automatically by the SDK/OS; it does not run the app's content fetch.
+Repeated sends for the same item replace its existing OS notification rather than adding another card.
+A tap's payload is only an untrusted selector: a locally enabled enrollment, matching origin/service/workspace/
+identity/app and a fresh authenticated item read are required. No payload URL is followed.
 
-**Turn off** disables this workspace immediately on this device, removes the distributor registration, cancels pending
-local delivery work/notifications and attempts signed Tower revocation. Disconnect and identity removal do the same.
-Offline revocation remains pending for the same identity while available; a deleted account cannot sign a later
-revocation, but local rejection remains immediate and the server lease expires. Another phone is unaffected.
+Token changes are registered after unlock; receiving a token callback cannot restore a signing session. Foreground
+reconciliation renews within a day of seven-day lease expiry. Open/unlock at least weekly. Status reports expiry or
+renewal failure. Android permission/channel changes are reconciled on return to the app.
 
-## Verify delivery before calling setup complete
+**Turn off** immediately rejects local delivery callbacks/taps and cancels displayed alerts for that workspace,
+then removes only its signed server enrollment. Other workspace enrollments remain enabled. Disconnect does the
+same for that Tower. Offline server revocation stays pending while the original identity/connection remains.
+When no workspace is enabled, the Firebase token is deleted. Identity removal additionally records a durable token
+reset before deletion; if offline, the next identity cannot register using the old token until reset succeeds.
+Another actor's active token is never taken over through a server registration.
 
-With two existing authorized identities, have the other member create a real mention/task event covered by the
-recipient's alert rules. Put the recipient app in the background. Verify the event appears in Tower's inbox, a provider
-attempt succeeds, an OS notification appears, and tapping it opens the correct workspace/record after any unlock.
-Repeat with the screen locked and a cold app using the optional background credential. Check denied permission,
-channel-off, read-before-send, revoked access, duplicate delivery and local turn-off. Preserve existing APNs delivery
-when validating the server update. Never use a manual local notification or a provider-only ping as proof of this full
-path. Keep unit/simulated checks separate from real member/device evidence and report the exact APK version/build.
+An already handed-off generic OS alert cannot always be recalled: after offline opt-out/account removal, an
+in-flight notification may still appear. The local tap check rejects it. Provider TTL/registration leases and signed
+server revocation bound further delivery; the UI must not claim immediate recall of provider-queued alerts.
+
+## Verify before releasing as working push
+
+Use a configured release build and two existing authorized members. Have the sender create a real event covered
+by the recipient's notification rules. Verify Tower inbox projection, successful FCM send, an OS alert on the
+recipient and a trusted authenticated destination after tapping/unlocking. Repeat while backgrounded, cold,
+screen-locked and identity-locked **without a background read credential**. Verify permission denial/channel-off,
+read-before-send, revoked membership/access, duplicate sends, token refresh, workspace opt-out, two-workspace
+independence, disconnect and identity replacement. Preserve server APNs/browser behavior.
+
+Unit tests, mocked provider responses, local notifications and onboarding emulator checks are separate evidence;
+none establishes live event-to-phone delivery. Report the exact version/build and remaining configuration gates.
+Do not publish to Zapstore as working push until real delivery and tap behavior are verified.
+
+References: [Firebase Android setup](https://firebase.google.com/docs/cloud-messaging/android/get-started),
+[receiving notification and data messages](https://firebase.google.com/docs/cloud-messaging/android/receive-messages),
+[FirebaseMessaging SDK](https://firebase.google.com/docs/reference/android/com/google/firebase/messaging/FirebaseMessaging).

@@ -12,14 +12,14 @@ class PushAPITest {
     @Test fun canonicalRegistrationIsSignedOnSavedTowerWithPrivateMaterialOnlyInRequest() = runBlocking {
         val transport = StubTransport { request ->
             when {
-                pathOf(request.url).endsWith("/descriptor") -> 200 to mapOf("notifications" to mapOf("transport_status" to mapOf("unifiedpush" to mapOf("ready" to true, "vapid_public_key" to "public-test-vapid"))))
+                pathOf(request.url).endsWith("/descriptor") -> 200 to mapOf("notifications" to mapOf("transport_status" to mapOf("fcm" to mapOf("ready" to true, "project_id" to "test-project", "sender_id" to "123456789", "package_name" to "studio.otherstuff.ambulando.android"))))
                 request.method == "DELETE" -> 404 to mapOf("code" to "installation_not_found")
                 else -> 200 to mapOf("delivery" to mapOf("ready" to false, "reason" to "permission_not_granted"), "device" to mapOf("lease_expires_at" to "2026-11-17T00:00:00.000Z"))
             }
         }
         val api = TowerAPI(TowerClient(TowerOrigin(Fixtures.ORIGIN), transport, makeIdentity()))
-        assertEquals("public-test-vapid", api.pushReadiness(workspace).vapidPublicKey)
-        val response = api.registerPush(workspace, installation, "https://push.example/capability", "test-p256dh", "test-auth", false, "test")
+        assertEquals("test-project", api.pushReadiness(workspace).projectId)
+        val response = api.registerPush(workspace, installation, "test-device-token", "test-project", "123456789", "studio.otherstuff.ambulando.android", false, "test")
         assertFalse(response.ready)
         assertEquals("permission_not_granted", response.reason)
         val puts = transport.recorded.filter { it.method == "PUT" }
@@ -27,12 +27,14 @@ class PushAPITest {
         val setup = parseJsonObject(puts[0].body!!, "installation")
         assertEquals("android", setup.string("platform")); assertEquals("denied", setup.string("permission_state"))
         val body = parseJsonObject(puts[1].body!!, "transport")
-        assertEquals("https://push.example/capability", body.string("endpoint"))
-        assertEquals("test-auth", body.obj("keys")?.string("auth"))
+        assertEquals("test-device-token", body.string("device_token"))
+        assertEquals("test-project", body.string("project_id"))
+        assertEquals("123456789", body.string("sender_id"))
+        assertEquals("studio.otherstuff.ambulando.android", body.string("package_name"))
         assertEquals("generic", body.string("preview"))
-        assertTrue(puts[1].url.endsWith("/installations/$installation/transports/unifiedpush"))
+        assertTrue(puts[1].url.endsWith("/installations/$installation/transports/fcm"))
         assertTrue(transport.recorded.all { it.url.startsWith(Fixtures.ORIGIN) && it.header("Authorization") != null && it.header("x-flightdeck-pg-app-npub") == Fixtures.APP_NPUB })
-        assertFalse(response.toString().contains("capability")); assertFalse(response.toString().contains("test-auth"))
+        assertFalse(response.toString().contains("test-device-token")); assertFalse(response.toString().contains("test-auth"))
         api.revokePush(workspace, installation) // 404 is idempotent revocation.
     }
     @Test fun unsupportedServerIsNotReady() = runBlocking {

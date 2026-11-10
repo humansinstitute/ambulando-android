@@ -1,9 +1,6 @@
 package studio.otherstuff.ambulando.app.push
 
 import android.Manifest
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -29,7 +26,6 @@ import studio.otherstuff.ambulando.app.AppModel
     var revision by remember { mutableIntStateOf(0) }
     var rows by remember { mutableStateOf(push.state.all()) }
     var permitted by remember { mutableStateOf(push.permissionGranted()) }
-    var backgroundRead by remember { mutableStateOf(false) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) { permitted = push.permissionGranted(); revision++ } }
@@ -37,9 +33,9 @@ import studio.otherstuff.ambulando.app.AppModel
     }
     LaunchedEffect(c.id, w.id, revision) {
         // Only observes local registration state while this settings screen is visible; this is not a delivery poller.
-        while (true) { rows = push.state.all(); backgroundRead = model.identity.backgroundReadEnabled(); kotlinx.coroutines.delay(1000) }
+        while (true) { rows = push.state.all(); kotlinx.coroutines.delay(1000) }
     }
-    fun enable() { context.activity()?.let { activity -> model.act { push.enable(model, activity); revision++ } } }
+    fun enable() { model.act { push.enable(model); revision++ } }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         permitted = granted && push.permissionGranted()
         if (permitted) enable()
@@ -48,15 +44,15 @@ import studio.otherstuff.ambulando.app.AppModel
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Phone notifications", style = MaterialTheme.typography.titleSmall)
         Text(if (model.environment.isSample) "Push is unavailable in sample data." else when {
+            push.firebase.unavailableReason() != null -> push.firebase.unavailableReason()!!
             !permitted -> "Android notifications are blocked. Your inbox still works."
             row == null || !row.enabled -> "Off for this workspace on this phone."
             row.leaseExpiresAt?.let { runCatching { !java.time.Instant.parse(it).isAfter(java.time.Instant.now()) }.getOrDefault(true) } == true -> "Registration lease expired. Unlock and retry setup."
-            row.ready && !backgroundRead -> "Registered. Locked and cold-launch alerts need Refresh while locked below."
             else -> row.message
         }, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("push.status"))
         if (!model.environment.isSample) {
-            Text("Google-free UnifiedPush requires a distributor such as ntfy and a configured NStack server. Alerts contain no private message text. Unlock to register or renew; receiving push does not unlock your identity.", style = MaterialTheme.typography.bodySmall)
-            Text("For alerts while locked or after Android closes the app, turn on Background → Refresh while locked. Lock now revokes that read permission and pauses those alerts until you unlock and enable it again. Without it, the inbox catches up when opened.", style = MaterialTheme.typography.bodySmall)
+            Text("Uses Google Play services and a configured server. No extra app is needed. Alerts contain no private message text. Unlock to register or renew.", style = MaterialTheme.typography.bodySmall)
+            Text("Generic alerts can appear while locked or after Android closes the app. Refresh while locked is not required. Tap and unlock to check access and open the current item.", style = MaterialTheme.typography.bodySmall)
             Row {
                 TextButton(onClick = {
                     if (Build.VERSION.SDK_INT >= 33 && !permitted) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else enable()
@@ -66,10 +62,4 @@ import studio.otherstuff.ambulando.app.AppModel
             TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) }) { Text("Android notification settings") }
         }
     }
-}
-
-private tailrec fun Context.activity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.activity()
-    else -> null
 }

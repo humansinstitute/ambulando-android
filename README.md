@@ -25,7 +25,8 @@ Updates signed with the same release certificate retain the identity, connection
 - Native canvas viewport and naplets, task relationships, native Excalidraw previews and bundled board editing.
 - Context references, agents/activity, Toolbox, scope/channel management and an HTTPS browser with explicit NIP-07 consent.
 
-Optional Android OS push uses UnifiedPush and requires a distributor plus matching configured Tower support.
+Android OS push uses Firebase Cloud Messaging on Google-services phones, with no second app. It requires actual
+Firebase Android configuration, matching configured Tower support and Android notification permission.
 See the [phone/server setup guide](docs/android-push-setup.md); installed source alone does not establish live delivery.
 
 See [feature status and validation](docs/parity-matrix.md). Feed, FIPS transport, pipeline/session

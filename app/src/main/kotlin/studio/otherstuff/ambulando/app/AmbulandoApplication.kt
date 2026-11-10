@@ -10,6 +10,10 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntimes
 
 /** WorkManager never resumes an interactive signing session after process death. */
 class AmbulandoApplication : Application(), BackgroundHost {
+    override fun onCreate() {
+        super.onCreate()
+        if (!BuildConfig.GRANDPARENT_CHAT) push.createChannel() // Before automatic FCM background presentation.
+    }
     val push by lazy { studio.otherstuff.ambulando.app.push.AndroidPush(this) }
     var activeModel: AppModel? = null; private set
     private val models = mutableMapOf<Boolean, AppModel>()

@@ -26,6 +26,13 @@ Audit the export's entire history and tree, then push **only the export reposito
 repository using a normal push. Later snapshots are ordinary commits in that same export repository. Private
 source-to-snapshot mappings belong only in private operational evidence, never in the public tree or commit message.
 
+Set both author and committer explicitly when committing an export: inherited `GIT_AUTHOR_*` and `GIT_COMMITTER_*`
+environment values override local Git configuration. For example, use `GIT_AUTHOR_NAME=Ambulando`,
+`GIT_COMMITTER_NAME=Ambulando`, and set both email variables to the project's GitHub noreply address for that command.
+Before every public push, inspect `git show -s --format=fuller HEAD` and audit the **new commit's** metadata as well as
+its tree. Do not treat an accepted historical metadata finding as approval for a new one. A published mistake requires
+explicit authority before rewriting public history; never silently amend and force-push it.
+
 ## Publish assets and Zapstore events
 
 Publish the verified APK and checksum as GitHub release assets. Keep `zapstore.yaml`, including the intended public

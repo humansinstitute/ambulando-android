@@ -90,10 +90,12 @@ diagnostics; Android may evict it earlier. A chosen receiving app controls any c
 
 ## Optional Android push
 
-UnifiedPush is opt-in for each workspace and requires a separately installed distributor. Tower sends encrypted Web
-Push routing hints through the selected push service. That service sees traffic metadata and endpoint use; it does
-not receive private message text from Ambulando. The app fetches the current inbox item from the saved trusted Tower
-before displaying purpose-only alerts. Endpoint capabilities and Web Push registration material stay in private
-no-backup app storage and are never included in diagnostics. The connector maintains its own app-private encryption
-keys. No FCM SDK or Google Play Services is included. Locked/cold delivery additionally requires the existing optional
-read-only background credential; push never restores an interactive signing session. See [setup](android-push-setup.md).
+Firebase Cloud Messaging is opt-in for each workspace on Google-services phones. Google receives a device delivery
+token, routing identifiers and purpose-only notification text; private message text, names and record titles are
+excluded. These generic hints are not end-to-end encrypted. Firebase Messaging and required Google services support
+libraries are bundled, without Firebase Analytics. Auto-init, delivery metrics export and notification delegation are
+disabled. No second app or background read credential is needed for generic locked/cold alerts. Tokens and enrollment
+bindings remain in private no-backup storage and are excluded from diagnostics. Taps wait for unlock and a fresh
+read from the stored trusted Tower; they never follow payload URLs or restore a signer during delivery. Workspace
+opt-out rejects local callbacks/taps immediately, while provider-queued generic alerts may still arrive. Identity
+removal records a durable token reset so a later actor cannot reuse an offline old token. See [setup](android-push-setup.md).

@@ -34,4 +34,56 @@ class PushStateTest {
         assertEquals("New workspace activity", AndroidPush.genericTitle("untrusted.producer", "mention"))
         assertEquals("You were mentioned", AndroidPush.genericTitle("flightdeck.core", "mention"))
     }
+    @Test fun twoWorkspacesShareInstallationButRevocationAndRoutingStayIndependent() {
+        val context = RuntimeEnvironment.getApplication() as AmbulandoApplication
+        val state = PushState(context)
+        state.all().forEach { state.remove(it.instance) }
+        val first = state.enrollment("connection", "actor", "workspace-a", "app-a", "https://a.example", "tower-a")
+            .copy(projectId = "test-project", ready = true)
+        state.add(first)
+        val second = state.enrollment("connection", "actor", "workspace-b", "app-b", "https://a.example", "tower-a")
+            .copy(projectId = "test-project", ready = true)
+        state.add(second)
+        assertEquals(first.installationId, second.installationId)
+        assertNotEquals(first.instance, second.instance)
+        val hint = studio.otherstuff.ambulando.core.notifications.PushHint("https://a.example", "tower-a", "workspace-b", "item", 1, second.installationId)
+        assertEquals(second.instance, PushState(context).matching(hint, "test-project")?.instance)
+        state.update(first.instance) { it.copy(enabled = false, ready = false) }
+        assertEquals(second.instance, state.matching(hint, "test-project")?.instance)
+        assertNull(state.matching(hint.copy(workspaceId = "workspace-a"), "test-project"))
+        assertNull(state.matching(hint.copy(towerNpub = "other-tower"), "test-project"))
+        assertNull(state.matching(hint.copy(origin = "https://evil.example"), "test-project"))
+        assertNull(state.matching(hint.copy(installationId = "other-installation"), "test-project"))
+        assertNull(state.matching(hint, "other-project"))
+        val otherActor = state.enrollment("connection", "other-actor", "workspace-b", "app-b", "https://a.example", "tower-a")
+        val otherOrigin = state.enrollment("connection-b", "actor", "workspace-b", "app-b", "https://b.example", "tower-b")
+        assertNotEquals(first.installationId, otherActor.installationId)
+        assertNotEquals(first.installationId, otherOrigin.installationId)
+        state.remove(first.instance)
+        assertEquals(second.instance, state.matching(hint, "test-project")?.instance)
+        state.remove(second.instance)
+    }
+    @Test fun missingConfigurationIsUnavailableAndOfflineTokenResetSurvivesReload() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication() as AmbulandoApplication
+        val firebase = FirebaseDevice(context)
+        assertTrue(firebase.unavailableReason()!!.contains("no Firebase Android configuration"))
+        assertNull(firebase.projectId())
+        firebase.requireTokenReset()
+        firebase.deleteToken() // No config: must retain reset rather than reuse another actor's token.
+        assertTrue(context.getSharedPreferences("fcm_lifecycle", Context.MODE_PRIVATE).getBoolean("reset_required", false))
+        assertTrue(runCatching { FirebaseDevice(context).token() }.isFailure)
+        assertNull(context.activeModel) // Cold device handling did not construct an interactive signing session.
+    }
+    @Test fun legacyDistributorStateIsNotPresentedAsWorkingFcm() {
+        val context = RuntimeEnvironment.getApplication() as AmbulandoApplication
+        val file = java.io.File(context.noBackupFilesDir, "push/registrations.json")
+        file.parentFile!!.mkdirs()
+        file.writeText("""[{"instance":"old","connectionId":"c","signerNpub":"actor","workspaceId":"w","appNpub":"app","origin":"https://a.example","enabled":true,"ready":true,"endpoint":"https://push.example/old"}]""")
+        val legacy = PushState(context).all().single()
+        assertFalse(legacy.enabled)
+        assertFalse(legacy.ready)
+        assertTrue(legacy.message.contains("FCM setup required"))
+        file.delete()
+    }
+
 }

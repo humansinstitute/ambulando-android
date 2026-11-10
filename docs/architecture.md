@@ -103,7 +103,7 @@ no remembered state, query or editor can follow a switch into another workspace.
 ## 7. Platform limits
 
 - Background execution is opportunistic and decided by Android.
-- Optional UnifiedPush OS notifications require configured Tower delivery, a distributor and permission; see [setup](android-push-setup.md). Locked/cold fetch requires the optional GET-only credential. The inbox works without push.
+- FCM OS notifications require actual Firebase Android config, matching Tower delivery and permission; see [setup](android-push-setup.md). Generic locked/cold presentation needs no background credential. Taps wait for unlock and an authoritative fetch. The inbox works without push.
 - FIPS transport is not offered; the app is HTTPS-only and never falls back silently.
 
 ## 8. Notifications
@@ -140,7 +140,7 @@ every consuming app). Android reads it through the same single sync owner as eve
   record uses the existing view-state flow, and Tower derives notification read from it.
 - **Redaction and access.** An unavailable item shows no text and cannot be opened; a content-free tombstone removes the
   row; a 403 purges stored notification text for that workspace; a missing route (older Tower) is reported as unsupported.
-- **Phone push.** Optional UnifiedPush uses encrypted routing hints and a fresh authenticated inbox-item read. The client never follows a payload origin or record URL. Canonical installation/transport enrollment is scoped to the saved connection, signer and workspace; generic OS alerts, per-device opt-out, renewal and cold-tap validation use that binding. Source/tests do not imply configured live delivery. Quiet hours are not offered.
+- **Phone push.** FCM uses purpose-only notification text and generic routing hints; authenticated reads happen on tap after unlock. The client never follows a payload origin or record URL. Canonical installation/transport enrollment is scoped to the saved connection, signer and workspace; generic OS alerts, per-device opt-out, renewal and cold-tap validation use that binding. Source/tests do not imply configured live delivery. Quiet hours are not offered.
 
 ## 9. Workspace administration
 

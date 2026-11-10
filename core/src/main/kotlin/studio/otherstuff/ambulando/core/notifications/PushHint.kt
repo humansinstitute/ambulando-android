@@ -8,7 +8,7 @@ import java.time.Instant
 import studio.otherstuff.ambulando.core.transport.NotificationItem
 
 /** Untrusted routing hints, never a URL to fetch or a record to open directly. */
-data class PushHint(val origin: String, val towerNpub: String?, val workspaceId: String, val notificationId: String, val changeSeq: Long) {
+data class PushHint(val origin: String, val towerNpub: String?, val workspaceId: String, val notificationId: String, val changeSeq: Long, val installationId: String? = null) {
     fun matches(connection: ConnectionRecord, workspaceId: String): Boolean =
         this.workspaceId == workspaceId && origin == connection.origin &&
             (towerNpub == null || towerNpub == connection.towerNpub)
@@ -29,7 +29,9 @@ data class PushHint(val origin: String, val towerNpub: String?, val workspaceId:
             require(isUUID(workspace) && isUUID(item))
             val seq = (fd["change_seq"] as? JsonPrimitive)?.longOrNull ?: error("seq")
             require(seq > 0)
-            PushHint(origin.trimEnd('/'), string("tower_service_npub"), workspace.lowercase(), item.lowercase(), seq)
+            val installation = string("installation_id")
+            require(installation == null || isUUID(installation))
+            PushHint(origin.trimEnd('/'), string("tower_service_npub"), workspace.lowercase(), item.lowercase(), seq, installation?.lowercase())
         }.getOrNull()
     }
 }

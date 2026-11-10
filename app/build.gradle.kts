@@ -3,7 +3,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    id("com.google.gms.google-services") version "4.5.0" apply false
 }
+
+// Only actual operator-provided public Android config enables Firebase. Missing config builds truthfully unavailable.
+if (file("google-services.json").isFile) apply(plugin = "com.google.gms.google-services")
 
 android {
     namespace = "studio.otherstuff.ambulando.app"
@@ -15,8 +19,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 24
-        versionName = "0.8.4"
+        versionCode = 25
+        versionName = "0.8.5"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
@@ -68,7 +72,7 @@ android {
 kotlin { jvmToolchain(21) }
 
 dependencies {
-    implementation(libs.unifiedpush.connector)
+    implementation("com.google.firebase:firebase-messaging:26.0.0")
     implementation(project(":core"))
     implementation(libs.secp256k1.jni.android)
     implementation(libs.androidx.core.ktx)

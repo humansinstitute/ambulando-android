@@ -50,7 +50,7 @@ kotlin {
 
 dependencies {
     // Shared source includes Ambulando's optional push adapter; the family app does not enroll it.
-    implementation(libs.unifiedpush.connector)
+    implementation("com.google.firebase:firebase-messaging:26.0.0")
     implementation(project(":core"))
     implementation(libs.secp256k1.jni.android)
     implementation(libs.androidx.core.ktx)
