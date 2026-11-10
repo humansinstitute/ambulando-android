@@ -34,3 +34,8 @@ ebrahim@gnu.org
 # Protocol Buffers schema attribution bundled by UnifiedPush's Tink dependency (protobuf-java 4.33.6).
 kenton@google.com
 protobuf-global-extension-registry@google.com
+
+# Public Android signing-certificate subject embedded by Google Play services basement 18.9.0
+# in com/google/android/gms/common/{zzi,zzn}.class (also present in upstream 18.8.0).
+# This is SDK certificate verification data, not an app/developer contact.
+android@android.com
