@@ -225,8 +225,15 @@ suspend fun StoreWriter.replaceDraftToken(target: ChatTarget, token: String, rep
 suspend fun StoreWriter.enqueueSend(
     target: ChatTarget, origin: String, signerNpub: String, appNpub: String, body: String, mentions: List<Mention>,
     attachments: List<PendingAttachment> = emptyList(), id: String = UUID.randomUUID().toString().lowercase(),
+    preserveDraft: Boolean = false, once: Boolean = false,
 ): OutboxItem = write {
     val stamp = StoreTime.now()
+    // External producers can replay a durable handoff after process death, even after sync retired its outbox row.
+    val receipt = "outbox.producer.$id"
+    if (once && db.textValue("SELECT value FROM app_state WHERE key = ?", receipt) != null) {
+        return@write OutboxItem(id, target.connectionId, origin, signerNpub, target.workspaceId, appNpub, target.channelId, target.threadId,
+            target.threadId == null, body, mentions, null, OutboxState.AWAITING_SIGNATURE, 0, null, null, null, stamp, attachments)
+    }
     db.run(
         """INSERT INTO outbox(id, connection_id, origin, signer_npub, workspace_id, app_npub, channel_id, thread_id, create_thread, body, mentions,
                               request, state, attempts, created_at, updated_at, attachments)
@@ -234,7 +241,8 @@ suspend fun StoreWriter.enqueueSend(
         id, target.connectionId, origin, signerNpub, target.workspaceId, appNpub, target.channelId, target.threadId, target.threadId == null,
         body, JsonText.mentions(mentions), OutboxState.AWAITING_SIGNATURE.wire, stamp, stamp, JsonText.attachments(attachments),
     )
-    db.run("DELETE FROM drafts WHERE key = ?", target.draftKey)
+    if (once) db.run("INSERT OR REPLACE INTO app_state(key,value) VALUES(?,?)", receipt, "enqueued")
+    if (!preserveDraft) db.run("DELETE FROM drafts WHERE key = ?", target.draftKey)
     emit(StoreTable.OUTBOX, target.workspaceId)
     emit(StoreTable.DRAFTS, target.workspaceId)
     OutboxItem(id, target.connectionId, origin, signerNpub, target.workspaceId, appNpub, target.channelId, target.threadId, target.threadId == null,

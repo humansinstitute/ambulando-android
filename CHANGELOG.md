@@ -1,3 +1,10 @@
+## 0.9.0 (28)
+
+- Record native AAC voice messages, with elapsed time, stop, playback, send and cancel in channel chat.
+- Continue recording in a microphone foreground service when navigating, switching apps or turning the screen off, with a visible notification and Stop action.
+- Keep the original account/channel/thread destination and stopped audio for retry; reuse private Tower storage, channel Files and the durable chat outbox without clearing typed drafts.
+- Recover stopped recording state after relaunch; interrupted, unfinished M4A recordings may be unrecoverable. Android force-stop ends recording.
+
 ## 0.8.7 (27)
 
 - Add explicit Save to Files for attachments, including APKs and generic binaries, using Android’s document picker independently of Preview and Share.

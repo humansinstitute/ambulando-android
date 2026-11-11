@@ -60,6 +60,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Work that must finish even though the screen that asked for it is already gone (a recreated activity, for example). */
     fun launchDetached(block: suspend () -> Unit) { viewModelScope.launch(kotlinx.coroutines.NonCancellable) { block() } }
+    val voice by lazy { studio.otherstuff.ambulando.app.voice.VoiceRecorder(androidContext, File(environment.baseDir, "voice-recording"), environment.isSample) }
     val family by lazy { FamilyCoordinator(this) }
     val browser by lazy { studio.otherstuff.ambulando.app.browser.BrowserModel(androidContext) }
     val identity = dependencies?.identity ?: environment.identityService()
@@ -277,6 +278,65 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             item?.let { enqueued(it.id) }
         }
     }
+    private var voiceSendJob: Job? = null
+    /** All upload and message authority comes from the original recording, never the active navigation. */
+    fun sendVoice(enqueued: (String) -> Unit = {}) {
+        if (voiceSendJob?.isActive == true) return
+        val draft = voice.state.value ?: return
+        if (draft.phase != studio.otherstuff.ambulando.app.voice.VoicePhase.REVIEW && draft.phase != studio.otherstuff.ambulando.app.voice.VoicePhase.INTERRUPTED) return
+        voiceSendJob = viewModelScope.launch {
+            try {
+                val destination = draft.destination
+                val owner = runtimeMap.values.firstOrNull { destination.matches(it.connection, it.workspace) }
+                    ?: error("Open the original account and workspace to send this recording.")
+                check(identityState is IdentityState.Unlocked && identityState?.npub == destination.signerNpub) { "Unlock the original account to send." }
+                if (owner.store.reader.state("outbox.producer.${draft.id}") != null) {
+                    voice.drafts.clear(); owner.outbox.kick(owner.connection); enqueued(draft.id); return@launch
+                }
+                val file = voice.drafts.audio(draft)
+                check(file.isFile && file.length() in 1..(32L * 1024 * 1024)) { "Recording is missing or too large. Cancel and record again." }
+                withContext(Dispatchers.IO) {
+                    val metadata = android.media.MediaMetadataRetriever()
+                    try {
+                        metadata.setDataSource(file.absolutePath)
+                        check((metadata.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0) > 0) { "Audio could not be recovered. Cancel and record again." }
+                    } finally { metadata.release() }
+                }
+                voice.drafts.save(draft.copy(phase = studio.otherstuff.ambulando.app.voice.VoicePhase.SENDING, error = null))
+                owner.engine.perform("voice:${draft.id}", SyncPriority.USER) {
+                    val api = TowerAPI(TowerClient(TowerOrigin(destination.origin), owner.directTransport, identity), transfers)
+                    // Existing Files route checks the original channel access. Server authorizes every storage/file/message write.
+                    val files = api.channelFiles(destination.workspaceId, destination.appNpub, destination.channelId)
+                    val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+                    val previous = draft.objectId?.let { id -> draft.uploadURL?.let { PreparedObject(id, it) } }
+                    val objectId = api.store(destination.workspaceId, destination.appNpub, bytes, "audio/mp4", draft.filename, previous) { prepared ->
+                        voice.drafts.save(requireNotNull(voice.state.value).copy(objectId = prepared.objectId, uploadURL = prepared.uploadURL, fileId = null))
+                    }
+                    var current = requireNotNull(voice.state.value)
+                    if (current.fileId == null) {
+                        val existing = files.items.firstOrNull { it.storageObjectId == objectId }
+                        val fileId = existing?.id ?: run {
+                            val response = api.client.request(method = "POST", path = TowerAPI.base(destination.workspaceId) + "/channels/" + TowerAPI.uuid(destination.channelId) + "/files",
+                                appNpub = destination.appNpub, jsonBody = jsonBody(jsonObjectOf("storage_object_id" to objectId, "display_name" to draft.filename)))
+                            parseJsonObjectOrNull(response)?.obj("file")?.string("id") ?: error("Could not confirm channel File. Retry keeps this recording.")
+                        }
+                        current = current.copy(fileId = fileId)
+                        voice.drafts.save(current)
+                    }
+                    // Atomic producer receipt prevents a crash between enqueue and clearing the audio from creating another message.
+                    owner.store.writer.enqueueSend(destination.target, destination.origin, destination.signerNpub, destination.appNpub,
+                        StorageMarkdown.file(objectId, draft.filename), emptyList(), attachments = listOf(PendingAttachment(
+                            id = draft.id, filename = draft.filename, mimeType = "audio/mp4", sizeBytes = bytes.size.toLong(),
+                            sha256 = studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes), staged = "", objectId = objectId, complete = true, kind = "file")),
+                        id = draft.id, preserveDraft = true, once = true)
+                    voice.drafts.clear()
+                    owner.outbox.kick(owner.connection)
+                    enqueued(draft.id)
+                }
+            } catch (e: CancellationException) { voice.fail("Send interrupted. Recording kept; retry when the original workspace is ready."); throw e }
+            catch (e: Exception) { voice.fail("Recording kept. " + (e.message ?: "Send failed. Retry when connected.")) }
+        }
+    }
     /** Pasted text becomes a staged `.txt` attachment (ordered with draft saves and sends). */
     fun addPastedText(target: ChatTarget, text: String, added: (PendingAttachment) -> Unit) {
         composerCommands.trySend { added(ownerOf(target).outbox.addDraftText(target, text)) }
@@ -401,6 +461,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Disconnects every Tower of this identity and removes the identity. Local recovery copies are deleted with it. */
     fun removeIdentity() = act {
+        voiceSendJob?.cancelAndJoin(); voice.cancel()
         browser.reset()
         runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++
         for (c in catalog.reader.connections()) clearConnection(c)
@@ -437,6 +498,10 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Deletes what is outside SQLite for a connection (staged bytes, text caches, file caches), then retires its runtimes and partitions. */
     private suspend fun clearConnection(c: ConnectionRecord) {
+        if (voice.state.value?.destination?.connectionId == c.id) {
+            voiceSendJob?.cancelAndJoin(); voice.stop()
+            voice.fail("Original connection was disconnected. Audio is kept locally; cancel it to discard. It cannot be sent through another connection.")
+        }
         if (!environment.isSample) androidPush?.disable(this, c.id)
         val listed = storeWorkspaces(c)
         val stagedWrites = ArrayList<String>(); val attachments = ArrayList<String>()

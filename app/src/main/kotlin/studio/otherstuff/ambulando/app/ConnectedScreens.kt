@@ -249,6 +249,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 model.saveDraft(target, text, mentions)
             })
         }
+        if (!family) studio.otherstuff.ambulando.app.voice.VoiceRecorderUi(model, c, w, target, composing) { composeOnly?.onEnqueued?.invoke(it) }
         if (!family) studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceComposerContext(model)
         val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
         val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
