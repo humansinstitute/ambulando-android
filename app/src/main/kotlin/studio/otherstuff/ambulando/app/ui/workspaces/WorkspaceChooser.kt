@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -55,25 +58,30 @@ fun WorkspaceChooser(model: AppModel, done: () -> Unit) {
     var adding by remember { mutableStateOf(false) }
     if (adding) { AddTower(model) { adding = false }; return }
     val towers = model.entries.map { it.connection.origin }.distinct().sorted()
-    Column(Modifier.fillMaxSize().background(amb.background).verticalScroll(rememberScrollState()).padding(16.dp).testTag("workspace.selection"),
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = done, modifier = Modifier.testTag("workspace.selection.done")) { Text("Done") }
-        Text("Choose workspaces", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "Checked workspaces appear together and keep syncing. Uncheck a workspace to pause its network activity; its saved content and drafts stay on this device.",
-            style = MaterialTheme.typography.bodyMedium, color = amb.mutedForeground,
-        )
-        if (towers.isEmpty()) Text("No workspaces have been listed yet.", color = amb.mutedForeground)
-        for (tower in towers) {
-            Text(tower.removePrefix("https://"), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = amb.mutedForeground,
-                modifier = Modifier.padding(top = 8.dp).testTag("workspace.tower.$tower"))
-            for (entry in model.entries.filter { it.connection.origin == tower }) EntryRow(model, entry)
+    // This screen replaces the shell, so it must own the window insets. Keep dismissal outside the scrolling list.
+    Column(Modifier.fillMaxSize().background(amb.background).windowInsetsPadding(WindowInsets.safeDrawing).testTag("workspace.selection")) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Choose workspaces", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            TextButton(onClick = done, modifier = Modifier.testTag("workspace.selection.done")) { Text("Done") }
         }
-        HorizontalDivider(color = amb.border)
-        OutlinedButton(onClick = { adding = true }, enabled = model.identityState is IdentityState.Unlocked, modifier = Modifier.fillMaxWidth().testTag("workspace.addTower")) {
-            Text("Add Tower connection")
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp).testTag("workspace.selection.list"),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "Checked workspaces appear together and keep syncing. Uncheck a workspace to pause its network activity; its saved content and drafts stay on this device.",
+                style = MaterialTheme.typography.bodyMedium, color = amb.mutedForeground,
+            )
+            if (towers.isEmpty()) Text("No workspaces have been listed yet.", color = amb.mutedForeground)
+            for (tower in towers) {
+                Text(tower.removePrefix("https://"), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = amb.mutedForeground,
+                    modifier = Modifier.padding(top = 8.dp).testTag("workspace.tower.$tower"))
+                for (entry in model.entries.filter { it.connection.origin == tower }) EntryRow(model, entry)
+            }
+            HorizontalDivider(color = amb.border)
+            OutlinedButton(onClick = { adding = true }, enabled = model.identityState is IdentityState.Unlocked, modifier = Modifier.fillMaxWidth().testTag("workspace.addTower")) {
+                Text("Add Tower connection")
+            }
+            Text("A second Tower uses the same identity. Its workspaces start paused; check the ones you want.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
         }
-        Text("A second Tower uses the same identity. Its workspaces start paused; check the ones you want.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
     }
 }
 
@@ -113,7 +121,7 @@ private fun EntryRow(model: AppModel, entry: WorkspaceEntry) {
 
 @Composable
 private fun AddTower(model: AppModel, done: () -> Unit) {
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         ConnectScreen(model.identityState?.npub, model.notice, { origin -> runCatching {
             val d = model.descriptor(origin)
             DescriptorSummaryModel(d.tower?.availability?.status ?: "Available", d.tower?.protocols ?: emptyList(), d.services.map { it.kind }, d.advertisesFIPS)

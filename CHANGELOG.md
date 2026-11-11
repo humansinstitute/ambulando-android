@@ -1,3 +1,8 @@
+## 0.8.6 (26)
+
+- Keep workspace selection clear of system bars and display cutouts, with Done fixed above the scrolling list.
+- Preserve workspace enable/colour changes and local content when dismissing the chooser.
+
 ## 0.8.4 (24) — push candidate, configuration required
 
 - Add optional Google-free UnifiedPush setup, Android notification permission/channel handling and per-workspace device enrollment.

@@ -64,6 +64,48 @@ class MultiWorkspaceFlowTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("sidebar").fetchSemanticsNodes().isNotEmpty() }
     }
 
+    @Test fun chooserDoneClearsSystemBarsAndDismissesWithoutLosingWorkspaceChanges() = launch { model, scenario ->
+        enableAll(model)
+        val lab = model.entry("Sample Lab")
+        compose.runOnIdle { model.openWorkspace(model.entry("Sample Studio")) }
+        compose.waitUntil(20_000) { model.activeBoundaryId == model.entry("Sample Studio").id }
+        val originalColour = lab.colour
+        val before = runBlocking { lab.runtime!!.store.reader.latestMessages(SampleIds.LAB, SampleIds.GENERAL, 500).size }
+        try {
+            openSidebar()
+            compose.onNodeWithTag("sidebar.workspace").performClick()
+            compose.onNodeWithTag("workspace.enabled.Sample Lab").performScrollTo().performClick()
+            compose.onNodeWithTag("workspace.colour.Sample Lab.purple").performScrollTo().performClick()
+            compose.waitUntil(10_000) { !lab.enabled && lab.colour == WorkspaceColour.PURPLE }
+            // Scrolling the list must never scroll dismissal behind the status bar or off screen.
+            compose.onNodeWithTag("workspace.addTower").performScrollTo()
+            val done = compose.onNodeWithTag("workspace.selection.done").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            scenario.onActivity { activity ->
+                val insets = androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)!!
+                    .getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+                assertTrue("Done must clear the status bar/cutout", done.top >= insets.top)
+                assertTrue("Done must clear the navigation bar", done.bottom <= activity.window.decorView.height - insets.bottom)
+            }
+            shot("chooser-done-insets")
+            // Inject a real touch; a semantics action alone could pass even under a system overlay.
+            compose.onNodeWithTag("workspace.selection.done").performTouchInput { click() }
+            compose.onNodeWithTag("workspace.selection").assertDoesNotExist()
+            assertFalse(lab.enabled)
+            assertEquals(WorkspaceColour.PURPLE, lab.colour)
+            assertEquals(before, runBlocking { lab.runtime!!.store.reader.latestMessages(SampleIds.LAB, SampleIds.GENERAL, 500).size })
+            scenario.recreate()
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("context.bar").fetchSemanticsNodes().isNotEmpty() }
+            openSidebar()
+            compose.onNodeWithTag("sidebar.workspace").performClick()
+            compose.onNodeWithTag("workspace.enabled.Sample Lab").performScrollTo().assertIsNotSelected()
+            compose.onNodeWithTag("workspace.colour.Sample Lab.purple").assertIsSelected()
+            compose.onNodeWithTag("workspace.selection.done").performTouchInput { click() }
+            compose.onNodeWithTag("workspace.selection").assertDoesNotExist()
+        } finally {
+            compose.runOnIdle { model.setWorkspaceColour(lab, originalColour) }
+        }
+    }
+
     @Test fun twoEnabledWorkspacesStackWithSharedUnreadAndSwitchWithoutStoppingEachOther() = launch { model, _ ->
         enableAll(model)
         val studio = model.entry("Sample Studio"); val lab = model.entry("Sample Lab")
