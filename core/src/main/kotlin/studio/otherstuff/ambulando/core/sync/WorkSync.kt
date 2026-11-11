@@ -1,5 +1,7 @@
 package studio.otherstuff.ambulando.core.sync
 
+import kotlinx.coroutines.ensureActive
+
 import studio.otherstuff.ambulando.core.docs.DocumentBody
 import studio.otherstuff.ambulando.core.nostr.Sha256Hex
 import studio.otherstuff.ambulando.core.store.ChangeKey
@@ -294,6 +296,19 @@ suspend fun WorkspaceSync.download(connection: ConnectionRecord, workspace: Work
         store.writer.touch(setOf(ChangeKey(StoreTable.FILES, workspace.id)))
     }
 }
+
+/** Awaited, user-initiated export: errors reach the save UI instead of becoming background retries. */
+suspend fun WorkspaceSync.downloadForExport(connection: ConnectionRecord, workspace: WorkspaceRecord, file: FileRecord, cache: FileCache): File =
+    engine.perform("export:${workspace.id}:${file.id}") {
+        identity.requireReader(connection.signerNpub)
+        require(!workspace.accessRemoved && !file.accessRemoved && !store.reader.isChannelAccessRemoved(workspace.id, file.channelId)) { "This file is no longer available to you." }
+        cache.cached(file) ?: run {
+            val obj = api(connection).fileObject(workspace.id, workspace.appNpub, file.id)
+            if (file.sha256 != null && obj.sha256 != file.sha256) throw studio.otherstuff.ambulando.core.transport.FileTransferError.Integrity
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            cache.store(obj.bytes, file).also { store.writer.touch(setOf(ChangeKey(StoreTable.FILES, workspace.id))) }
+        }
+    }
 
 /** Chat attachment bytes (signed `GET /api/v4/storage/:id/content` on the pinned origin), cached by object id. */
 suspend fun WorkspaceSync.downloadAttachment(connection: ConnectionRecord, workspace: WorkspaceRecord, objectId: String, cache: FileCache) {

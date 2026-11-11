@@ -1,3 +1,9 @@
+## 0.8.7 (27)
+
+- Add explicit Save to Files for attachments, including APKs and generic binaries, using Android’s document picker independently of Preview and Share.
+- Preserve the suggested filename and checksum-verified bytes; report save cancellation and failures without opening or installing APKs.
+- Correct APK MIME and infer known types when metadata is generic, retaining existing preview and sharing actions.
+
 ## 0.8.6 (26)
 
 - Keep workspace selection clear of system bars and display cutouts, with Done fixed above the scrolling list.

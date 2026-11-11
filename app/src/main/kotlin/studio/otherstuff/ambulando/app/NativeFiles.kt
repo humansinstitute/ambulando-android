@@ -78,7 +78,9 @@ import java.util.UUID
     val channelNames = remember(model.channels) { model.channels.associate { it.id to it.name } }
     val loadedRows = rows
     if (fileId != null) {
-        FileDetail(model, loadedRows.firstOrNull(), channelNames, cache, onPreview = { file, type -> preview = file to type })
+        key(model.activeBoundaryId, fileId) {
+            FileDetail(model, loadedRows.firstOrNull(), channelNames, cache, onPreview = { file, type -> preview = file to type })
+        }
     } else GroupedSurface(Modifier.fillMaxSize()) {
         ListHeaderBar {
             Spacer(Modifier.weight(1f))
@@ -136,7 +138,7 @@ import java.util.UUID
     preview?.let { (file, type) -> FilePreview(file, type) { preview = null } }
 }
 
-@Composable private fun FilePreview(file: File, type: String, done: () -> Unit) {
+@Composable internal fun FilePreview(file: File, type: String, done: () -> Unit) {
     val context = LocalContext.current
     var bitmap by remember(file) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
     var text by remember(file) { mutableStateOf<String?>(null) }
@@ -184,6 +186,10 @@ internal fun fileIcon(contentType: String?): androidx.compose.ui.graphics.vector
     val local by remember(file) { model.store.liveQuery({ it.workspaceId == w.id }) { cache.cached(file) } }.collectAsState(null)
     var downloading by remember(file.id) { mutableStateOf(false) }
     var failure by remember(file.id) { mutableStateOf<String?>(null) }
+    val sync = model.sync
+    val save = rememberFileSave(file.displayName, attachmentMimeType(file.displayName, file.contentType)) {
+        sync.downloadForExport(c, w, file, cache)
+    }
     GroupedSurface(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 12.dp)) {
         GroupedRow(first = true, last = false) {
             Icon(fileIcon(file.contentType), null, Modifier.size(34.dp), tint = amb.primary)
@@ -199,6 +205,13 @@ internal fun fileIcon(contentType: String?): androidx.compose.ui.graphics.vector
         if (file.accessRemoved) AccessRemovedNote(Modifier.padding(horizontal = 32.dp, vertical = 8.dp))
         Spacer(Modifier.height(16.dp))
         val disabled = file.accessRemoved || w.accessRemoved
+        GroupedRow(first = true, last = true, onClick = save.start,
+            enabled = !disabled && !save.busy && (local != null || services.unlocked), tag = "files.save") {
+            Icon(Icons.Outlined.Download, null, Modifier.size(20.dp), tint = amb.primary)
+            Text(if (save.busy) "Saving…" else "Save to Files", color = amb.primary)
+        }
+        save.message?.let { GroupedFooter(it) }
+        Spacer(Modifier.height(12.dp))
         if (local == null) {
             GroupedRow(first = true, last = true, onClick = {
                 downloading = true; failure = null
@@ -213,14 +226,14 @@ internal fun fileIcon(contentType: String?): androidx.compose.ui.graphics.vector
                 else { Icon(Icons.Outlined.Download, null, Modifier.size(20.dp), tint = amb.primary); Text("Download", color = amb.primary) }
             }
         } else {
-            GroupedRow(first = true, last = false, onClick = { onPreview(local!!, file.contentType ?: "application/octet-stream") }, tag = "files.preview") {
+            GroupedRow(first = true, last = false, onClick = { onPreview(local!!, attachmentMimeType(file.displayName, file.contentType)) }, tag = "files.preview") {
                 Icon(Icons.Outlined.Visibility, null, Modifier.size(20.dp), tint = amb.primary); Text("Preview", color = amb.primary)
             }
             GroupedRow(first = false, last = true, onClick = {
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", local!!)
-                val send = Intent(Intent.ACTION_SEND).setType(file.contentType ?: "application/octet-stream").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                val send = Intent(Intent.ACTION_SEND).setType(attachmentMimeType(file.displayName, file.contentType)).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 context.startActivity(Intent.createChooser(send, "Share ${file.displayName}"))
-            }, tag = "files.share") { Icon(Icons.Outlined.Share, null, Modifier.size(20.dp), tint = amb.primary); Text("Share or save", color = amb.primary) }
+            }, tag = "files.share") { Icon(Icons.Outlined.Share, null, Modifier.size(20.dp), tint = amb.primary); Text("Share", color = amb.primary) }
         }
         if (local == null && !services.unlocked) GroupedFooter("Unlock to download.")
         failure?.let { GroupedFooter(it, color = amb.destructive) }
