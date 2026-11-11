@@ -45,6 +45,9 @@ import studio.otherstuff.ambulando.core.deck.DeckCompose
 import studio.otherstuff.ambulando.core.store.LocalStore
 import studio.otherstuff.ambulando.core.store.StoreTable
 import studio.otherstuff.ambulando.core.store.liveQuery
+import studio.otherstuff.ambulando.core.store.outbox
+import studio.otherstuff.ambulando.core.store.ChatTarget
+import studio.otherstuff.ambulando.core.store.OutboxState
 import studio.otherstuff.ambulando.core.store.outboxItem
 import studio.otherstuff.ambulando.core.store.sentMessage
 
@@ -66,6 +69,7 @@ internal fun DeckNewThread(
     current: ScreenScope,
     navigation: WorkNavigation,
     onClose: () -> Unit,
+    onRetry: (String) -> Unit,
     onCreated: (channelId: String, threadId: String) -> Unit,
     composer: @Composable (channelId: String, onEnqueued: (String) -> Unit) -> Unit,
 ) {
@@ -86,6 +90,11 @@ internal fun DeckNewThread(
         from = navigation.context
     }
     val workspaceId = opened.second
+    val recoverable by remember(channelId) {
+        store.liveQuery({ it.table == StoreTable.OUTBOX }) {
+            channelId?.let { store.reader.outbox(ChatTarget(opened.first, workspaceId, it)) } ?: emptyList()
+        }
+    }.collectAsState(emptyList())
     val sent by remember(requestId) { store.liveQuery({ it.workspaceId == workspaceId && it.table == StoreTable.MESSAGES }) { requestId?.let { store.reader.sentMessage(workspaceId, it) } } }.collectAsState(null)
     val pending by remember(requestId) { store.liveQuery({ it.workspaceId == workspaceId && it.table == StoreTable.OUTBOX }) { requestId?.let { store.reader.outboxItem(it) } } }.collectAsState(null)
     LaunchedEffect(sent, requestId) {
@@ -125,11 +134,26 @@ internal fun DeckNewThread(
                     Text("Write the first message to start a thread.", fontSize = AmbType.subheadline, color = amb.mutedForeground)
                 }
                 val request = requestId
+                if (request == null) {
+                    recoverable.forEach { saved ->
+                        TextButton(onClick = { requestId = saved.id }, modifier = Modifier.testTag("deck.compose.recover")) {
+                            Text("Review saved send" + if (saved.attachments.any { it.mimeType.startsWith("audio/") }) " · recording" else "")
+                        }
+                    }
+                }
                 if (request == null) Box(Modifier.weight(1f).fillMaxWidth()) { key(id) { composer(id) { requestId = it } } }
-                else Text(
-                    pending?.lastError ?: "Starting thread… Your message is saved on this device.",
-                    Modifier.padding(horizontal = 16.dp).testTag("deck.compose.pending"), fontSize = AmbType.subheadline, color = amb.mutedForeground,
-                )
+                else Column {
+                    pending?.attachments?.firstOrNull { it.mimeType.startsWith("audio/") }?.let {
+                        Text("Saved recording", Modifier.padding(horizontal = 16.dp), color = amb.foreground)
+                    }
+                    Text(
+                        pending?.lastError ?: "Starting thread… Your message is saved on this device.",
+                        Modifier.padding(horizontal = 16.dp).testTag("deck.compose.pending"), fontSize = AmbType.subheadline, color = amb.mutedForeground,
+                    )
+                    if (pending?.state == OutboxState.FAILED || pending?.state == OutboxState.RETRYING) {
+                        TextButton(onClick = { onRetry(request) }, modifier = Modifier.testTag("deck.compose.retry")) { Text("Retry saved send") }
+                    }
+                }
             } else {
                 Text(
                     if (channels.isEmpty()) "No channels in this context." else "Choose a channel here to start your thread.",

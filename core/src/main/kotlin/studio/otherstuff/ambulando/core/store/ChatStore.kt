@@ -285,6 +285,21 @@ suspend fun StoreWriter.acknowledgeSend(id: String, message: MessageRecord, thre
     db.run("DELETE FROM outbox WHERE id = ?", id)
 }
 
+/** Only a definitive prior-build audio attachment rejection may replace its frozen request, atomically guarded. */
+suspend fun StoreWriter.recoverRejectedAudioRequest(id: String, original: ByteArray, replacement: ByteArray): Boolean = write {
+    val changed = db.run(
+        """UPDATE outbox SET request = ?, updated_at = ? WHERE id = ? AND request = ?
+           AND state = ? AND last_status = 409 AND last_code = 'message_attachment_conflict'""",
+        replacement, StoreTime.now(), id, original, OutboxState.FAILED.wire,
+    ) > 0
+    if (changed) {
+        db.run("INSERT OR REPLACE INTO app_state(key,value) VALUES(?,?)", "outbox.audio-file-recovery.$id",
+            studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(replacement))
+        db.outboxWorkspace(id)?.let { emit(StoreTable.OUTBOX, it) }
+    }
+    changed
+}
+
 /** User-initiated retry: back to the send queue (or to signing, if never signed). Only from `FAILED` or `RETRYING`. */
 suspend fun StoreWriter.retryOutbox(id: String) = write {
     db.run(

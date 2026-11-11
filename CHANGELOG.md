@@ -1,3 +1,10 @@
+## 0.9.3 (31)
+
+- Send voice recordings directly as private message attachments, avoiding a conflicting File registration.
+- Retain audio until acknowledgement and recover saved new-thread sends with an explicit Retry.
+- Recover prior rejected audio through its verified original channel File, preserving signature and request identity.
+- Show sanitized message endpoint, HTTP status and error code for rejected sends.
+
 ## 0.9.2 (30)
 
 - Put photo/file attachments, clipboard attachments and microphone recording in one anchored + menu above the always-visible @ control.

@@ -71,7 +71,7 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
     LaunchedEffect(c.id, w.id) { model.sync.refreshPins(c, w) }
     DeckScreen(model.store, screen, navigation, pins.value, intents, active = model.section == AppSection.DECK,
         newThread = { opened, current, close ->
-            DeckNewThread(model.store, opened, current, navigation, close, onCreated = { channelId, threadId -> intents.openInChat(channelId, threadId) },
+            DeckNewThread(model.store, opened, current, navigation, close, onRetry = { id -> model.act { model.outbox.retry(id, c) } }, onCreated = { channelId, threadId -> intents.openInChat(channelId, threadId) },
                 composer = { channelId, onEnqueued -> ConnectedChat(model, null, ComposeOnly(channelId, onEnqueued)) })
         })
 }

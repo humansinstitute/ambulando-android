@@ -32,6 +32,7 @@ import studio.otherstuff.ambulando.core.store.freezeOutbox
 import studio.otherstuff.ambulando.core.store.markOutbox
 import studio.otherstuff.ambulando.core.store.outbox
 import studio.otherstuff.ambulando.core.store.outboxItem
+import studio.otherstuff.ambulando.core.store.recoverRejectedAudioRequest
 import studio.otherstuff.ambulando.core.store.retryOutbox
 import studio.otherstuff.ambulando.core.store.thread
 import studio.otherstuff.ambulando.core.store.updateOutboxAttachments
@@ -49,6 +50,7 @@ import studio.otherstuff.ambulando.core.transport.TowerClient
 import studio.otherstuff.ambulando.core.transport.TowerError
 import studio.otherstuff.ambulando.core.transport.TowerOrigin
 import studio.otherstuff.ambulando.core.transport.WorkspaceRecord
+import studio.otherstuff.ambulando.core.transport.channelFiles
 import studio.otherstuff.ambulando.core.transport.bool
 import studio.otherstuff.ambulando.core.transport.jsonBody
 import studio.otherstuff.ambulando.core.transport.jsonObjectOf
@@ -104,11 +106,14 @@ object OutboxRequest {
     fun classify(status: Int, body: ByteArray, attempts: Int): SendOutcome {
         val o = parseJsonObjectOrNull(body)
         if (status in 200..299) return SendOutcome.Accepted(o?.bool("replayed") == true)
-        val code = o?.string("code")
-        val field = o?.obj("details")?.objects("fields")?.firstOrNull()?.string("message")
+        val code = o?.string("code")?.takeIf { it.matches(Regex("[a-z][a-z0-9_]{0,63}")) }
+        val diagnostic = "POST channels/:channel/messages; HTTP $status" + (code?.let { "; $it" } ?: "")
         return when {
             status == 409 && code == "idempotency_conflict" -> SendOutcome.Permanent(
                 status, code, "Tower already has a different message with this request. Edit and send it as a new message.",
+            )
+            status == 409 && code == "message_attachment_conflict" -> SendOutcome.Permanent(
+                status, code, "Tower could not attach this recording or file. Your send is saved. Retry checks its original channel. ($diagnostic)",
             )
             status == 404 && code == "thread_not_found" -> SendOutcome.Permanent(status, code, "This thread no longer exists.")
             status == 404 && code == "channel_not_found" -> SendOutcome.Permanent(status, code, "This channel no longer exists.")
@@ -117,7 +122,7 @@ object OutboxRequest {
             status == 401 -> SendOutcome.Permanent(status, code, "Tower did not accept this identity's signature.")
             status == 408 || status == 425 || status == 429 || status in 500..599 ->
                 SendOutcome.Retryable(status, code, "Tower is unavailable (HTTP $status); will retry.")
-            else -> SendOutcome.Permanent(status, code, field?.let { "Tower rejected the message: $it" } ?: "Tower rejected the message (HTTP $status).")
+            else -> SendOutcome.Permanent(status, code, "Tower rejected this send. It is saved on this device. ($diagnostic)")
         }
     }
 }
@@ -180,6 +185,18 @@ class OutboxSender(
         val named = attachment.copy(staged = "attachment-${attachment.id}")
         File(directory, named.staged).writeBytes(bytes)
         return named
+    }
+
+    /** Keeps the original recording bytes with the durable outbox until Tower acknowledges the message. */
+    fun retainUploadedAudio(id: String, bytes: ByteArray, filename: String, objectId: String): PendingAttachment {
+        require(java.util.UUID.fromString(id).toString() == id)
+        val directory = staging ?: throw FileTransferError.NotAttachable
+        directory.mkdirs()
+        val attachment = PendingAttachment(id = id, filename = filename, mimeType = "audio/mp4",
+            sizeBytes = bytes.size.toLong(), sha256 = Sha256Hex.of(bytes), staged = "attachment-$id",
+            objectId = objectId, complete = true, kind = "file")
+        studio.otherstuff.ambulando.core.crypto.AtomicFiles.write(File(directory, attachment.staged), bytes)
+        return attachment
     }
 
     /**
@@ -313,8 +330,44 @@ class OutboxSender(
             item.createdAt, attachments)
     }
 
+    /** Narrow prior-build recovery: keep the signed body linking the original File, remove its duplicate attachment claim. */
+    internal fun legacyAudioFileReference(item: OutboxItem): ByteArray? {
+        val audio = item.attachments.singleOrNull() ?: return null
+        val objectId = audio.objectId ?: return null
+        if (!audio.complete || audio.mimeType != "audio/mp4" || item.body != StorageMarkdown.file(objectId, audio.filename)) return null
+        val request = parseJsonObjectOrNull(item.request ?: return null) ?: return null
+        if (request.string("client_request_id") != item.id || request.string("body") != item.body) return null
+        val metadata = request.obj("metadata") ?: return null
+        val attachments = metadata.objects("attachments") ?: return null
+        if (attachments.size != 1 || attachments.single().string("storage_object_id") != objectId) return null
+        val remaining = kotlinx.serialization.json.JsonObject(metadata.filterKeys { it != "attachments" })
+        val repaired = request.toMutableMap()
+        if (remaining.isEmpty()) repaired.remove("metadata") else repaired["metadata"] = remaining
+        return jsonBody(kotlinx.serialization.json.JsonObject(repaired))
+    }
+
     /** User Retry: back to the queue (or to signing, if never signed), sent at once. */
     suspend fun retry(id: String, connection: ConnectionRecord) {
+        val item = store.reader.outboxItem(id) ?: return
+        if (item.connectionId != connection.id || item.origin != connection.origin || item.signerNpub != connection.signerNpub) throw TowerError.UnsafePath
+        // An explicit, definitive attachment conflict rolled back Tower's message transaction. Never rewrite
+        // ambiguous/network failures or idempotency conflicts. Keep the same request id to prevent duplicates.
+        if (item.state == OutboxState.FAILED && item.lastStatus == 409 && item.lastCode == "message_attachment_conflict") {
+            val replacement = legacyAudioFileReference(item)
+            if (replacement != null) {
+                identity.requireSigner(item.signerNpub)
+                val api = TowerAPI(TowerClient(TowerOrigin(item.origin), transport, identity), transfers)
+                val files = api.channelFiles(item.workspaceId, item.appNpub, item.channelId)
+                val audio = item.attachments.single()
+                if (files.items.any { it.storageObjectId == audio.objectId && !it.archived }) {
+                    store.writer.recoverRejectedAudioRequest(id, requireNotNull(item.request), replacement)
+                } else if (audio.staged.isEmpty()) {
+                    store.writer.markOutbox(id, OutboxState.FAILED, item.lastStatus, item.lastCode,
+                        "The original channel File could not be verified. Your uploaded recording and saved send are kept. Open Files in the original channel to check access, then retry.")
+                    return
+                }
+            }
+        }
         store.writer.retryOutbox(id)
         kick(connection, force = true)
     }

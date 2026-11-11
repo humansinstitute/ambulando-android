@@ -28,6 +28,65 @@ class VoiceRecordingFlowTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private fun shell(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+    @Test fun newThreadRetainsUploadedAudioAfter409AndOffersSafeRetryAfterReopen() {
+        val context = instrumentation.targetContext
+        shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
+        shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
+        val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+            val app = context.applicationContext as AmbulandoApplication
+            compose.waitUntil(30_000) { app.activeModel?.workspaces?.size == 2 }
+            val model = app.activeModel!!
+            compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
+            compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
+            val general = model.channels.first { it.id == SampleIds.GENERAL }
+            compose.runOnIdle { model.voice.cancel(); model.selectContext(general.scopeId, general.id); model.section = AppSection.DECK }
+            compose.onNodeWithTag("deck.page.inbox").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("deck.fab.new").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("deck.fab.new").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chat.composer").performTextReplacement("Keep typing beside the recording")
+            compose.onNodeWithTag("chat.attach").performClick()
+            compose.onNodeWithTag("voice.record").performClick()
+            compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
+            val draft = model.voice.state.value!!
+            Thread.sleep(1500)
+            compose.runOnIdle { model.voice.stop() }
+            compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.REVIEW }
+            androidx.test.espresso.Espresso.closeSoftKeyboard()
+            model.sampleTower!!.attachmentConflictNextSend = true
+            compose.onNodeWithTag("voice.send").performClick()
+            val runtime = model.runtimeMap.values.first { it.workspace.id == SampleIds.STUDIO }
+            compose.waitUntil(30_000) { runBlocking { runtime.store.reader.outboxItem(draft.id)?.lastStatus == 409 } }
+            val failed = runBlocking { runtime.store.reader.outboxItem(draft.id)!! }
+            assertEquals("message_attachment_conflict", failed.lastCode)
+            assertTrue(failed.attachments.single().complete)
+            val staged = java.io.File(runtime.outbox.staging!!, failed.attachments.single().staged)
+            assertTrue(staged.isFile)
+            assertTrue(staged.length() > 0)
+            assertEquals("Keep typing beside the recording", runBlocking { runtime.store.reader.draft(draft.destination.target)!!.text })
+            compose.onNodeWithTag("deck.compose.retry").assertExists()
+            shell("screencap -p /sdcard/Download/ambulando-audio409-retained.png")
+            scenario.recreate()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("deck.compose.retry").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("deck.compose.cancel").performClick()
+            // Navigate away then return: recovery stays bound to the original channel's durable row.
+            compose.runOnIdle { model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.DESIGN) }
+            compose.runOnIdle { model.selectContext(general.scopeId, general.id) }
+            compose.onNodeWithTag("deck.fab.new").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("deck.compose.recover").fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodesWithTag("deck.compose.recover").onLast().performClick()
+            compose.onNodeWithTag("deck.compose.retry").performClick()
+            compose.waitUntil(30_000) { runBlocking { runtime.store.reader.outboxItem(draft.id) == null } }
+            val saved = runBlocking { runtime.store.reader.latestMessages(SampleIds.STUDIO, general.id, 500).filter { it.clientRequestId == draft.id } }
+            assertEquals(1, saved.size)
+            assertNotNull(saved.single().threadId)
+            assertEquals(failed.attachments.single().objectId, MessageAttachment.from(saved.single().raw).single().storageObjectId)
+            assertFalse(staged.exists())
+            assertEquals("Keep typing beside the recording", runBlocking { runtime.store.reader.draft(draft.destination.target)!!.text })
+        }
+    }
+
     @Test fun realCaptureAcrossRotationNavigationAndScreenOffThenNotificationStopAndOfflineRetry() {
         val context = instrumentation.targetContext
         shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")

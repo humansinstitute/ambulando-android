@@ -305,29 +305,15 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
                 voice.drafts.save(draft.copy(phase = studio.otherstuff.ambulando.app.voice.VoicePhase.SENDING, error = null))
                 owner.engine.perform("voice:${draft.id}", SyncPriority.USER) {
                     val api = TowerAPI(TowerClient(TowerOrigin(destination.origin), owner.directTransport, identity), transfers)
-                    // Existing Files route checks the original channel access. Server authorizes every storage/file/message write.
-                    val files = api.channelFiles(destination.workspaceId, destination.appNpub, destination.channelId)
+                    // Tower authorizes the message attachment in the original channel; do not pre-register a File.
                     val bytes = withContext(Dispatchers.IO) { file.readBytes() }
                     val previous = draft.objectId?.let { id -> draft.uploadURL?.let { PreparedObject(id, it) } }
                     val objectId = api.store(destination.workspaceId, destination.appNpub, bytes, "audio/mp4", draft.filename, previous) { prepared ->
                         voice.drafts.save(requireNotNull(voice.state.value).copy(objectId = prepared.objectId, uploadURL = prepared.uploadURL, fileId = null))
                     }
-                    var current = requireNotNull(voice.state.value)
-                    if (current.fileId == null) {
-                        val existing = files.items.firstOrNull { it.storageObjectId == objectId }
-                        val fileId = existing?.id ?: run {
-                            val response = api.client.request(method = "POST", path = TowerAPI.base(destination.workspaceId) + "/channels/" + TowerAPI.uuid(destination.channelId) + "/files",
-                                appNpub = destination.appNpub, jsonBody = jsonBody(jsonObjectOf("storage_object_id" to objectId, "display_name" to draft.filename)))
-                            parseJsonObjectOrNull(response)?.obj("file")?.string("id") ?: error("Could not confirm channel File. Retry keeps this recording.")
-                        }
-                        current = current.copy(fileId = fileId)
-                        voice.drafts.save(current)
-                    }
                     // Atomic producer receipt prevents a crash between enqueue and clearing the audio from creating another message.
                     owner.store.writer.enqueueSend(destination.target, destination.origin, destination.signerNpub, destination.appNpub,
-                        StorageMarkdown.file(objectId, draft.filename), emptyList(), attachments = listOf(PendingAttachment(
-                            id = draft.id, filename = draft.filename, mimeType = "audio/mp4", sizeBytes = bytes.size.toLong(),
-                            sha256 = studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes), staged = "", objectId = objectId, complete = true, kind = "file")),
+                        StorageMarkdown.file(objectId, draft.filename), emptyList(), attachments = listOf(owner.outbox.retainUploadedAudio(draft.id, bytes, draft.filename, objectId)),
                         id = draft.id, preserveDraft = true, once = true)
                     voice.drafts.clear()
                     owner.outbox.kick(owner.connection)

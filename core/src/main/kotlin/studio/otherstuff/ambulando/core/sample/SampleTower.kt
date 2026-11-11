@@ -73,6 +73,8 @@ class SampleTower(
     private var revoked: Set<String> = emptySet()
     private var failScopesFlag = false
     private var rejectNext = false
+    /** One synthetic message-level conflict after a completed upload, for retained-outbox device verification. */
+    var attachmentConflictNextSend = false
     private var scopeOrderConflictFlag = false
     private var workspaceListReadCount = 0
 
@@ -490,6 +492,10 @@ class SampleTower(
             if (body.isEmpty() && attachments.isEmpty()) return@synchronized validationError("body must be non-empty")
             val threadRequested = o["thread_id"].asString()?.lowercase()
             SampleMessageSignature.check(o, body, w, channel, threadRequested, signer)?.let { return@synchronized validationError(it) }
+            if (attachmentConflictNextSend) {
+                attachmentConflictNextSend = false
+                return@synchronized errorReply(409, "message_attachment_conflict")
+            }
             if (rejectNext) {
                 rejectNext = false
                 return@synchronized validationError("sample rejection requested in Settings")

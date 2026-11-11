@@ -27,19 +27,16 @@ cannot supply or replace the destination. Account switches hide another identity
 and keeps a locally retained, destination-bound copy that cannot be sent through a replacement connection. Removing
 the identity explicitly deletes local recovery copies, consistent with the existing account-removal behavior.
 
-Send uses the existing private workspace storage prepare → upload → complete path and the channel Files route.
-Tower authorizes membership and channel association; the client never carries S3 credentials or requests a public
-object. A failed upload keeps both the audio and any prepared object for explicit retry. A File registration lost-response
-retry looks for the same object in the existing channel Files listing. That listing is bounded by the existing API's
-200-item page; if the object has fallen outside it, a conflict may require a later retry or review rather than creating
-another object. The backend's unique object constraint prevents duplicate File registration.
+Send uses the existing private workspace storage prepare → upload → complete path, then attaches the object directly
+to the message. Tower authorizes membership and channel association; the client never carries S3 credentials or requests
+a public object. A failed upload keeps both the audio and any prepared object for explicit retry.
 
-Once uploaded and registered, the audio becomes a normal file chat attachment through the durable outbox. An atomic
-producer receipt and stable recording/request UUID prevent an interrupted enqueue from making another message,
-including after sync retired the first outbox row. The voice message does not clear or replace a typed draft. Queued
-message delivery and retry use the existing outbox controls. Cancel before Send deletes the journal and audio; once
-Send is running, wait for its outcome. A File already registered on Tower remains in channel Files even if the later
-chat handoff fails or is canceled locally; local cancel does not delete a server File.
+Once uploaded, the audio becomes a normal file chat attachment through the durable outbox. An atomic producer receipt
+and stable recording/request UUID prevent an interrupted enqueue from making another message, including after sync
+retired the first outbox row. Audio is copied atomically into durable outbox staging before the recorder journal is
+cleared, and stays there until message acknowledgement. The voice message does not clear or replace a typed draft.
+Queued message delivery and retry use the existing outbox controls. Cancel before Send deletes the journal and audio;
+once Send is running, wait for its outcome. Cancel never deletes an uploaded Tower object or an existing channel File.
 
 ## Android requirements and validation
 
@@ -70,3 +67,18 @@ behavior. Run on a dedicated emulator using:
 Before claiming phone readiness, verify microphone sound quality, extended screen-off capture, notification controls,
 battery restrictions and authenticated private upload on the intended device/account. A local build or synthetic
 upload does not establish those results.
+
+### Rejected sends and prior-build recovery
+
+Recordings upload as private message attachments, without first creating a channel File. The outbox retains
+local audio bytes until Tower acknowledges the message; typed text stays in its original composer. New thread
+shows the saved recording and **Retry saved send** after rejection. Reopen New thread in the original channel
+and choose **Review saved send** to recover a pending send after navigation or relaunch.
+
+For recordings rejected by earlier builds with `message_attachment_conflict` (HTTP 409), explicit Retry checks
+that the uploaded object is still an active File in the original channel using the original identity. It then
+keeps the exact signed body, destination and request ID while removing only the duplicate audio attachment
+claim. The body remains a link to that existing File. This guarded recovery never uploads again or creates
+another File. A missing or unreadable original File leaves the failed send intact. Other conflicts and uncertain
+responses retain their original frozen request; a 409 is never considered acceptance. Old builds may already
+have deleted the local audio after handoff, but the uploaded File and durable send are preserved by recovery.
