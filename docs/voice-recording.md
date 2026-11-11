@@ -1,6 +1,11 @@
 # Channel voice messages
 
-Choose **Record voice** in channel chat. Android asks for microphone and notification permissions. Recording starts
+Tap the **+** menu above **@** on the left of the message box, then choose the microphone **Record voice** action.
+The same menu holds **Photo or file…** and **Paste attachment**. **@** stays outside the menu.
+Menu selection, Back and tapping outside dismiss the popup. The idle recorder adds no separate row or empty panel.
+The controls have at least 48dp touch targets and work in channel chat, new conversations and replies.
+On short screens, the editor keeps its space above the keyboard and supplementary controls scroll; the section
+bar returns when the Chat keyboard closes. Android asks for microphone and notification permissions. Recording starts
 only while Ambulando is visible. A foreground microphone service owns the recorder, so rotation, navigation,
 backgrounding and a locked/off screen do not transfer ownership to a composable or activity. A private recording
 notification shows elapsed time and **Stop**. Return to channel chat to review, play, send or cancel the recording.
@@ -44,6 +49,11 @@ and a visible/resumed activity are required before starting. These follow the of
 [microphone foreground services](https://developer.android.com/develop/background-work/services/fgs/service-types#microphone),
 [background start and while-in-use restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)
 and [MediaRecorder](https://developer.android.com/media/platform/mediarecorder).
+
+`ComposerMenuFlowTest` covers the anchored menu, visible mention control, real attachment picker entry,
+keyboard layout, retained drafts, main/new/reply microphone launches and denied permission. Run the denied-permission
+method separately after revoking microphone permission; grant microphone and notification permissions for the other
+methods. Capture keyboard evidence on a dedicated 360×640dp emulator as well as the normal screen.
 
 JVM tests cover retained state, interrupted/retry journals, destination mismatches, cancellation, denied microphone
 permission and atomic replay-safe outbox handoff. `VoiceRecordingFlowTest` uses real Android MediaRecorder,

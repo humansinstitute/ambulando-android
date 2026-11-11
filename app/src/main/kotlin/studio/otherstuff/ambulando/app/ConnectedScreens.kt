@@ -139,18 +139,27 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     // The message dialogs live here, outside the list: a row that scrolls away must not take an open dialog with it.
     var editing by remember(target) { mutableStateOf<MessageRecord?>(null) }
     var deleting by remember(target) { mutableStateOf<MessageRecord?>(null) }
-    Column(Modifier.fillMaxSize()) {
-        if (threadId != null && !family) ThreadHeader(model, threadId, !removed)
-        val listState = remember(target) { androidx.compose.foundation.lazy.LazyListState() }
-        ChatFollowsNewest(listState, target, feed != null, posts.map { it.id } + pending.map { it.id }, model.chatPositions[target.draftKey], sent) {
-            model.chatPositions[target.draftKey] = it
-        }
-        if (composeOnly != null) Spacer(Modifier.weight(1f))
-        else if (feed == null) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+    val composing = ready && !removed
+    val voiceAction = if (!family) studio.otherstuff.ambulando.app.voice.rememberVoiceRecorderAction(model, c, w, target, composing) else null
+    val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
+    val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val pills = remember(mentions, amb) {
+        studio.otherstuff.ambulando.app.ui.chat.MentionPills(mentions, androidx.compose.ui.text.SpanStyle(color = amb.primary, background = amb.muted, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+    }
+    val listState = remember(target) { androidx.compose.foundation.lazy.LazyListState() }
+    ChatFollowsNewest(listState, target, feed != null, posts.map { it.id } + pending.map { it.id }, model.chatPositions[target.draftKey], sent) {
+        model.chatPositions[target.draftKey] = it
+    }
+    studio.otherstuff.ambulando.app.ui.chat.ChatComposerLayout(
+        header = { if (threadId != null && !family) ThreadHeader(model, threadId, !removed) },
+        messages = {
+        if (composeOnly != null) Spacer(Modifier.fillMaxSize())
+        else if (feed == null) Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
             Text("Loading conversation…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.loading"))
-        } else if (posts.isEmpty() && pending.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        } else if (posts.isEmpty() && pending.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
             Text(if (threadId == null) "No messages yet" else "No replies yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.empty"))
-        } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.TopCenter) {
+        } else Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.TopCenter) {
           LazyColumn(Modifier.readingWidth().fillMaxHeight().testTag("chat.messages"), state = listState, contentPadding = PaddingValues(vertical = 8.dp)) {
             if (threadId != null && threadCount > posts.size) item(key = "earlier-messages") {
                 TextButton(onClick = { visibleMessageLimit += 50 }, modifier = Modifier.fillMaxWidth().testTag("chat.loadEarlier")) {
@@ -222,6 +231,8 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             }
           }
         }
+        },
+        details = {
         if (removed) Text("No longer available to you", Modifier.padding(12.dp))
         uploadRows.filter { it.target == target && it.markdown == null }.forEach { upload ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -242,7 +253,6 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             Text("${added.filename} added from your paste", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).testTag("chat.paste.notice"))
             TextButton(onClick = { model.removeDraftAttachment(target, added.id); justAdded = null }, modifier = Modifier.testTag("chat.paste.undo")) { Text("Undo") }
         } }
-        val composing = ready && !removed
         if (!family && composing && activeMention != null) mentionResults?.let { results ->
             studio.otherstuff.ambulando.app.ui.chat.MentionLookahead(results, onPick = { mention ->
                 field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.mention(field.value, mention)
@@ -250,22 +260,18 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 model.saveDraft(target, text, mentions)
             })
         }
-        if (!family) studio.otherstuff.ambulando.app.voice.VoiceRecorderUi(model, c, w, target, composing) { composeOnly?.onEnqueued?.invoke(it) }
+        if (!family) studio.otherstuff.ambulando.app.voice.VoiceRecorderUi(model, c, target, composing, voiceAction?.error) { composeOnly?.onEnqueued?.invoke(it) }
         if (!family) studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceComposerContext(model)
-        val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
-        val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
-        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-        val pills = remember(mentions, amb) {
-            studio.otherstuff.ambulando.app.ui.chat.MentionPills(mentions, androidx.compose.ui.text.SpanStyle(color = amb.primary, background = amb.muted, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
-        }
-        Column(Modifier.fillMaxWidth().background(amb.card).imePadding()) {
+        },
+        composer = {
+        Column(Modifier.fillMaxWidth().background(amb.card)) {
         HorizontalDivider(thickness = 1.dp, color = amb.border)
         Row(Modifier.readingWidth().align(androidx.compose.ui.Alignment.CenterHorizontally).clickable(enabled = composing) { composerFocus.requestFocus(); keyboard?.show() }.testTag("chat.composer.area").padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (family) TextButton(onClick = { picker.launch(arrayOf("image/*")) }, enabled = composing) { Text("Photo") }
-            else studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onPick = { picker.launch(arrayOf("image/*", "*/*")) }, onPaste = {
+            else studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onRecord = { voiceAction?.record?.invoke() }, recordEnabled = voiceAction?.available == true, onPick = { picker.launch(arrayOf("image/*", "*/*")) }, onPaste = {
                 val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
                 clipboard.primaryClip?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::pasteUri) }
-            }, onMention = { field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); model.saveDraft(target, text, mentions) })
+            }, onMention = { composerFocus.requestFocus(); keyboard?.show(); field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); model.saveDraft(target, text, mentions) })
             val channelName = labels[channel]
             Column(Modifier.weight(1f)) {
             androidx.compose.foundation.text.BasicTextField(field.value, { value ->
@@ -304,10 +310,12 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             else studio.otherstuff.ambulando.app.ui.chat.SendButton(sendEnabled, sendAction)
         }
         }
-        openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
-        ChatMessageDialogs(model, editing.takeIf { !removed }, deleting.takeIf { !removed }, onEditDone = { editing = null }, onDeleteDone = { deleting = null })
-        openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed && !family) { openSent = null } }
-    }
+        },
+    )
+    openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
+    ChatMessageDialogs(model, editing.takeIf { !removed }, deleting.takeIf { !removed }, onEditDone = { editing = null }, onDeleteDone = { deleting = null })
+    openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed && !family) { openSent = null } }
+
 }
 
 @Composable internal fun ConnectedDocuments(model: AppModel, docId: String?) {

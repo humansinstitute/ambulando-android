@@ -18,7 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.outlined.AlternateEmail
-import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.DropdownMenu
@@ -150,18 +151,18 @@ fun MentionLookahead(candidates: List<MentionCandidate>, onPick: (Mention) -> Un
     }
 }
 
-/** One stacked composer tool: the 44dp touch width, 40dp tall, so the two of them set the field's two-line starting height. */
-private val ComposerToolHeight = 40.dp
+/** Two accessible controls share the left column and set the initial field height. */
+private val ComposerToolHeight = 48.dp
 
 /** The text box starts two tools tall (iOS: the box is as tall as the tool column), so it opens at two lines, not one. */
 val ComposerMinHeight = ComposerToolHeight * 2
 
-/** A plain icon button of the exact tool size (Material's IconButton would pad it out to 48dp and push the field taller). */
+/** Explicit 48dp targets keep the stacked controls accessible without an extra idle row. */
 @Composable
 private fun ComposerTool(enabled: Boolean, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, onClick: () -> Unit) {
     val amb = Amb.colors
     Box(
-        Modifier.size(Amb.touchTarget, ComposerToolHeight).clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+        Modifier.size(48.dp, ComposerToolHeight).clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
             .semantics { contentDescription = label }.testTag(tag),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, tint = if (enabled) amb.foreground else amb.mutedForeground, modifier = Modifier.size(22.dp)) }
@@ -169,19 +170,21 @@ private fun ComposerTool(enabled: Boolean, label: String, icon: androidx.compose
 
 /**
  * The composer's controls stacked at its left (attach above mention) so the text field takes the width. Attach offers
- * the photo/file picker and pasting an attachment from the clipboard.
+ * the photo/file picker, microphone and pasting an attachment from the clipboard.
  */
 @Composable
-fun ComposerControls(enabled: Boolean, onPick: () -> Unit, onPaste: () -> Unit, onMention: () -> Unit) {
+fun ComposerControls(enabled: Boolean, onPick: () -> Unit, onPaste: () -> Unit, onMention: () -> Unit, onRecord: () -> Unit, recordEnabled: Boolean) {
     var menu by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
         Box {
-            ComposerTool(enabled, "Attach image or file", Icons.Outlined.Image, "chat.attach") { menu = true }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            ComposerTool(enabled, "Attachments and voice", Icons.Outlined.Add, "chat.attach") { menu = true }
+            DropdownMenu(expanded = menu && enabled, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Photo or file…") }, leadingIcon = { Icon(Icons.Outlined.Image, null) },
-                    onClick = { menu = false; onPick() }, modifier = Modifier.testTag("chat.attach.pick"))
+                    onClick = { menu = false; onPick() }, modifier = Modifier.heightIn(min = 48.dp).testTag("chat.attach.pick"))
+                DropdownMenuItem(text = { Text("Record voice") }, leadingIcon = { Icon(Icons.Outlined.Mic, "Microphone") },
+                    enabled = recordEnabled, onClick = { menu = false; onRecord() }, modifier = Modifier.heightIn(min = 48.dp).testTag("voice.record"))
                 DropdownMenuItem(text = { Text("Paste attachment") }, leadingIcon = { Icon(Icons.Outlined.ContentPaste, null) },
-                    onClick = { menu = false; onPaste() }, modifier = Modifier.testTag("chat.attach.paste"))
+                    onClick = { menu = false; onPaste() }, modifier = Modifier.heightIn(min = 48.dp).testTag("chat.attach.paste"))
             }
         }
         ComposerTool(enabled, "Mention", Icons.Outlined.AlternateEmail, "chat.mention", onMention)
@@ -192,7 +195,7 @@ fun ComposerControls(enabled: Boolean, onPick: () -> Unit, onPaste: () -> Unit, 
 @Composable
 fun SendButton(enabled: Boolean, onSend: () -> Unit) {
     val amb = Amb.colors
-    IconButton(onClick = onSend, enabled = enabled, modifier = Modifier.size(Amb.touchTarget).testTag("chat.send")) {
+    IconButton(onClick = onSend, enabled = enabled, modifier = Modifier.size(48.dp).testTag("chat.send")) {
         Box(Modifier.size(30.dp).background(if (enabled) amb.primary else amb.border, CircleShape), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.ArrowUpward, "Send", tint = if (enabled) amb.primaryForeground else amb.card, modifier = Modifier.size(18.dp))
         }

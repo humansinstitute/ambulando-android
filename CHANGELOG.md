@@ -1,3 +1,10 @@
+## 0.9.2 (30)
+
+- Put photo/file attachments, clipboard attachments and microphone recording in one anchored + menu above the always-visible @ control.
+- Remove the idle voice row; retain recording, review, retry and cancellation controls with the original destination.
+- Use 48dp composer controls and preserve typed drafts while opening or dismissing the menu.
+- Keep the editor visible above the keyboard on compact screens; scroll suggestions and recording details in the remaining space.
+
 ## 0.9.1 (29)
 
 - Show cached kind0 profile names in generated DM headers, sidebar labels, chat composer and related channel labels; refresh them when profiles arrive or change.

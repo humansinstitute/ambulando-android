@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -203,7 +204,9 @@ fun WorkspaceShell(
                 }
                 // A full-screen record (a canvas) replaces the global section bar with its own bottom controls; the
                 // permanent sidebar takes the bar's place on a wide window.
-                if (!sidebarShown && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
+                val chatKeyboardOpen = chrome.section == AppSection.CHAT &&
+                    androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
+                if (!sidebarShown && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
                     SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect)
                 }
             }

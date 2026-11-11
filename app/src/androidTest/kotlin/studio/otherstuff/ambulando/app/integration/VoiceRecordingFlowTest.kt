@@ -40,8 +40,9 @@ class VoiceRecordingFlowTest {
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
             compose.runOnIdle { model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.CHAT; model.voice.cancel() }
-            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("voice.record") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.attach") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("chat.composer").performTextReplacement("Preserve the typed draft")
+            compose.onNodeWithTag("chat.attach").performClick()
             compose.onNodeWithTag("voice.record").performClick()
             compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
             val draft = model.voice.state.value!!
@@ -93,7 +94,8 @@ class VoiceRecordingFlowTest {
             assertEquals("Preserve the typed draft", runBlocking { originalRuntime.store.reader.draft(draft.destination.target)!!.text })
             assertFalse(audio.exists())
             // Explicit cancellation removes both audio and destination journal, without producing a message.
-            compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("voice.record") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("chat.attach") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chat.attach").performClick()
             compose.onNodeWithTag("voice.record").performClick()
             compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
             val cancelled = model.voice.state.value!!

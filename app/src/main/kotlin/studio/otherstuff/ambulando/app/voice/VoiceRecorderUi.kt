@@ -22,8 +22,11 @@ import studio.otherstuff.ambulando.core.store.ChatTarget
 import studio.otherstuff.ambulando.core.store.ConnectionRecord
 import studio.otherstuff.ambulando.core.transport.WorkspaceRecord
 
+internal class VoiceRecorderAction(val record: () -> Unit, val available: Boolean, val error: String?)
+
+/** Capture the destination synchronously on selection, before any permission dialog. */
 @Composable
-internal fun VoiceRecorderUi(model: AppModel, c: ConnectionRecord, w: WorkspaceRecord, target: ChatTarget, enabled: Boolean, enqueued: (String) -> Unit) {
+internal fun rememberVoiceRecorderAction(model: AppModel, c: ConnectionRecord, w: WorkspaceRecord, target: ChatTarget, enabled: Boolean): VoiceRecorderAction {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val voice = model.voice
@@ -42,21 +45,28 @@ internal fun VoiceRecorderUi(model: AppModel, c: ConnectionRecord, w: WorkspaceR
         if (result.values.all { it } && destination != null) start(destination)
         else error = "Microphone and notification permission are required to record. Enable them in Android settings, then tap Record again."
     }
+    val record: () -> Unit = {
+        val destination = VoiceDestination.capture(c, w, target,
+            (model.channels.firstOrNull { it.id == target.channelId }?.name ?: "Original channel") + if (target.threadId != null) " · reply" else " · new conversation")
+        val required = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+        }.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
+        if (required.isEmpty()) start(destination)
+        else { permissionTarget = destination; permission.launch(required.toTypedArray()) }
+    }
+    return VoiceRecorderAction(record, enabled && draft == null, error)
+}
+
+@Composable
+internal fun VoiceRecorderUi(model: AppModel, c: ConnectionRecord, target: ChatTarget, enabled: Boolean, error: String?, enqueued: (String) -> Unit) {
+    val voice = model.voice
+    val draft by voice.state.collectAsState()
     // Only this identity may inspect a retained recording; switching account cannot expose or redirect it.
     val visible = draft?.takeIf { it.destination.signerNpub == c.signerNpub }
+    if (draft == null && error == null) return
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("voice.panel")) {
-        if (draft == null) {
-            TextButton(enabled = enabled, onClick = {
-                val destination = VoiceDestination.capture(c, w, target,
-                    (model.channels.firstOrNull { it.id == target.channelId }?.name ?: "Original channel") + if (target.threadId != null) " · reply" else " · new conversation")
-                val required = buildList {
-                    add(Manifest.permission.RECORD_AUDIO)
-                    if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-                }.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
-                if (required.isEmpty()) start(destination)
-                else { permissionTarget = destination; permission.launch(required.toTypedArray()) }
-            }, modifier = Modifier.testTag("voice.record")) { Text("Record voice") }
-        } else if (visible != null) {
+        if (visible != null) {
             val recording = visible.phase == VoicePhase.RECORDING || visible.phase == VoicePhase.STARTING
             var now by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
             LaunchedEffect(visible.id, recording) { while (recording) { now = android.os.SystemClock.elapsedRealtime(); delay(500) } }
@@ -74,7 +84,7 @@ internal fun VoiceRecorderUi(model: AppModel, c: ConnectionRecord, w: WorkspaceR
             }
             if (recording) TextButton(onClick = { voice.cancel() }, modifier = Modifier.testTag("voice.cancel")) { Text("Cancel recording") }
             visible.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("voice.error")) }
-        } else Text("A recording is kept for another account. Return to that account to review it.")
+        } else if (draft != null) Text("A recording is kept for another account. Return to that account to review it.")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("voice.permission.error")) }
     }
 }
