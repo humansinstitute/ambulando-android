@@ -114,8 +114,8 @@ class PeopleDirectoryTest {
         assertEquals("Cal Tower", directory.person(cal).name)
         assertEquals(PersonDisplay.NameSource.WORKSPACE, directory.person(cal).nameSource)
         assertEquals("Stranger K", directory.person(stranger, "Stranger K").name)
-        assertEquals(shortNpubLabel(stranger), directory.person(stranger).name)
-        assertEquals("NP", directory.person(stranger).initials)
+        assertEquals("Unknown person", directory.person(stranger).name)
+        assertEquals("UP", directory.person(stranger).initials)
         assertNull(directory.person(stranger).avatarURL)
         assertEquals("System", directory.person(null, "System").name)
     }
@@ -123,15 +123,23 @@ class PeopleDirectoryTest {
     @Test fun placeholderAndKeyNamesAreSkipped() {
         val members = listOf(DirectoryMember(ana, "Workspace Creator"), DirectoryMember(bea, shortNpubLabel(bea)), DirectoryMember(cal, cal))
         val directory = PeopleDirectory(members, emptyMap(), listOf(profile(bea, display = "Bea")))
-        assertEquals(shortNpubLabel(ana), directory.person(ana).name)
+        assertEquals("Unknown person", directory.person(ana).name)
         assertEquals(PersonDisplay.NameSource.NPUB, directory.person(ana).nameSource)
         assertEquals("Bea", directory.person(bea).name)
-        assertEquals(shortNpubLabel(cal), directory.person(cal).name)
-        assertEquals(shortNpubLabel(cal), directory.person(cal, "ab".repeat(32)).name)
+        assertEquals("Unknown person", directory.person(cal).name)
+        assertEquals("Unknown person", directory.person(cal, "ab".repeat(32)).name)
         assertEquals("Cal", directory.person(cal, "Cal").name)
         assertNull(PersonNamePolicy.usable("Flight Deck PG Creator"))
         assertNull(PersonNamePolicy.usable("npub1abcd…wxyz"))
         assertEquals("npub fan club", PersonNamePolicy.usable("npub fan club"))
+    }
+
+    @Test fun unusableDisplayNameFallsThroughToProfileName() {
+        val directory = PeopleDirectory(emptyList(), emptyMap(), listOf(profile(ana, display = "DM: $ana", name = "Ana")))
+        assertEquals("Ana", directory.person(ana).name)
+        assertNull(PersonNamePolicy.usable("DM: $ana"))
+        assertNull(PersonNamePolicy.usable("Person " + "ab".repeat(32)))
+        assertEquals(ana, directory.person(ana).npub)
     }
 
     @Test fun profilesNeverAddMembersAndBrokenPicturesFallBack() {

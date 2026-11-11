@@ -70,7 +70,7 @@ class ChatAPITests {
         }
         val api = api(transport)
         val members = api.members(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB)
-        assertEquals(listOf("Member A", agent.take(10) + "…" + agent.takeLast(4)), members.map { it.label })
+        assertEquals(listOf("Member A", "Unknown person"), members.map { it.label })
         assertTrue(members[1].isAgent)
         assertEquals(listOf(Fixtures.SCOPE_B, Fixtures.SCOPE_A), api.scopeOrder(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB))
     }

@@ -190,7 +190,7 @@ data class MemberRecord(
 
     /** Agents are mentioned as `agent` on the wire, everyone else as `person`. */
     val isAgent: Boolean get() = kind == "agent"
-    val label: String get() = if (!displayName.isNullOrEmpty()) displayName else shortLabel(npub)
+    val label: String get() = studio.otherstuff.ambulando.core.profiles.PersonNamePolicy.usable(displayName) ?: "Unknown person"
 
     companion object {
         fun parse(workspaceId: String, raw: JsonObject): MemberRecord {

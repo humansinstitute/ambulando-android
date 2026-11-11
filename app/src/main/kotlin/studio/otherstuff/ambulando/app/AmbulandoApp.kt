@@ -232,7 +232,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             override fun unlock() { model.lock() }
         }
         val chrome = ShellChromeState(model.section, AppSection.visible(model.showAgents, model.showContext), w?.label ?: "Workspaces",
-            model.scopes.firstOrNull { it.id == model.context.scopeId }?.name, model.channels.firstOrNull { it.id == model.context.channelId }?.name,
+            model.scopes.firstOrNull { it.id == model.context.scopeId }?.name, labels[model.context.channelId],
             model.context.isHome, model.viewLocked, !syncStatus.isIdle, browser.tabs.size, people?.person(c.signerNpub), false, model.environment.isSample, sidebar, syncStatus.errors.values.firstOrNull()?.let { "Stored content is available. Update failed: $it" }, studio.otherstuff.ambulando.core.notifications.NotificationInboxLogic.badge(notificationUnread),
             if (model.enabledEntries.size > 1) model.activeEntry?.let { studio.otherstuff.ambulando.app.ui.shell.WorkspaceTint.swatch(it.colour) } else null)
         val screen = w?.let { ScreenScope(c.id, it.id, it.appNpub, c.signerNpub, model.context.scopeId, model.context.channelId) }

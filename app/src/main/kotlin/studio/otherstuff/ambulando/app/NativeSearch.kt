@@ -14,6 +14,7 @@ import studio.otherstuff.ambulando.core.store.*
 
 @Composable internal fun NativeSearch(model: AppModel, done: () -> Unit) {
     val w = model.workspace ?: return
+    val labels = channelLabels(model)
     val services = LocalAppServices.current
     var text by remember { mutableStateOf("") }
     // Typing is debounced so the local index is not queried on every keystroke.
@@ -25,7 +26,7 @@ import studio.otherstuff.ambulando.core.store.*
         .mapNotNull { (kind, title) -> hits.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { title to it } }
     fun place(hit: SearchHit): String? {
         val channel = model.channels.firstOrNull { it.id == hit.channelId } ?: return null
-        return listOfNotNull(model.scopes.firstOrNull { it.id == channel.scopeId }?.name, "#" + (channel.name.trim().removePrefix("DM:").trim().takeUnless { it.isEmpty() || it.startsWith("npub1") } ?: "Direct message")).joinToString(" · ")
+        return listOfNotNull(model.scopes.firstOrNull { it.id == channel.scopeId }?.name, "#" + (labels[channel.id] ?: "Channel")).joinToString(" · ")
     }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         TextButton(onClick = done) { Text("Done") }

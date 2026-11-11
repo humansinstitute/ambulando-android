@@ -170,3 +170,8 @@ suspend fun StoreReader.directoryMembers(workspaceId: String): List<MemberRecord
         m.copy(displayName = if (person.nameSource == PersonDisplay.NameSource.NPUB) null else person.name)
     }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { m: MemberRecord -> m.label }.thenBy { it.npub })
 }
+
+/** Persisted viewer identity for display resolution; never changes routing or membership. */
+suspend fun StoreReader.viewerNpub(workspaceId: String): String? = read {
+    textValue("SELECT c.signer_npub FROM workspaces w JOIN connections c ON c.id = w.connection_id WHERE w.workspace_id = ?", workspaceId)
+}

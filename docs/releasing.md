@@ -3,6 +3,14 @@
 The public repository contains reviewed source snapshots, not private development history. Never push a private
 checkout's branches, tags or other refs to the public destination. Never force-push or mirror private refs.
 
+## Standing Android delivery requirement
+
+Android updates must go through to actual Zapstore release publication as part of delivery, using the existing
+certificate and existing authorized publisher identity/signing flow. A source commit or local APK alone does not complete an update.
+Do not request a second confirmation solely for publication when the update is authorized. Report concrete signer
+or admission blockers accurately; never widen policy, probe owner keys or substitute signing identities. Coordinate
+with any existing release owner and inspect current public versions before assigning the next build.
+
 ## Validate the source
 
 1. Preserve existing work and commit the tested tracked tree. Review the feature matrix and known limitations.

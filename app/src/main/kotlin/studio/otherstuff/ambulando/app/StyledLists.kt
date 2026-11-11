@@ -43,7 +43,7 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
     val drafts by remember(c?.id, w.id) { model.store.liveQuery({ it.table == StoreTable.DOC_DRAFTS }) {
         if (c == null) emptySet() else model.store.reader.docDraftIds(c.id, w.id)
     } }.collectAsState(emptySet())
-    val channelNames = remember(model.channels) { model.channels.associate { it.id to it.name } }
+    val channelNames = channelLabels(model)
     val actions = rememberWriteActions(model)
     val query = filter.trim()
     val visible = rows?.filter { query.isEmpty() || it.title.contains(query, ignoreCase = true) } ?: emptyList()
@@ -144,7 +144,7 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
     val rows by remember(w.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.workspaceAgents(w.id) } }.collectAsState(null)
     val activity by remember(w.id, model.context) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.agentActivities(w.id, ids) } }.collectAsState(emptyList())
     LaunchedEffect(w.id, model.context) { model.sync.refreshAgents(model.connection!!, w, ids) }
-    val channelNames = remember(model.channels) { model.channels.associate { it.id to it.name } }
+    val channelNames = channelLabels(model)
     val live = activity.filter { !it.isTerminal && it.leaseHealth == "live" }
     val stale = activity.filter { !it.isTerminal && it.leaseHealth != "live" }
     val recent = activity.filter { it.isTerminal }.take(30)

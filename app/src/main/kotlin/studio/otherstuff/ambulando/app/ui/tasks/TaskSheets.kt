@@ -61,8 +61,8 @@ fun TaskCreateSheet(choice: ScopeChoice, members: List<MemberRecord>, context: W
                     minLines = 3, maxLines = 8)
             }
             FormGroup {
-                PickerRow("Channel", channels.firstOrNull { it.id == channelId }?.let { "#${it.name}" } ?: "",
-                    channels.map { "#${it.name} · ${choice.scopeName(it.scopeId) ?: ""}" to it.id }, { channelId = it }, tag = "newtask.channel")
+                PickerRow("Channel", channels.firstOrNull { it.id == channelId }?.let { "#${choice.channelName(it.id)}" } ?: "",
+                    channels.map { "#${choice.channelName(it.id)} · ${choice.scopeName(it.scopeId) ?: ""}" to it.id }, { channelId = it }, tag = "newtask.channel")
                 FormDivider()
                 PickerRow("State", state.label, TaskState.board.map { it.label to it }, { state = it }, tag = "newtask.state")
                 FormDivider()

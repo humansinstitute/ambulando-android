@@ -75,7 +75,7 @@ import java.util.UUID
         uploadChannel = model.context.channelId?.takeIf { id -> model.channels.any { it.id == id && !it.accessRemoved } }
         if (uploadChannel == null) choosingChannel = true else picker.launch(arrayOf("*/*"))
     }
-    val channelNames = remember(model.channels) { model.channels.associate { it.id to it.name } }
+    val channelNames = channelLabels(model)
     val loadedRows = rows
     if (fileId != null) {
         key(model.activeBoundaryId, fileId) {

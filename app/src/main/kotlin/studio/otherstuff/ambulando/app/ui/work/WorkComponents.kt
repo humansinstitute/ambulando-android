@@ -63,6 +63,8 @@ import studio.otherstuff.ambulando.core.profiles.PersonDisplay
 import studio.otherstuff.ambulando.core.store.LocalStore
 import studio.otherstuff.ambulando.core.store.WriteItem
 import studio.otherstuff.ambulando.core.store.WriteState
+import studio.otherstuff.ambulando.core.store.people
+import studio.otherstuff.ambulando.core.store.viewerNpub
 import studio.otherstuff.ambulando.core.store.channels
 import studio.otherstuff.ambulando.core.store.scopes
 import studio.otherstuff.ambulando.core.store.state
@@ -83,8 +85,8 @@ const val DEVICE_NAME = "device"
 
 /** Scope filter shared by Tasks, Docs and Files (nil = every scope in the workspace). */
 @Immutable
-data class ScopeChoice(val scopes: List<ScopeRecord> = emptyList(), val channels: List<ChannelRecord> = emptyList()) {
-    fun channelName(id: String?): String? = channels.firstOrNull { it.id == id }?.name
+data class ScopeChoice(val scopes: List<ScopeRecord> = emptyList(), val channels: List<ChannelRecord> = emptyList(), val labels: Map<String, String> = emptyMap()) {
+    fun channelName(id: String?): String? = labels[id] ?: channels.firstOrNull { it.id == id }?.name
     fun scopeName(id: String?): String? = scopes.firstOrNull { it.id == id }?.name
     fun scopeOfChannel(id: String): String? = channels.firstOrNull { it.id == id }?.scopeId
 
@@ -108,14 +110,18 @@ suspend fun scopeChoice(store: LocalStore, workspaceId: String): ScopeChoice {
     val scopes = store.reader.scopes(workspaceId)
     val channels = store.reader.channels(workspaceId)
     val order = ScopeOrdering.decode(store.reader.state(scopeOrderKey(workspaceId)))
-    return ScopeChoice(ScopeOrdering.apply(scopes, order) { it.id }, channels)
+    val people = store.reader.people(workspaceId)
+    val viewer = store.reader.viewerNpub(workspaceId)
+    val labels = channels.associate { row -> row.id to studio.otherstuff.ambulando.core.context.SidebarNavigation.label(
+        studio.otherstuff.ambulando.core.context.NavChannel(row.id, row.scopeId, row.name, row.kind, row.position, row.raw), viewer, people.names) }
+    return ScopeChoice(ScopeOrdering.apply(scopes, order) { it.id }, channels, labels)
 }
 
-/** A name for an npub from the directory names, "You" for the viewer without a name, a short npub otherwise. */
+/** A name for an npub from the directory names, "You" for the viewer without a name, a neutral fallback otherwise. */
 fun displayName(npub: String?, names: Map<String, String>, me: String?): String {
     if (npub == null) return "Unknown"
     if (npub == me) return names[npub] ?: "You"
-    return names[npub] ?: shortNpub(npub)
+    return studio.otherstuff.ambulando.core.profiles.PersonNamePolicy.usable(names[npub]) ?: "Unknown person"
 }
 
 /**

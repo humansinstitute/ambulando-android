@@ -48,13 +48,14 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
 @Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null, family: Boolean = false, writeAllowed: Boolean = true) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
+    val labels = channelLabels(model)
     val threadChannel by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.thread(w.id, it)?.channelId } } }.collectAsState(null)
     LaunchedEffect(w.id, threadId) { if (threadId != null) model.sync.ensureThread(c, w, threadId) }
     val channel = if (threadId != null) threadChannel else composeOnly?.channelId ?: model.context.channelId
     if (channel == null) {
         if (threadId != null) { Text("Opening conversation…"); return }
         LazyColumn { items(model.channels.filter { model.context.scopeId == null || it.scopeId == model.context.scopeId }, key = { it.id }) { row ->
-            TextButton(onClick = { model.selectContext(row.scopeId, row.id) }) { Text("#${row.name}") }
+            TextButton(onClick = { model.selectContext(row.scopeId, row.id) }) { Text("#${labels[row.id] ?: "Channel"}") }
         } }; return
     }
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
@@ -265,7 +266,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
                 clipboard.primaryClip?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::pasteUri) }
             }, onMention = { field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); model.saveDraft(target, text, mentions) })
-            val channelName = model.channels.firstOrNull { it.id == channel }?.name
+            val channelName = labels[channel]
             Column(Modifier.weight(1f)) {
             androidx.compose.foundation.text.BasicTextField(field.value, { value ->
                 if (value.text == field.value.text) { field.value = value; return@BasicTextField }

@@ -1,3 +1,9 @@
+## 0.9.1 (29)
+
+- Show cached kind0 profile names in generated DM headers, sidebar labels, chat composer and related channel labels; refresh them when profiles arrive or change.
+- Use neutral labels when identity names are unavailable, while retaining custom conversation titles, exact participants, navigation, history and drafts.
+- Retain the native voice recorder introduced in 0.9.0; real-account upload and physical-device recording remain for field review.
+
 ## 0.9.0 (28)
 
 - Record native AAC voice messages, with elapsed time, stop, playback, send and cancel in channel chat.

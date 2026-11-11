@@ -98,7 +98,11 @@ class WorkContextTests {
     @Test fun directMessageLabelsUseParticipants() {
         val dm = channel(dmChannel, dmScope, "DM", kind = "dm", participants = listOf(TestKeys.npub, other))
         assertEquals("Helper", SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "Helper")))
-        assertEquals(SidebarNavigation.compact(other), SidebarNavigation.label(dm, TestKeys.npub, emptyMap()))
+        assertEquals("Unknown person", SidebarNavigation.label(dm, TestKeys.npub, emptyMap()))
+        assertEquals("Unknown person", SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "DM: $other")))
+        assertEquals("Renamed profile", SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "Renamed profile")))
+        assertEquals("Project chat", SidebarNavigation.label(dm.copy(name = "Project chat"), TestKeys.npub, mapOf(other to "Helper")))
+        assertEquals(listOf(TestKeys.npub, other).sorted(), SidebarNavigation.participants(dm))
         val note = channel(dmChannel, dmScope, "DM", kind = "dm", participants = listOf(TestKeys.npub))
         assertEquals("Note to self", SidebarNavigation.label(note, TestKeys.npub, emptyMap()))
         assertEquals("general", SidebarNavigation.label(channel(Ids.channel1, Ids.scopeA, "general"), TestKeys.npub, emptyMap()))
@@ -106,7 +110,7 @@ class WorkContextTests {
         assertTrue(SidebarNavigation.isDirectMessageChannel(described))
         assertEquals(listOf(TestKeys.npub, other).sorted(), SidebarNavigation.participants(described))
         val bare = NavChannel(Ids.channel2, dmScope, "DM: Project chat", kind = "dm")
-        assertEquals("Project chat", SidebarNavigation.label(bare, TestKeys.npub, emptyMap()))
+        assertEquals("Direct message · identity unavailable", SidebarNavigation.label(bare, TestKeys.npub, emptyMap()))
         assertEquals(Ids.channel2.take(8), SidebarNavigation.label(NavChannel(Ids.channel2, Ids.scopeA, ""), null, emptyMap()))
     }
 }

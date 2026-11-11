@@ -31,7 +31,7 @@ data class ProfileRecord(
     enum class Status(val wire: String) { FOUND("found"), MISSING("missing") }
 
     /** The profile's own name, `display_name` before `name`. */
-    val preferredName: String? get() = displayName ?: name
+    val preferredName: String? get() = PersonNamePolicy.usable(displayName) ?: PersonNamePolicy.usable(name)
 
     /** NIP-01 replaceable-event order: the newer `created_at` wins; on a tie the lower event id wins. */
     fun isNewer(than: ProfileRecord): Boolean {
@@ -134,8 +134,8 @@ data class PersonDisplay(
     val initials: String get() = PersonInitials.of(name)
 
     companion object {
-        /** Someone the directory does not know: short npub and initials, no avatar. */
-        fun unknown(npub: String) = PersonDisplay(npub, shortNpubLabel(npub), null, NameSource.NPUB)
+        /** Someone the directory does not know: neutral label and initials, no avatar. */
+        fun unknown(npub: String) = PersonDisplay(npub, "Unknown person", null, NameSource.NPUB)
     }
 }
 
@@ -154,7 +154,7 @@ object PersonNamePolicy {
         val lower = name.lowercase()
         if (lower in placeholders) return null
         // A full or shortened npub ("npub1abc…xyz", "npub1abc...xyz") or a 64-character hex key.
-        if (lower.startsWith("npub1") && !lower.contains(' ')) return null
+        if (Regex("npub1[0-9a-z]+|\\b[0-9a-f]{64}\\b").containsMatchIn(lower)) return null
         if (lower.length == 64 && lower.all { it in '0'..'9' || it in 'a'..'f' }) return null
         return name
     }
@@ -192,7 +192,7 @@ data class DirectoryMember(val npub: String, val displayName: String?)
  * Membership comes only from Tower (`members`, `workspace_agents`); a public profile decorates a person the client
  * already sees, never adds one. Name order follows the web's sender naming: the public profile (`display_name`, then
  * `name`), then the workspace's own name for the member (Tower `display_name`), the agent's name, the name Tower
- * attached to the message, then the short npub. Tower names that are setup placeholders or just a key are skipped
+ * attached to the message, then a neutral unknown-person label. Tower names that are setup placeholders or just a key are skipped
  * ([PersonNamePolicy]). Avatar: an agent's Tower `avatar_url`, then the profile picture, else initials.
  */
 class PeopleDirectory private constructor(
@@ -249,7 +249,7 @@ class PeopleDirectory private constructor(
                     profileName != null -> profileName to PersonDisplay.NameSource.NOSTR
                     memberName[npub] != null -> memberName.getValue(npub) to PersonDisplay.NameSource.WORKSPACE
                     agentName != null -> agentName to PersonDisplay.NameSource.AGENT
-                    else -> shortNpubLabel(npub) to PersonDisplay.NameSource.NPUB
+                    else -> "Unknown person" to PersonDisplay.NameSource.NPUB
                 }
                 resolved[npub] = PersonDisplay(npub, name, avatar, source)
             }

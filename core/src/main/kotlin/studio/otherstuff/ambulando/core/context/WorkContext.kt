@@ -158,8 +158,6 @@ object SidebarNavigation {
         return details.participants.toSet().size == 2 && title.contains("dm")
     }
 
-    private val dmPrefix = Regex("^DM:\\s*", RegexOption.IGNORE_CASE)
-    private val bareNpub = Regex("^npub1[0-9a-z]+$", RegexOption.IGNORE_CASE)
     private val npubInName = Regex("npub1[0-9a-z]{20,}", RegexOption.IGNORE_CASE)
 
     /**
@@ -169,16 +167,12 @@ object SidebarNavigation {
     fun label(channel: NavChannel, viewerNpub: String?, names: Map<String, String>): String {
         val title = channel.name.trim()
         val direct = isDirectMessageChannel(channel)
-        if (title.isNotEmpty() && !direct) return title
+        if (title.isNotEmpty() && (!direct || (!title.equals("dm", ignoreCase = true) && !title.startsWith("dm:", ignoreCase = true) && studio.otherstuff.ambulando.core.profiles.PersonNamePolicy.usable(title) != null))) return title
         val participants = participants(channel)
         if (direct && participants.size == 1 && participants.first() == viewerNpub) return "Note to self"
         val others = participants.filter { it != viewerNpub }
-        if (others.isNotEmpty()) return others.joinToString(", ") { names[it] ?: compact(it) }
-        if (direct) {
-            val stripped = title.replace(dmPrefix, "")
-            if (stripped.isNotEmpty() && !bareNpub.matches(stripped)) return stripped
-            return "Direct message"
-        }
+        if (others.isNotEmpty()) return others.joinToString(", ") { studio.otherstuff.ambulando.core.profiles.PersonNamePolicy.usable(names[it]) ?: "Unknown person" }
+        if (direct) return "Direct message · identity unavailable"
         return title.ifEmpty { channel.id.take(8) }
     }
 
