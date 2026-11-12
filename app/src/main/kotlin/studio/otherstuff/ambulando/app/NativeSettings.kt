@@ -73,6 +73,7 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
                 FormDivider(); SettingsAction("Retry", tag = "settings.retry") { model.retryConnection() }
                 FormDivider(); SettingsAction("Disconnect and remove downloaded history", destructive = true, tag = "settings.disconnect") { confirm = true }
             }
+            FormGroup("Watch recorder") { Column(Modifier.padding(16.dp)) { studio.otherstuff.ambulando.app.garmin.GarminSetup(model) } }
             FormGroup("Diagnostics", "Diagnostics stay on this device until you choose to share. The newest 300 entries are kept in private app storage until replaced or cleared. No keys, tokens, message text or user identifiers are included.") {
                 SettingsAction("Export diagnostics", tag = "settings.diagnostics.export") { model.exportDiagnostics() }
                 FormDivider(); SettingsAction("Clear diagnostics", tag = "settings.diagnostics.clear") { model.clearDiagnostics() }

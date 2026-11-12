@@ -8,6 +8,14 @@ import java.io.File
 import java.nio.file.Files
 
 class GarminRemoteTest {
+    @Test fun acceptsSdkCanonicalUppercaseAppOnly() {
+        val app = com.garmin.android.connectiq.IQApp(GARMIN_APP_ID)
+        assertEquals(GARMIN_APP_ID.uppercase(), app.applicationId)
+        assertTrue(isRecorderApp(app))
+        assertTrue(isRecorderApp(com.garmin.android.connectiq.IQApp("4edbc3d4-1f92-4958-b53a-29734ba5a821")))
+        assertFalse(isRecorderApp(com.garmin.android.connectiq.IQApp("00000000000000000000000000000000")))
+    }
+
     private fun destination(channel: String = "original") = VoiceDestination("connection", "https://tower.example", "tower", "account", "workspace", "app", channel, null, "Chosen DM")
     private fun journal(dir: File) = RemoteJournal(File(dir, "remote.json"))
     @Test fun duplicateAndRestartRetainOriginalSessionAndDestination() {

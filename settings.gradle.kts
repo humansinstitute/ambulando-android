@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ambulando-android"
-include(":core", ":app", ":grandparent")
+include(":core", ":app", ":grandparent", ":garmin-ipc-fixture")

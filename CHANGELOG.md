@@ -1,3 +1,10 @@
+## 0.9.6 (34)
+
+- Fix Garmin incoming-message crashes in minified releases by preserving cross-process Parcelable identities and preparing the SDK receiver classloader.
+- Accept Garmin's canonical uppercase recorder app UUID while rejecting other apps and devices; ignore malformed SDK messages without clearing setup.
+- Move one-time watch setup out of chat into Settings, with searchable workspace, destination and connected-watch pickers.
+- Keep the saved destination across restarts and navigation, expose permissions/reconnect/optional screen access/change/disable controls, and retain failed drafts when configuration changes.
+
 ## 0.9.5 (33)
 
 - Add Garmin recorder companion integration with explicitly bound watch and original conversation.

@@ -62,3 +62,7 @@ app/src/main/assets/editors/
 logcat*.txt
 screenshots/
 *.trace
+
+# Python bytecode
+__pycache__/
+*.py[cod]

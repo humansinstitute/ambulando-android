@@ -13,6 +13,8 @@
 
     <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
 
+    <queries><package android:name="com.garmin.android.apps.connectmobile" /></queries>
+
     <application
         android:name=".AmbulandoApplication"
         android:allowBackup="false"

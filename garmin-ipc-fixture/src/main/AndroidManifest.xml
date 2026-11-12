@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries><package android:name="studio.otherstuff.ambulando.android" /></queries>
+    <application android:label="TEST ONLY Garmin IPC fixture">
+        <service android:name="com.garmin.android.apps.connectmobile.connectiq.ConnectIQService" android:exported="true" />
+        <activity android:name=".SenderActivity" android:exported="true" android:theme="@android:style/Theme.NoDisplay" />
+    </application>
+</manifest>

@@ -4,3 +4,8 @@
 -keepattributes *Annotation*, InnerClasses
 -keepclassmembers class **$$serializer { *; }
 -keepclasseswithmembers class * { kotlinx.serialization.KSerializer serializer(...); }
+# Garmin Connect writes canonical class names into cross-process Parcels. These
+# identities and CREATOR implementations are a wire contract, including types
+# used only by incoming broadcasts / Binder replies.
+-keep class com.garmin.android.connectiq.** implements android.os.Parcelable { *; }
+-keep class com.garmin.android.connectiq.**$* { *; }

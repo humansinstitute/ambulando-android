@@ -337,7 +337,6 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 persistComposer()
             })
         }
-        if (!family && editing == null && composing) studio.otherstuff.ambulando.app.garmin.GarminSetup(model, c, w, target, composing)
         if (!family && editing == null) studio.otherstuff.ambulando.app.voice.VoiceRecorderUi(model, c, target, composing, voiceAction?.error) { composeOnly?.onEnqueued?.invoke(it) }
         if (!family) studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceComposerContext(model)
         },

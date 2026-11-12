@@ -21,6 +21,8 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     var sessions by mutableStateOf(journal.data.sessions); private set
     var devices by mutableStateOf<List<IQDevice>>(emptyList()); private set
     var connection by mutableStateOf("Not connected"); private set
+    var binding by mutableStateOf(journal.data.binding); private set
+    private val sdkContext = GarminSdkContext(context) { connection = "Invalid watch message ignored. Retry from watch." }
     private var sdk: ConnectIQ? = null
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -43,7 +45,7 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         try {
             sdk = ConnectIQ.getInstance(context, ConnectIQ.IQConnectType.WIRELESS)
             connection = "Connecting to Garmin Connect"
-            sdk!!.initialize(context, false, object : ConnectIQ.ConnectIQListener {
+            sdk!!.initialize(sdkContext, false, object : ConnectIQ.ConnectIQListener {
                 override fun onSdkReady() { main.post { connection = "Select your watch"; loadDevices() } }
                 override fun onSdkShutDown() { main.post { connection = "Disconnected"; sdk = null } }
                 override fun onInitializeError(status: ConnectIQ.IQSdkErrorStatus) { main.post { connection = "Garmin Connect unavailable: $status"; sdk = null } }
@@ -58,22 +60,34 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     }
     fun bind(device: IQDevice, destination: VoiceDestination) {
         authorize(destination)
-        check(model.voice.state.value == null) { "Finish the existing voice draft first." }
-        journal.bind(RemoteBinding(device.deviceIdentifier, destination))
+        check(model.voice.state.value?.phase !in setOf(VoicePhase.STARTING, VoicePhase.RECORDING, VoicePhase.SENDING)) { "Finish recording or sending first." }
+        journal.bind(RemoteBinding(device.deviceIdentifier, destination, binding?.takeIf { it.device == device.deviceIdentifier }?.association))
+        sdk?.unregisterAllForEvents()
+        binding = journal.data.binding
         listen(device)
+    }
+    fun disable() {
+        check(model.voice.state.value?.phase !in setOf(VoicePhase.STARTING, VoicePhase.RECORDING, VoicePhase.SENDING)) { "Finish recording or sending first." }
+        journal.bind(null)
+        binding = null
+        sdk?.unregisterAllForEvents()
+        activeDevice = null
+        connection = "Watch recorder disabled. Retained drafts are kept."
     }
     private fun listen(device: IQDevice) {
         activeDevice = device
         sdk?.registerForDeviceEvents(device) { _, status -> main.post {
-            connection = "${device.friendlyName}: $status"
-            if (status == IQDevice.IQDeviceStatus.CONNECTED) runCatching { register(device) }
+            if (binding?.device == device.deviceIdentifier) {
+                connection = "${device.friendlyName}: $status"
+                if (status == IQDevice.IQDeviceStatus.CONNECTED) runCatching { register(device) }
+            }
         } }
         register(device)
         connection = "${device.friendlyName}: open Ambulando Remote on watch"
     }
     private fun register(device: IQDevice) {
         sdk?.registerForAppEvents(device, IQApp(GARMIN_APP_ID)) { receivedDevice, app, data, status ->
-            if (status == ConnectIQ.IQMessageStatus.SUCCESS && app.applicationId.replace("-", "") == GARMIN_APP_ID)
+            if (status == ConnectIQ.IQMessageStatus.SUCCESS && isRecorderApp(app))
                 main.post { data.orEmpty().forEach { receive(receivedDevice, it) } }
         }
     }
@@ -133,6 +147,7 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         val b = requireNotNull(journal.data.binding)
         check(b.device == device) { "Watch binding changed. Retry association." }
         journal.bind(b.copy(association = association))
+        binding = journal.data.binding
     }
     fun canOpenRecordingScreen(): Boolean {
         if (android.os.Build.VERSION.SDK_INT < 33) return false
@@ -197,3 +212,6 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
             .setContentIntent(open).setAutoCancel(true).build())
     }
 }
+
+/** IQApp canonicalizes UUIDs to uppercase, including after external IPC. */
+internal fun isRecorderApp(app: IQApp): Boolean = app.applicationId.replace("-", "").equals(GARMIN_APP_ID, ignoreCase = true)
