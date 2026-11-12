@@ -10,19 +10,30 @@ import java.util.*;
 public class ConnectIQService extends Service {
     static IQDevice device() {
         IQDevice device = new IQDevice(71L, "Fixture connected watch");
-        device.setStatus(IQDevice.IQDeviceStatus.CONNECTED);
+        // Real known-device Parcelables can retain their constructor-default UNKNOWN.
+        // Connectivity comes separately from getStatus, not this cached field.
         return device;
     }
     private final IConnectIQService.Stub binder = new IConnectIQService.Stub() {
         public boolean openStore(String app) { return false; }
         public List<IQDevice> getConnectedDevices() { return Collections.singletonList(device()); }
-        public List<IQDevice> getKnownDevices() { return getConnectedDevices(); }
+        public List<IQDevice> getKnownDevices() { android.util.Log.i("GarminIpcFixture", "Known device cached status: " + device().getStatus()); return getConnectedDevices(); }
         public int getStatus(IQDevice device) { return IQDevice.IQDeviceStatus.CONNECTED.ordinal(); }
         public void getApplicationInfo(String a, String b, IQDevice d, String id) {}
         public void openApplication(String a, String b, IQDevice d, IQApp app) {}
-        public void sendMessage(IQMessage m, IQDevice d, IQApp app) {}
+        public void sendMessage(IQMessage m, IQDevice d, IQApp app) {
+            try {
+                for (com.garmin.monkeybrains.serialization.MonkeyType<?> value : com.garmin.monkeybrains.serialization.Serializer.deserialize(m.messageData)) {
+                    Object payload = value.toJava();
+                    if (payload instanceof Map) {
+                        Map<?, ?> data = (Map<?, ?>) payload;
+                        android.util.Log.i("GarminIpcFixture", "Phone reply device=" + d.getDeviceIdentifier() + " app=" + app.getApplicationId() + " session=" + data.get("s") + " state=" + data.get("state"));
+                    }
+                }
+            } catch (Exception e) { throw new IllegalArgumentException("Invalid phone payload", e); }
+        }
         public void sendImage(IQMessage m, IQDevice d, IQApp app) {}
-        public void registerApp(IQApp app, String a, String b) {}
+        public void registerApp(IQApp app, String a, String b) { android.util.Log.i("GarminIpcFixture", "Remote registration: " + app.getApplicationId()); }
         public void sendTransientMessage(IQMessage m, IQDevice d, IQApp app) {}
     };
     public IBinder onBind(Intent intent) { return binder; }

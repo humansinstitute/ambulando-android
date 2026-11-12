@@ -67,3 +67,24 @@ Physical acceptance still requires Vivoactive 6 + Garmin Connect + GrapheneOS + 
 The Android shrinker must preserve canonical names and all members/CREATORs of the SDK Parcelables (`IQDevice`, `IQApp`, `IQMessage`) and their nested status enums. Garmin Connect is a different process and writes these names into Parcels. Debug-only or direct `receive(Map)` tests cannot detect this failure. `GarminSdkContext` supplies the app classloader before the SDK receiver reads extras and contains malformed runtime messages before app callbacks. SDK `IQApp` normalizes UUIDs to uppercase; app matching is case-insensitive and still requires the exact recorder UUID and bound device.
 
 `garmin-ipc-fixture` is an emulator-only app implementing Garmin's SDK Binder interface and sending actual SDK Parcelable broadcasts from another process. It deliberately uses Garmin Connect's package name; never install it on a personal phone or publish its APK. Build `:garmin-ipc-fixture:assembleDebug`, install only on a dedicated disposable emulator, and use `scripts/test-garmin-release-ipc.py` with the signed production-minified APK after preparing the documented disposable saved binding. The fixture's `verify` mode loads the installed production DEX and round-trips all three canonical CREATOR implementations. Test original build33 failure, normal signed upgrade with saved binding/account retained, repeated valid messages, wrong device/app, malformed payloads, and a process restart. Settings UI tests separately use the same external connected-watch service with a synthetic Tower; neither proves physical Garmin, GrapheneOS or headset behavior.
+
+
+## Garmin connection and saved setup
+
+The phone waits for SDK readiness before querying devices. Paired watches from `getKnownDevices()` are identities;
+SDK 2.2 can return constructor-default `UNKNOWN` status even when `getDeviceStatus()` says connected. The phone
+queries that separate status and publishes new snapshots on device callbacks. A known paired watch may be saved
+while offline; saving does not claim a live connection. Removed watches and unavailable/read-only destinations
+produce an actionable selection error. The original account, trusted workspace and exact watch/app checks remain required.
+
+Reconnect explicitly renews the remote app registration: SDK 2.2 can swallow service errors inside
+`registerForAppEvents()`. Repeated refreshes reuse device listeners; reconnect/disconnect renews app registration.
+“Phone listener ready; awaiting watch message” describes local readiness only. Actual receipt is reported separately.
+After 20 seconds without SDK readiness or a watch message, Settings gives retry guidance; no timeout claims recording
+or delivery. Open Garmin Connect, use **Reconnect watch** in Settings, then **Status** (or Start for a new recording)
+on the installed watch app. Existing saved bindings survive temporary connection loss. No app-data reset or watch rebuild
+is required for this Android connection fix.
+
+The external-process fixture intentionally leaves known-device status `UNKNOWN` and returns connectivity through its
+separate Binder `getStatus()` implementation. Host lifecycle tests cover readiness, status snapshots, reconnect,
+late callbacks, timeouts, vanished selections and offline save. These simulations do not establish physical device success.

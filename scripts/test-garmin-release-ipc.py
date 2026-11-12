@@ -125,8 +125,11 @@ else:
     logs = adb('logcat', '-d', '-s', 'GarminIpcFixture:I', '*:S')
     for cls in ('IQDevice', 'IQApp', 'IQMessage'):
         assert 'Canonical Parcelable/CREATOR verified: com.garmin.android.connectiq.' + cls in logs, cls
+    assert 'Known device cached status: UNKNOWN' in logs, 'Fixture must expose real default status'
+    assert 'Remote registration: 4EDBC3D41F924958B53A29734BA5A821' in logs, 'SDK did not request remote registration'
+    assert 'session=' + session + ' state=error' in logs, 'Watch never received the honest authorization error via SDK Binder'
     (args.evidence / 'canonical-creators.txt').write_text(logs)
     (args.evidence / 'journal-after.json').write_text(json.dumps(after, indent=2))
     (args.evidence / 'crash-buffer.txt').write_text(crash)
     (args.evidence / 'package-after.txt').write_text(shell('dumpsys', 'package', package))
-    print('PASS: signed upgrade, canonical release DEX/CREATORs, SDK Binder/broadcast, wrong device/app, malformed IPC, duplicate Start and restart; identity/binding retained')
+    print('PASS: signed upgrade, canonical release DEX/CREATORs, UNKNOWN known-device status + authoritative service connection, SDK inbound/outbound Binder/broadcast, honest error reply, wrong device/app, malformed IPC, duplicate Start and restart; identity/binding retained')

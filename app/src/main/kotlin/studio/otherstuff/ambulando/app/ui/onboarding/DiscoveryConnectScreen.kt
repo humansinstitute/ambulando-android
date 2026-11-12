@@ -1,5 +1,6 @@
 package studio.otherstuff.ambulando.app.ui.onboarding
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -19,37 +20,49 @@ fun DiscoveryConnectScreen(model: AppModel, done: () -> Unit = {}) {
     var connecting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    if (manual || model.environment.isSample) {
-        Column(Modifier.fillMaxSize()) {
-            if (!model.environment.isSample) TextButton(onClick = { manual = false }) { Text("Back to discovered Towers") }
-            Box(Modifier.weight(1f)) {
-                ConnectScreen(model.identityState?.npub, model.notice, { origin -> runCatching {
-                    val d = model.descriptor(origin)
-                    DescriptorSummaryModel(d.tower?.availability?.status ?: "Available", d.tower?.protocols ?: emptyList(), d.services.map { it.kind }, d.advertisesFIPS)
-                } }) { origin -> model.connect(origin); done() }
+    DiscoveryOnboardingFrame(manual = manual && !model.environment.isSample, onBack = { manual = false }) {
+        if (manual || model.environment.isSample) {
+            ConnectScreen(model.identityState?.npub, model.notice, { origin -> runCatching {
+                val d = model.descriptor(origin)
+                DescriptorSummaryModel(d.tower?.availability?.status ?: "Available", d.tower?.protocols ?: emptyList(), d.services.map { it.kind }, d.advertisesFIPS)
+            } }) { origin -> model.connect(origin); done() }
+        } else {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Choose a Tower", style = MaterialTheme.typography.headlineMedium)
+                Text(model.towerDiscoveryMessage, modifier = Modifier.testTag("discovery.status"))
+                if (model.towerDiscoveryBusy || connecting) CircularProgressIndicator()
+                model.discoveredTowers.forEach { tower ->
+                    OutlinedButton(enabled = !connecting && !model.towerDiscoveryBusy,
+                        modifier = Modifier.fillMaxWidth().testTag("discovery.tower.${tower.origin}"), onClick = {
+                            connecting = true; error = null
+                            scope.launch {
+                                try { model.connectDiscoveredTower(tower); done() }
+                                catch (e: CancellationException) { throw e }
+                                catch (_: Exception) { error = "This Tower could not be connected. Discover again or enter its address." }
+                                finally { connecting = false }
+                            }
+                        }) { Column { Text(tower.label); Text(tower.origin, style = MaterialTheme.typography.bodySmall) } }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                TextButton(enabled = !connecting && !model.towerDiscoveryBusy, onClick = model::discoverTowers, modifier = Modifier.testTag("discovery.retry")) { Text("Discover Towers again") }
+                TextButton(enabled = !connecting, onClick = { manual = true }, modifier = Modifier.testTag("discovery.manual")) { Text("Enter a Tower address") }
+                Text("Discovery never enables a workspace automatically. Choose which workspaces to enable after selecting a Tower.", style = MaterialTheme.typography.bodySmall)
             }
         }
-        return
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("Choose a Tower", style = MaterialTheme.typography.headlineMedium)
-        Text(model.towerDiscoveryMessage, modifier = Modifier.testTag("discovery.status"))
-        if (model.towerDiscoveryBusy || connecting) CircularProgressIndicator()
-        model.discoveredTowers.forEach { tower ->
-            OutlinedButton(enabled = !connecting && !model.towerDiscoveryBusy,
-                modifier = Modifier.fillMaxWidth().testTag("discovery.tower.${tower.origin}"), onClick = {
-                    connecting = true; error = null
-                    scope.launch {
-                        try { model.connectDiscoveredTower(tower); done() }
-                        catch (e: CancellationException) { throw e }
-                        catch (_: Exception) { error = "This Tower could not be connected. Discover again or enter its address." }
-                        finally { connecting = false }
-                    }
-                }) { Column { Text(tower.label); Text(tower.origin, style = MaterialTheme.typography.bodySmall) } }
-        }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        TextButton(enabled = !connecting && !model.towerDiscoveryBusy, onClick = model::discoverTowers, modifier = Modifier.testTag("discovery.retry")) { Text("Discover Towers again") }
-        TextButton(enabled = !connecting, onClick = { manual = true }, modifier = Modifier.testTag("discovery.manual")) { Text("Enter a Tower address") }
-        Text("Discovery never enables a workspace automatically. Choose which workspaces to enable after selecting a Tower.", style = MaterialTheme.typography.bodySmall)
+}
+
+/** Insets are consumed once for both routes; manual Back is navigation inside onboarding, never Activity exit. */
+@Composable
+internal fun DiscoveryOnboardingFrame(
+    manual: Boolean,
+    onBack: () -> Unit,
+    insets: WindowInsets = WindowInsets.safeDrawing,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    BackHandler(enabled = manual, onBack = onBack)
+    Column(Modifier.fillMaxSize().windowInsetsPadding(insets)) {
+        if (manual) TextButton(onClick = onBack, modifier = Modifier.testTag("discovery.manual.back")) { Text("Back to discovered Towers") }
+        Box(Modifier.weight(1f).fillMaxWidth(), content = content)
     }
 }

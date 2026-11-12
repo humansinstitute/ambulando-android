@@ -59,7 +59,7 @@ fun GarminSetup(model: AppModel) {
             selectedBoundary = workspaces.firstOrNull { binding?.destination?.matches(it.connection, it.workspace) == true }?.boundary?.id
             selectedChannel = binding?.destination?.channelId
             selectedDevice = binding?.device
-            open = true; remote.connect()
+            error = null; open = true; remote.connect()
         }) { Text(if (binding == null) "Set up watch recorder" else "Change destination or watch") }
         val required = buildList {
             add(Manifest.permission.RECORD_AUDIO)
@@ -92,20 +92,25 @@ fun GarminSetup(model: AppModel) {
         Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
             WatchChoice("Account / workspace", workspaces.firstOrNull { it.id == selectedBoundary }?.let { workspaceLabel(it) }, "watch.workspaces", workspaces.map { it.boundary.id to workspaceLabel(it) }, "watch.workspace") { id -> selectedBoundary = id; selectedChannel = null; workspaces.firstOrNull { it.id == id }?.let { if (!it.enabled) model.setWorkspaceEnabled(it, true) } }
             WatchChoice("Destination", channels.firstOrNull { it.id == selectedChannel }?.let { labels[it.id] ?: it.name }, "watch.channels", channels.filter { watchDestinationAvailable(it) }.map { it.id to (labels[it.id] ?: it.name) }, "watch.channel") { selectedChannel = it }
-            WatchChoice("Connected watch", remote.devices.firstOrNull { it.deviceIdentifier == selectedDevice }?.friendlyName, "watch.devices", remote.devices.filter { it.status == com.garmin.android.connectiq.IQDevice.IQDeviceStatus.CONNECTED }.map { it.deviceIdentifier.toString() to it.friendlyName }, "watch.device") { selectedDevice = it.toLong() }
-            Text("Finish sends to this destination. Bluetooth headset required.")
+            WatchChoice("Paired watch", remote.devices.firstOrNull { it.deviceIdentifier == selectedDevice }?.friendlyName, "watch.devices", remote.devices.map { it.deviceIdentifier.toString() to "${it.friendlyName} · ${it.status}" }, "watch.device") { selectedDevice = it.toLong() }
+            Text("An offline paired watch can be saved. Recording waits for its connection. Finish sends to this destination. Bluetooth headset required.")
             Text(remote.connection)
             error?.let { Text(it) }
         }
     }, confirmButton = { TextButton(enabled = !busy && owner != null && selectedChannel != null && selectedDevice != null, modifier = Modifier.testTag("watch.save"), onClick = {
         try {
-            val runtime = requireNotNull(owner)
-            val channel = channels.first { it.id == selectedChannel && watchDestinationAvailable(it) }
-            val device = remote.devices.first { it.deviceIdentifier == selectedDevice && it.status == com.garmin.android.connectiq.IQDevice.IQDeviceStatus.CONNECTED }
+            val runtime = requireNotNull(workspaces.firstOrNull { it.boundary.id == selectedBoundary }?.let { model.runtimeMap[it.boundary.id] }) { "Selected workspace is no longer available. Choose an unlocked, trusted workspace." }
+            val (channel, device) = validateWatchSelection(runtime.workspace.id, channels, selectedChannel, remote.devices, selectedDevice)
             remote.bind(device, VoiceDestination.capture(runtime.connection, runtime.workspace, ChatTarget(runtime.connection.id, runtime.workspace.id, channel.id), "${runtime.workspace.label} / ${labels[channel.id] ?: channel.name}"))
             error = null; open = false
         } catch (e: Exception) { error = e.message }
     }) { Text("Save") } }, dismissButton = { TextButton(onClick = { open = false }) { Text("Cancel") } })
+}
+
+internal fun validateWatchSelection(workspace: String, channels: List<ChannelRecord>, channelId: String?, devices: List<com.garmin.android.connectiq.IQDevice>, deviceId: Long?): Pair<ChannelRecord, com.garmin.android.connectiq.IQDevice> {
+    val channel = requireNotNull(channels.firstOrNull { it.workspaceId == workspace && it.id == channelId && watchDestinationAvailable(it) }) { "Selected destination is no longer writable or available. Choose another destination." }
+    val device = requireNotNull(devices.firstOrNull { it.deviceIdentifier == deviceId }) { "Selected watch is no longer listed by Garmin Connect. Reconnect, then choose a paired watch." }
+    return channel to device
 }
 
 internal fun watchDestinationAvailable(channel: ChannelRecord): Boolean = !channel.accessRemoved && channel.kind != "system" &&

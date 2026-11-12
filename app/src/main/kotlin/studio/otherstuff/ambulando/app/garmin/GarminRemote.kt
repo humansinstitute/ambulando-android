@@ -26,69 +26,67 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     private var sdk: ConnectIQ? = null
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var activeDevice: IQDevice? = null
+    private val link: GarminLink = GarminLink(::transport, android.os.SystemClock::elapsedRealtime) {
+        devices = linkDevices()
+        connection = linkMessage()
+    }
+    private fun linkDevices(): List<IQDevice> = link.devices
+    private fun linkMessage(): String = link.message
+    private fun transport(): GarminTransport {
+        val instance = ConnectIQ.getInstance(context, ConnectIQ.IQConnectType.WIRELESS)
+        sdk = instance
+        return object : GarminTransport {
+            override fun initialize(ready: () -> Unit, stopped: (String) -> Unit) {
+                instance.initialize(sdkContext, false, object : ConnectIQ.ConnectIQListener {
+                    override fun onSdkReady() { main.post { ready() } }
+                    override fun onSdkShutDown() { main.post { stopped("Garmin Connect disconnected. Retry connection.") } }
+                    override fun onInitializeError(status: ConnectIQ.IQSdkErrorStatus) { main.post { stopped("Garmin Connect unavailable: $status. Open Garmin Connect, then retry.") } }
+                })
+            }
+            override fun knownDevices() = instance.knownDevices.orEmpty()
+            override fun status(device: IQDevice) = instance.getDeviceStatus(device)
+            override fun listen(device: IQDevice, changed: (IQDevice.IQDeviceStatus) -> Unit) {
+                instance.registerForDeviceEvents(device) { _, status -> main.post { changed(status) } }
+            }
+            override fun register(device: IQDevice) { registerApp(instance, device) }
+            override fun clearListeners() { instance.unregisterAllForEvents() }
+            override fun shutdown() { instance.shutdown(sdkContext); if (sdk === instance) sdk = null }
+        }
+    }
     init {
         // Process death never restarts a microphone or auto-sends an interrupted recording.
         sessions.filter { it.status == "recording" || it.status == "waiting" }.forEach { update(it.session, "error", "Phone restarted. Review retained draft in Ambulando.") }
-        if (journal.data.binding != null && !model.environment.isSample) connect()
+        if (journal.data.binding != null && !model.environment.isSample) link.bind(journal.data.binding!!.device)
         scope.launch {
             while (isActive) {
-                try { refreshCapture() }
+                try { link.tick(); refreshCapture() }
                 catch (e: CancellationException) { throw e }
                 catch (_: Exception) { connection = "Status unavailable. Reopen the original workspace." }
                 delay(500)
             }
         }
     }
-    fun connect() {
-        if (sdk != null) { loadDevices(); return }
-        try {
-            sdk = ConnectIQ.getInstance(context, ConnectIQ.IQConnectType.WIRELESS)
-            connection = "Connecting to Garmin Connect"
-            sdk!!.initialize(sdkContext, false, object : ConnectIQ.ConnectIQListener {
-                override fun onSdkReady() { main.post { connection = "Select your watch"; loadDevices() } }
-                override fun onSdkShutDown() { main.post { connection = "Disconnected"; sdk = null } }
-                override fun onInitializeError(status: ConnectIQ.IQSdkErrorStatus) { main.post { connection = "Garmin Connect unavailable: $status"; sdk = null } }
-            })
-        } catch (e: Exception) { connection = e.message ?: "Garmin unavailable"; sdk = null }
-    }
-    private fun loadDevices() {
-        runCatching {
-            devices = sdk?.knownDevices.orEmpty()
-            journal.data.binding?.let { b -> devices.firstOrNull { it.deviceIdentifier == b.device }?.let(::listen) }
-        }.onFailure { connection = "Garmin not ready. Retry connection." }
-    }
+    fun connect() { link.connect() }
     fun bind(device: IQDevice, destination: VoiceDestination) {
         authorize(destination)
         check(model.voice.state.value?.phase !in setOf(VoicePhase.STARTING, VoicePhase.RECORDING, VoicePhase.SENDING)) { "Finish recording or sending first." }
         journal.bind(RemoteBinding(device.deviceIdentifier, destination, binding?.takeIf { it.device == device.deviceIdentifier }?.association))
-        sdk?.unregisterAllForEvents()
         binding = journal.data.binding
-        listen(device)
+        link.bind(device.deviceIdentifier)
     }
     fun disable() {
         check(model.voice.state.value?.phase !in setOf(VoicePhase.STARTING, VoicePhase.RECORDING, VoicePhase.SENDING)) { "Finish recording or sending first." }
         journal.bind(null)
         binding = null
-        sdk?.unregisterAllForEvents()
-        activeDevice = null
-        connection = "Watch recorder disabled. Retained drafts are kept."
+        link.bind(null)
     }
-    private fun listen(device: IQDevice) {
-        activeDevice = device
-        sdk?.registerForDeviceEvents(device) { _, status -> main.post {
-            if (binding?.device == device.deviceIdentifier) {
-                connection = "${device.friendlyName}: $status"
-                if (status == IQDevice.IQDeviceStatus.CONNECTED) runCatching { register(device) }
+    private fun registerApp(instance: ConnectIQ, device: IQDevice) {
+        instance.registerForAppEvents(device, IQApp(GARMIN_APP_ID)) { receivedDevice, app, data, status ->
+            main.post {
+                if (binding?.device != receivedDevice.deviceIdentifier || !isRecorderApp(app)) return@post
+                if (status == ConnectIQ.IQMessageStatus.SUCCESS) data.orEmpty().forEach { receive(receivedDevice, it) }
+                else link.transportError("Watch message failed: $status. Check Garmin Connect and retry from watch.")
             }
-        } }
-        register(device)
-        connection = "${device.friendlyName}: open Ambulando Remote on watch"
-    }
-    private fun register(device: IQDevice) {
-        sdk?.registerForAppEvents(device, IQApp(GARMIN_APP_ID)) { receivedDevice, app, data, status ->
-            if (status == ConnectIQ.IQMessageStatus.SUCCESS && isRecorderApp(app))
-                main.post { data.orEmpty().forEach { receive(receivedDevice, it) } }
         }
     }
     internal fun receive(device: IQDevice, parcel: Any?) {
@@ -100,6 +98,7 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         val op = m["op"] as? String ?: return
         if (op !in setOf("start", "finish", "cancel", "status", "retry")) return
         if (m["c"] != "${id}_$op") return
+        link.received(device.deviceIdentifier)
         try {
             var s = journal.find(id)
             if (s == null) {
@@ -200,8 +199,15 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         reply(s)
     }
     private fun reply(s: RemoteSession) {
-        val device = activeDevice ?: return
-        runCatching { sdk?.sendMessage(device, IQApp(GARMIN_APP_ID), mapOf("v" to 1, "s" to s.session, "r" to s.revision, "state" to s.status, "detail" to s.detail), null) }
+        val device = link.active ?: return
+        try {
+            sdk?.sendMessage(device, IQApp(GARMIN_APP_ID), mapOf("v" to 1, "s" to s.session, "r" to s.revision, "state" to s.status, "detail" to s.detail)) { sentDevice, app, status ->
+                main.post {
+                    if (binding?.device == sentDevice.deviceIdentifier && isRecorderApp(app) && status != ConnectIQ.IQMessageStatus.SUCCESS)
+                        link.transportError("Watch acknowledgement failed: $status. Check Garmin Connect, then check Status on watch.")
+                }
+            }
+        } catch (e: Exception) { link.transportError("Watch acknowledgement failed: ${e.message ?: e.javaClass.simpleName}. Retry from watch.") }
     }
     private fun notifyConfirmation() {
         val nm = context.getSystemService(NotificationManager::class.java)

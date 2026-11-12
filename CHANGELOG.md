@@ -1,3 +1,10 @@
+## 0.9.8 (36)
+
+- Fix Garmin setup when paired-watch entries have unknown cached status; query current connectivity separately and allow a known watch to be saved while offline.
+- Validate changed or unavailable destinations and watches with clear selection errors; preserve the saved binding and retained drafts during connection loss.
+- Wait for SDK readiness, renew registration on explicit reconnect, and distinguish local phone readiness from actual watch-message receipt with timeout/retry guidance.
+- Keep manual Tower entry below system bars and make both its Back button and Android Back return to discovered Towers.
+
 ## 0.9.7 (35)
 
 - Discover compatible private cross-app Tower indexes after sign-in/unlock; choose a Tower, then explicitly enable workspaces.
