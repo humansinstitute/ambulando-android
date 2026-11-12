@@ -63,7 +63,7 @@ internal class GarminLink(
     fun tick() {
         if (phase == Phase.CONNECTING && now() >= deadline) fail("Garmin Connect did not respond. Open Garmin Connect, then retry connection.")
         if (phase == Phase.READY && registered && !watchConfirmed && now() >= watchDeadline) {
-            message = "No watch message received yet. Open Ambulando Remote and choose Status or Start; check Garmin Connect, then retry."
+            message = "No wrist application receipt yet. Open Ambulando Remote and choose Status or Start; check Garmin Connect, then retry."
             changed()
         }
     }
@@ -121,7 +121,7 @@ internal class GarminLink(
                 checkNotNull(transport).register(device)
                 registered = true; watchConfirmed = false; watchDeadline = now() + 20_000
             }
-            message = if (watchConfirmed) "${device.friendlyName}: watch messages received."
+            message = if (watchConfirmed) "${device.friendlyName}: wrist application receipt confirmed."
                 else "${device.friendlyName}: phone listener ready; awaiting watch message. Open Ambulando Remote; Start or Status."
         } else {
             // A reconnect must renew the remote registration; retain local device events meanwhile.
@@ -133,7 +133,7 @@ internal class GarminLink(
     fun received(id: Long) {
         if (phase == Phase.READY && bound == id && registered) {
             watchConfirmed = true
-            message = "${active?.friendlyName ?: "Saved watch"}: watch messages received."
+            message = "${active?.friendlyName ?: "Saved watch"}: wrist application receipt confirmed."
             changed()
         }
     }

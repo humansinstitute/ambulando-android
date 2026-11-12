@@ -9,6 +9,7 @@ import androidx.core.app.NotificationCompat
 import com.garmin.android.connectiq.*
 import kotlinx.coroutines.*
 import studio.otherstuff.ambulando.app.*
+import studio.otherstuff.ambulando.app.BuildConfig
 import studio.otherstuff.ambulando.app.R
 import studio.otherstuff.ambulando.app.voice.*
 import studio.otherstuff.ambulando.core.crypto.IdentityState
@@ -22,11 +23,26 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     var devices by mutableStateOf<List<IQDevice>>(emptyList()); private set
     var connection by mutableStateOf("Not connected"); private set
     var replyStatus by mutableStateOf("No phone reply sent yet"); private set
+    var diagnostics by mutableStateOf("Phone ${BuildConfig.VERSION_CODE}: RX 0 / rejected 0"); private set
+    private var rx = 0
+    private var rejected = 0
+    private fun diagnostic(code: String, reject: Boolean = false) {
+        if (reject) rejected++
+        diagnostics = "Phone ${BuildConfig.VERSION_CODE}: RX $rx / rejected $rejected / $code"
+        android.util.Log.i("GarminRemote", diagnostics) // Codes only: no audio, account, destination or payload.
+    }
     var binding by mutableStateOf(journal.data.binding); private set
-    private val sdkContext = GarminSdkContext(context) { connection = "Invalid watch message ignored. Retry from watch." }
+    private val sdkContext = GarminSdkContext(context) { diagnostic("P0 malformed IPC", true) }
     private var sdk: ConnectIQ? = null
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val replies = WatchReplies(android.os.SystemClock::elapsedRealtime, { java.util.UUID.randomUUID().toString() },
+        { id, packet, done ->
+            val device = link.active?.takeIf { it.deviceIdentifier == id } ?: error("Watch unavailable")
+            checkNotNull(sdk).sendMessage(device, IQApp(GARMIN_APP_ID), packet) { sent, app, result ->
+                main.post { if (sent.deviceIdentifier == id && isRecorderApp(app)) done(result == ConnectIQ.IQMessageStatus.SUCCESS) }
+            }
+        }, { if (replyStatus != it) { replyStatus = it; android.util.Log.i("GarminRemote", it) } }, { link.received(it) })
     private val link: GarminLink = GarminLink(::transport, android.os.SystemClock::elapsedRealtime) {
         devices = linkDevices()
         connection = linkMessage()
@@ -50,8 +66,8 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
                 instance.registerForDeviceEvents(device) { _, status -> main.post { changed(status) } }
             }
             override fun register(device: IQDevice) { registerApp(instance, device) }
-            override fun clearListeners() { instance.unregisterAllForEvents() }
-            override fun shutdown() { instance.shutdown(sdkContext); if (sdk === instance) sdk = null }
+            override fun clearListeners() { replies.reset(); instance.unregisterAllForEvents() }
+            override fun shutdown() { try { instance.shutdown(sdkContext) } finally { replies.reset(transportClosed = true); if (sdk === instance) sdk = null } }
         }
     }
     init {
@@ -62,23 +78,25 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         if (journal.data.binding != null && !model.environment.isSample) link.bind(journal.data.binding!!.device)
         scope.launch {
             while (isActive) {
-                try { link.tick(); refreshCapture() }
+                try { link.tick(); replies.tick(); refreshCapture() }
                 catch (e: CancellationException) { throw e }
                 catch (_: Exception) { connection = "Status unavailable. Reopen the original workspace." }
                 delay(500)
             }
         }
     }
-    fun connect() { link.connect() }
+    fun connect() { replies.reset(); link.connect() }
     fun bind(device: IQDevice, destination: VoiceDestination) {
         authorize(destination)
         check(model.voice.state.value?.phase !in setOf(VoicePhase.STARTING, VoicePhase.RECORDING, VoicePhase.SENDING)) { "Finish recording or sending first." }
+        replies.reset()
         journal.bind(RemoteBinding(device.deviceIdentifier, destination, binding?.takeIf { it.device == device.deviceIdentifier }?.association))
         binding = journal.data.binding
         link.bind(device.deviceIdentifier)
     }
     fun disable() {
         check(model.voice.state.value?.phase !in setOf(VoicePhase.STARTING, VoicePhase.RECORDING, VoicePhase.SENDING)) { "Finish recording or sending first." }
+        replies.reset()
         journal.bind(null)
         binding = null
         link.bind(null)
@@ -86,22 +104,36 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     private fun registerApp(instance: ConnectIQ, device: IQDevice) {
         instance.registerForAppEvents(device, IQApp(GARMIN_APP_ID)) { receivedDevice, app, data, status ->
             main.post {
-                if (binding?.device != receivedDevice.deviceIdentifier || !isRecorderApp(app)) return@post
+                if (binding?.device != receivedDevice.deviceIdentifier || !isRecorderApp(app)) { diagnostic("P1 binding/app", true); return@post }
                 if (status == ConnectIQ.IQMessageStatus.SUCCESS) data.orEmpty().forEach { receive(receivedDevice, it) }
                 else link.transportError("Watch message failed: $status. Check Garmin Connect and retry from watch.")
             }
         }
     }
+    private var receiptCapable = false
+    private var receiving = false
+    private val commandIds = mutableMapOf<String, String>()
     internal fun receive(device: IQDevice, parcel: Any?) {
-        if (journal.data.binding?.device != device.deviceIdentifier) return
-        val m = parcel as? Map<*, *> ?: return
-        if (m["v"] != 1 && m["v"] != 1L) return
-        val id = m["s"] as? String ?: return
-        if (!id.matches(Regex("[A-Za-z0-9_-]{1,64}"))) return
+        rx++
+        if (journal.data.binding?.device != device.deviceIdentifier) { diagnostic("P1 binding", true); return }
+        val m = parcel as? Map<*, *> ?: run { diagnostic("P2 shape", true); return }
+        if (m["v"] != 1 && m["v"] != 1L) { diagnostic("P3 version", true); return }
+        if (m["op"] == "receipt") { val valid = replies.receipt(device.deviceIdentifier, m); diagnostic(if (valid) "receipt accepted" else "P4 receipt stale/invalid", !valid); return }
+        if (m["op"] == "hello") {
+            diagnostic("hello received")
+            receiptCapable = true
+            replies.offer(device.deviceIdentifier, mapOf("v" to 1, "s" to "hello", "r" to 0, "state" to "hello", "detail" to "Phone listener ready", "b" to BuildConfig.VERSION_CODE))
+            return // No journal entry, tombstone, recording or ACK loop.
+        }
+        receiptCapable = (m["b"] as? Int)?.let { it >= 38 } == true || (m["b"] as? Long)?.let { it >= 38 } == true
+        val id = m["s"] as? String ?: run { diagnostic("P5 session", true); return }
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,64}"))) { diagnostic("P5 session", true); return }
         val op = m["op"] as? String ?: return
         if (op !in setOf("start", "finish", "cancel", "status", "retry")) return
-        if (m["c"] != "${id}_$op") return
-        link.received(device.deviceIdentifier)
+        if (m["c"] != "${id}_$op") { diagnostic("P6 command", true); return }
+        diagnostic("command $op received")
+        commandIds[id] = "${id}_$op"
+        receiving = true
         try {
             var s = journal.find(id)
             if (s == null) {
@@ -141,10 +173,12 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
                     RemoteAction.NONE -> Unit
                 }
             }
-            journal.find(id)?.let(::reply)
         } catch (e: Exception) {
             if (journal.find(id) != null) update(id, "error", e.message ?: "Phone operation failed")
-            else runCatching { sdk?.sendMessage(device, IQApp(GARMIN_APP_ID), mapOf("v" to 1, "s" to id, "state" to "error", "r" to 0, "detail" to (e.message ?: "Operation failed")), null) }
+            else replies.offer(device.deviceIdentifier, mapOf("v" to 1, "s" to id, "state" to "error", "r" to 0, "detail" to "Phone operation unavailable", "b" to BuildConfig.VERSION_CODE), receiptCapable)
+        } finally {
+            receiving = false
+            journal.find(id)?.let(::reply)
         }
     }
     fun resendStatus() { journal.data.sessions.lastOrNull()?.let(::reply) }
@@ -197,22 +231,13 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         val s = journal.update(id, state, detail)
         if (s.revision == before) return
         sessions = journal.data.sessions
-        reply(s)
+        if (!receiving) reply(s)
     }
     private fun reply(s: RemoteSession) {
         val device = link.active ?: run { replyStatus = "Reply pending: reconnect the saved watch, then check Status."; return }
-        try {
-            replyStatus = "Sending ${s.status} reply to Garmin Connect…"
-            sdk?.sendMessage(device, IQApp(GARMIN_APP_ID), mapOf("v" to 1, "s" to s.session, "r" to s.revision, "state" to s.status, "detail" to s.detail)) { sentDevice, app, status ->
-                main.post {
-                    if (binding?.device == sentDevice.deviceIdentifier && isRecorderApp(app)) {
-                        replyStatus = if (status == ConnectIQ.IQMessageStatus.SUCCESS) "Garmin Connect accepted ${s.status} reply. Wrist receipt is not confirmed." else "Garmin reply failed: $status. Reconnect, then check Status on watch."
-                        if (status != ConnectIQ.IQMessageStatus.SUCCESS) link.transportError(replyStatus)
-                    }
-                }
-            }
-        } catch (e: Exception) { replyStatus = "Reply failed. Reconnect, then check Status on watch."; link.transportError("Watch acknowledgement failed: ${e.message ?: e.javaClass.simpleName}. Retry from watch.") }
+        replies.offer(device.deviceIdentifier, mapOf("v" to 1, "s" to s.session, "r" to s.revision, "state" to s.status, "detail" to s.detail, "b" to BuildConfig.VERSION_CODE, "c" to (commandIds[s.session] ?: "")), receiptCapable)
     }
+
     private fun notifyConfirmation() {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("watch_remote_v1", "Watch recorder requests", NotificationManager.IMPORTANCE_HIGH))

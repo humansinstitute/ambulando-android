@@ -32,6 +32,17 @@ public class SenderActivity extends Activity {
             String op = getIntent().getStringExtra("op");
             Map<String, Object> command = new HashMap<>();
             command.put("v", 1); command.put("s", session); command.put("op", op); command.put("c", session + "_" + op);
+            if (getIntent().getBooleanExtra("echoReply", false)) {
+                Map<String, Object> reply = com.garmin.android.apps.connectmobile.connectiq.ConnectIQService.lastReply;
+                if (reply == null) throw new IllegalStateException("No phone reply received");
+                command = new HashMap<>(reply);
+                command.put("op", "receipt"); command.put("b", 38);
+                String bad = getIntent().getStringExtra("badReceipt");
+                if ("nonce".equals(bad)) command.put("n", "stale");
+                if ("revision".equals(bad)) command.put("r", -1);
+                if ("session".equals(bad)) command.put("s", "stale");
+                if ("build".equals(bad)) command.put("b", 37);
+            }
             Intent message = new Intent("com.garmin.android.connectiq.INCOMING_MESSAGE").setPackage("studio.otherstuff.ambulando.android");
             if (getIntent().getBooleanExtra("malformed", false)) {
                 message.putExtra("com.garmin.android.connectiq.EXTRA_REMOTE_DEVICE", new IQApp("wrong-type"));

@@ -25,6 +25,7 @@ parser.add_argument('--evidence', type=pathlib.Path, required=True)
 parser.add_argument('--apk', type=pathlib.Path)
 parser.add_argument('--seed-disposable-binding', action='store_true', help='Create a synthetic binding only if no journal exists; never replace an existing binding')
 parser.add_argument('--expect-original-crash', action='store_true')
+parser.add_argument('--check-receipts', action='store_true', help='Verify build38 side-effect-free hello and synthetic wrist receipt validation')
 args = parser.parse_args()
 assert args.serial.startswith('emulator-'), 'Physical devices are forbidden'
 args.evidence.mkdir(parents=True, exist_ok=True)
@@ -90,6 +91,32 @@ def send(session, *extra):
     time.sleep(1)
 
 launch()
+if args.check_receipts:
+    snapshot = journal()
+    component = 'com.garmin.android.apps.connectmobile/studio.otherstuff.ambulando.garminfixture.SenderActivity'
+    def probe(*extra):
+        shell('am', 'start', '-n', component, '--es', 'session', 'hello', '--es', 'op', 'hello', *extra)
+        time.sleep(.5)
+    def diagnostic_logs():
+        return adb('logcat', '-d', '-s', 'GarminRemote:I', '*:S')
+    probe()
+    wait_for(lambda: 'Garmin accepted reply; wrist unconfirmed' in diagnostic_logs(), 'SDK status callback missing')
+    assert 'Wrist confirmed' not in diagnostic_logs(), 'Transport callback falsely confirmed wrist'
+    assert journal() == snapshot, 'Hello mutated replay journal'
+    for flag, value in [('--el', '72')]:
+        probe('--ez', 'echoReply', 'true', flag, 'device', value)
+    probe('--ez', 'echoReply', 'true', '--es', 'app', '00000000000000000000000000000000')
+    for reason in ('nonce', 'revision', 'session', 'build'):
+        probe('--ez', 'echoReply', 'true', '--es', 'badReceipt', reason)
+    assert 'Wrist confirmed' not in diagnostic_logs(), 'Invalid receipt falsely confirmed wrist'
+    probe('--ez', 'echoReply', 'true')
+    wait_for(lambda: 'Wrist confirmed phone 38 / watch 38' in diagnostic_logs(), 'Valid synthetic receipt not accepted')
+    confirmed_count = diagnostic_logs().count('Wrist confirmed phone 38 / watch 38')
+    probe('--ez', 'echoReply', 'true')
+    assert diagnostic_logs().count('Wrist confirmed phone 38 / watch 38') == confirmed_count, 'Duplicate receipt accepted'
+    assert journal() == snapshot, 'Probe/receipt mutated session history'
+    (args.evidence / 'synthetic-receipts.txt').write_text(diagnostic_logs())
+    print('PASS: synthetic external SDK hello, transport-only unconfirmed, wrong device/app/nonce/session/revision/build rejected, exact receipt accepted once, no journal mutation')
 if args.expect_original_crash:
     send('original_crash_probe')
     wait_for(lambda: 'BadParcelableException' in adb('logcat', '-d', '-b', 'crash'), 'Expected original release crash')

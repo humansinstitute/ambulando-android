@@ -73,9 +73,9 @@ class GarminLinkTest {
         val p = Port(); var clock = 0L; val l = GarminLink({ p }, { clock }, {})
         l.bind(71); p.ready()
         assertTrue(l.message.contains("awaiting watch message"))
-        clock = 20_001; l.tick(); assertTrue(l.message.contains("No watch message"))
-        l.received(72); assertTrue(l.message.contains("No watch message"))
-        l.received(71); assertTrue(l.message.contains("watch messages received"))
+        clock = 20_001; l.tick(); assertTrue(l.message.contains("No wrist application receipt"))
+        l.received(72); assertTrue(l.message.contains("No wrist application receipt"))
+        l.received(71); assertTrue(l.message.contains("wrist application receipt confirmed"))
         p.event(NOT_CONNECTED); p.event(CONNECTED)
         assertTrue(l.message.contains("awaiting watch message"))
     }
@@ -102,6 +102,6 @@ class GarminLinkTest {
         l.connect()
         assertEquals(2, p.registers); assertEquals(1, p.listens)
         assertTrue(l.message.contains("awaiting watch message"))
-        l.received(71); assertTrue(l.message.contains("watch messages received"))
+        l.received(71); assertTrue(l.message.contains("wrist application receipt confirmed"))
     }
 }

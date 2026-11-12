@@ -46,6 +46,7 @@ fun GarminSetup(model: AppModel) {
         binding?.let { Text(remote.devices.firstOrNull { device -> device.deviceIdentifier == it.device }?.friendlyName ?: "Saved watch") }
         Text(remote.connection, Modifier.testTag("watch.status"))
         Text(remote.replyStatus)
+        Text(remote.diagnostics)
         TextButton(enabled = !busy, modifier = Modifier.testTag("watch.setup"), onClick = {
             selectedBoundary = workspaces.firstOrNull { binding?.destination?.matches(it.connection, it.workspace) == true }?.boundary?.id
             selectedChannel = binding?.destination?.channelId
