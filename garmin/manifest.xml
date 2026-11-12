@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+  <iq:application id="4edbc3d41f924958b53a29734ba5a821" type="watch-app" name="@Strings.AppName" entry="RemoteApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.2.0">
+    <iq:products><iq:product id="vivoactive6"/></iq:products>
+    <iq:permissions><iq:uses-permission id="Communications"/></iq:permissions>
+    <iq:languages><iq:language>eng</iq:language></iq:languages>
+    <iq:barrels/>
+  </iq:application>
+</iq:manifest>

@@ -35,7 +35,10 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = light
                 }
             }
-            if (BuildConfig.GRANDPARENT_CHAT) GrandparentApp(model) else AmbulandoApp(model)
+            if (BuildConfig.GRANDPARENT_CHAT) GrandparentApp(model) else {
+                AmbulandoApp(model)
+                studio.otherstuff.ambulando.app.garmin.GarminConfirmation(model)
+            }
         } }
     }
 }

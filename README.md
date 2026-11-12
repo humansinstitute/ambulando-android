@@ -11,6 +11,8 @@ a phone-created identity is lost if the phone or app data is lost, or its PIN ca
 keep your existing backup.
 Updates signed with the same release certificate retain the identity, connection, history, drafts and unsent work.
 
+See [Garmin recorder setup, protocol and build instructions](docs/garmin-recorder.md) for the Vivoactive 6 remote.
+
 ## Workflows
 
 - Several workspaces (on one or more Towers) enabled at once, each with its own runtime and storage; workspace → scope → channel selection across chat, tasks, documents and files; independent section navigation per workspace.

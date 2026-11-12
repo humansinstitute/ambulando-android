@@ -1,0 +1,86 @@
+package studio.otherstuff.ambulando.app
+
+import org.junit.Assert.*
+import org.junit.Test
+import studio.otherstuff.ambulando.app.garmin.*
+import studio.otherstuff.ambulando.app.voice.*
+import java.io.File
+import java.nio.file.Files
+
+class GarminRemoteTest {
+    private fun destination(channel: String = "original") = VoiceDestination("connection", "https://tower.example", "tower", "account", "workspace", "app", channel, null, "Chosen DM")
+    private fun journal(dir: File) = RemoteJournal(File(dir, "remote.json"))
+    @Test fun duplicateAndRestartRetainOriginalSessionAndDestination() {
+        val dir = Files.createTempDirectory("remote").toFile()
+        try {
+            val j = journal(dir)
+            j.bind(RemoteBinding(7, destination()))
+            val first = j.begin("watch_1")
+            assertEquals(first, j.begin("watch_1"))
+            assertThrows(IllegalStateException::class.java) { j.begin("watch_2") }
+            assertThrows(IllegalStateException::class.java) { j.bind(RemoteBinding(8, destination("different"))) }
+            j.update("watch_1", "sent", "Acknowledged")
+            j.bind(RemoteBinding(8, destination("different")))
+            val restored = journal(dir)
+            assertEquals(first.recording, restored.begin("watch_1").recording)
+            assertEquals("original", restored.find("watch_1")!!.destination.channelId)
+            assertEquals("sent", restored.begin("watch_1").status)
+            assertNotEquals(first.recording, restored.begin("watch_2").recording)
+        } finally { dir.deleteRecursively() }
+    }
+    @Test fun terminalTombstoneSurvivesLateStartAndRevisionIncreases() {
+        val dir = Files.createTempDirectory("remote").toFile()
+        try {
+            val j = journal(dir); j.bind(RemoteBinding(7, destination()))
+            j.begin("out_of_order")
+            val cancelled = j.update("out_of_order", "cancelled", "Finish before Start")
+            assertEquals(1, cancelled.revision)
+            assertEquals(cancelled, j.update("out_of_order", "cancelled", "Finish before Start"))
+            assertEquals(cancelled, journal(dir).begin("out_of_order"))
+            assertEquals("cancelled", j.begin("out_of_order").status)
+            assertThrows(IllegalArgumentException::class.java) { j.begin("../../bad") }
+        } finally { dir.deleteRecursively() }
+    }
+    @Test fun corruptJournalFailsClosedAndDoesNotOverwriteEvidence() {
+        val dir = Files.createTempDirectory("remote").toFile()
+        try {
+            val f = File(dir, "remote.json"); f.writeText("broken")
+            val j = journal(dir)
+            assertTrue(j.damaged)
+            assertThrows(IllegalStateException::class.java) { j.bind(RemoteBinding(7, destination())) }
+            assertEquals("broken", f.readText())
+        } finally { dir.deleteRecursively() }
+    }
+    @Test fun staleFinishCancelAndRetryCannotAffectAnotherDraft() {
+        assertEquals(RemoteAction.NONE, remoteAction("recording", "finish", false, VoicePhase.RECORDING))
+        assertEquals(RemoteAction.NONE, remoteAction("error", "cancel", false, VoicePhase.REVIEW))
+        assertEquals(RemoteAction.NONE, remoteAction("error", "retry", false, VoicePhase.REVIEW))
+        assertEquals(RemoteAction.FINISH, remoteAction("recording", "finish", true, VoicePhase.RECORDING))
+        assertEquals(RemoteAction.FINISH, remoteAction("waiting", "finish", true, VoicePhase.RECORDING))
+        assertEquals(RemoteAction.RETRY, remoteAction("error", "retry", true, VoicePhase.REVIEW))
+    }
+    @Test fun duplicateFinishAndCancelDuringSendingAreNoOps() {
+        for (op in listOf("finish", "cancel", "retry", "start")) {
+            assertEquals(RemoteAction.NONE, remoteAction("sending", op, true, VoicePhase.SENDING))
+            assertEquals(RemoteAction.NONE, remoteAction("sent", op, false, null))
+        }
+        assertEquals(RemoteAction.CANCEL, remoteAction("waiting", "finish", true, VoicePhase.STARTING))
+        assertEquals(RemoteAction.NONE, remoteAction("error", "retry", true, VoicePhase.INTERRUPTED))
+    }
+    @Test fun headsetRequirementAndStableMessageIdSurviveDraftRecovery() {
+        val dir = Files.createTempDirectory("remote-draft").toFile()
+        try {
+            val id = java.util.UUID.randomUUID().toString()
+            val store = VoiceDraftStore(dir)
+            val draft = store.begin(destination(), id, true)
+            store.audio(draft).writeText("synthetic test bytes")
+            store.save(draft.copy(phase = VoicePhase.SENDING, objectId = "existing-object", uploadURL = "https://objects.example/put"))
+            val recovered = VoiceDraftStore(dir)
+            assertEquals(id, recovered.state.value!!.id)
+            assertTrue(recovered.state.value!!.headsetOnly)
+            assertEquals("existing-object", recovered.state.value!!.objectId)
+            assertEquals(destination(), recovered.state.value!!.destination)
+            assertTrue(recovered.audio(draft).exists())
+        } finally { dir.deleteRecursively() }
+    }
+}

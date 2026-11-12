@@ -24,3 +24,13 @@ or colour was redrawn, and non-pixel PNG metadata was removed.
   driver (Apache 2.0; SQLite itself is public domain).
 
 - UnifiedPush Android connector 3.3.5 and Google Tink cryptography (Apache 2.0), used for local RFC8291 Web Push decryption. No Firebase or Play Services SDK is bundled. Upstream: https://codeberg.org/UnifiedPush/android-connector and https://github.com/tink-crypto/tink-java .
+
+## Garmin companion integration
+
+The phone companion includes Garmin Connect IQ Companion App SDK 2.2.0
+(`com.garmin.connectiq:ciq-companion-app-sdk`), copyright Garmin International Ltd.,
+under the Garmin CONNECT IQ SDK License Agreement and CONNECT IQ Application
+Developer Agreement specified by its Maven POM. This dependency is not covered
+by Ambulando's MIT license. Terms: https://developer.garmin.com/downloads/connect-iq/sdks/agreement.html .
+The watch app source is Ambulando code; Garmin SDK tools and device definitions
+are obtained separately from Garmin and are not included in the source export.

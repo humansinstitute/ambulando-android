@@ -1,3 +1,11 @@
+## 0.9.5 (33)
+
+- Add Garmin recorder companion integration with explicitly bound watch and original conversation.
+- Require verified Bluetooth microphone routing for watch recordings; retain stopped audio on failure and send through the existing authenticated outbox.
+- Expose waiting, recording, sending, server-confirmed sent and error status with persistent session replay protection.
+- Offer phone confirmation and optional companion association for a visible recording screen; physical watch/headset compatibility still requires device verification.
+- Include Vivoactive 6 Monkey C source and reproducible packaging instructions; Garmin device profiles and store submission require the developer's account.
+
 ## 0.9.4 (32)
 
 - Accept keyboard image commits and clipboard/context-menu image Paste through private attachment uploads.

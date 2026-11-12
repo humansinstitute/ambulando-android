@@ -27,3 +27,13 @@ or colour was redrawn, and non-pixel PNG metadata was removed.
   https://github.com/firebase/firebase-android-sdk . Required Google Play services client support libraries are
   distributed under their upstream terms: https://developers.google.com/android/guides/overview .
   No Firebase Analytics SDK is included.
+
+## Garmin companion integration
+
+The phone companion includes Garmin Connect IQ Companion App SDK 2.2.0
+(`com.garmin.connectiq:ciq-companion-app-sdk`), copyright Garmin International Ltd.,
+under the Garmin CONNECT IQ SDK License Agreement and CONNECT IQ Application
+Developer Agreement specified by its Maven POM. This dependency is not covered
+by Ambulando's MIT license. Terms: https://developer.garmin.com/downloads/connect-iq/sdks/agreement.html .
+The watch app source is Ambulando code; Garmin SDK tools and device definitions
+are obtained separately from Garmin and are not included in the source export.

@@ -60,6 +60,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Work that must finish even though the screen that asked for it is already gone (a recreated activity, for example). */
     fun launchDetached(block: suspend () -> Unit) { viewModelScope.launch(kotlinx.coroutines.NonCancellable) { block() } }
+    val garmin by lazy { studio.otherstuff.ambulando.app.garmin.GarminRemote(androidContext, this) }
     val voice by lazy { studio.otherstuff.ambulando.app.voice.VoiceRecorder(androidContext, File(environment.baseDir, "voice-recording"), environment.isSample) }
     val family by lazy { FamilyCoordinator(this) }
     val browser by lazy { studio.otherstuff.ambulando.app.browser.BrowserModel(androidContext) }
@@ -301,6 +302,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         if (voiceSendJob?.isActive == true) return
         val draft = voice.state.value ?: return
         if (draft.phase != studio.otherstuff.ambulando.app.voice.VoicePhase.REVIEW && draft.phase != studio.otherstuff.ambulando.app.voice.VoicePhase.INTERRUPTED) return
+        // Reserve synchronously before metadata IO; observers must not mistake preparation for upload failure.
+        voice.drafts.save(draft.copy(phase = studio.otherstuff.ambulando.app.voice.VoicePhase.SENDING, error = null))
         voiceSendJob = viewModelScope.launch {
             try {
                 val destination = draft.destination

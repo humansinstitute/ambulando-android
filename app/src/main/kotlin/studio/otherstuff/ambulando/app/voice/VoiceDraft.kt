@@ -35,6 +35,7 @@ data class VoiceDraft(
     val id: String = UUID.randomUUID().toString(), val destination: VoiceDestination,
     val phase: VoicePhase = VoicePhase.STARTING, val startedAt: Long = System.currentTimeMillis(),
     val elapsedMillis: Long = 0, val startedElapsed: Long = 0, val error: String? = null,
+    val headsetOnly: Boolean = false,
     val objectId: String? = null, val uploadURL: String? = null, val fileId: String? = null,
 ) {
     val filename get() = "Voice-$id.m4a"
@@ -61,9 +62,9 @@ class VoiceDraftStore(private val directory: File) {
         AtomicFiles.write(journal, json.encodeToString(VoiceDraft.serializer(), draft).toByteArray())
         mutable.value = draft
     }
-    fun begin(destination: VoiceDestination): VoiceDraft {
+    fun begin(destination: VoiceDestination, id: String = UUID.randomUUID().toString(), headsetOnly: Boolean = false): VoiceDraft {
         check(state.value == null) { "Finish or cancel the existing recording first." }
-        return VoiceDraft(destination = destination).also(::save)
+        return VoiceDraft(id = id, destination = destination, headsetOnly = headsetOnly).also(::save)
     }
     fun clear() {
         // Remove authority first; leftover bytes after a crash can never be sent to a guessed destination.

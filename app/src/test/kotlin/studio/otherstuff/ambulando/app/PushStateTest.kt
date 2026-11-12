@@ -65,13 +65,21 @@ class PushStateTest {
     }
     @Test fun missingConfigurationIsUnavailableAndOfflineTokenResetSurvivesReload() = kotlinx.coroutines.runBlocking {
         val context = RuntimeEnvironment.getApplication() as AmbulandoApplication
-        val firebase = FirebaseDevice(context)
+        // A developer may have a real ignored google-services.json. Simulate missing config explicitly.
+        val noConfig = object : android.content.ContextWrapper(context) {
+            private val missing = object : android.content.res.Resources(context.resources.assets, context.resources.displayMetrics, context.resources.configuration) {
+                override fun getIdentifier(name: String?, defType: String?, defPackage: String?): Int =
+                    if (name == "google_app_id") 0 else super.getIdentifier(name, defType, defPackage)
+            }
+            override fun getResources() = missing
+        }
+        val firebase = FirebaseDevice(noConfig)
         assertTrue(firebase.unavailableReason()!!.contains("no Firebase Android configuration"))
         assertNull(firebase.projectId())
         firebase.requireTokenReset()
         firebase.deleteToken() // No config: must retain reset rather than reuse another actor's token.
         assertTrue(context.getSharedPreferences("fcm_lifecycle", Context.MODE_PRIVATE).getBoolean("reset_required", false))
-        assertTrue(runCatching { FirebaseDevice(context).token() }.isFailure)
+        assertTrue(runCatching { FirebaseDevice(noConfig).token() }.isFailure)
         assertNull(context.activeModel) // Cold device handling did not construct an interactive signing session.
     }
     @Test fun legacyDistributorStateIsNotPresentedAsWorkingFcm() {
