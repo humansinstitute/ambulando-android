@@ -43,11 +43,11 @@ class WatchRecordingActivity : ComponentActivity() {
             val sessions = model.garmin.sessions
             val s = sessions.firstOrNull { it.session == intent.getStringExtra("session") }
             MaterialTheme { Surface(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center) {
-                Text("Ambulando watch recorder", style = MaterialTheme.typography.headlineMedium)
+                Text("Ambulando Voice", style = MaterialTheme.typography.headlineMedium)
                 Text(s?.destination?.label ?: "Request unavailable")
                 Text(s?.status ?: "error", style = MaterialTheme.typography.headlineSmall)
                 Text(s?.detail ?: "Return to Ambulando and retry")
-                Text("Bluetooth headset only. Finish on watch sends to the bound conversation.")
+                Text("Bluetooth headset only. Stop on watch sends to the saved conversation.")
                 if (s?.status == "waiting" && draft == null) {
                     if (model.garmin.enabled) Text("Opening the headset microphone automatically. No phone tap is required.")
                     else Button(onClick = {
@@ -61,7 +61,7 @@ class WatchRecordingActivity : ComponentActivity() {
                     explanation?.let { Text(it) }
                     Button(onClick = { model.garmin.dismiss(s.session) }) { Text("Cancel request") }
                 }
-                if (s?.status in setOf("cancelled", "error", "sent")) Text("Check Status on watch, then choose New to make a new request. Any retained audio stays in its original conversation.")
+                if (s?.status in setOf("cancelled", "error", "sent")) Text("Try Record again on the watch. Any retained audio stays in its original conversation.")
                 Button(onClick = { finish() }) { Text("Return to phone") }
             } } }
         }

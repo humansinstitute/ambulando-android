@@ -26,6 +26,14 @@ internal object WatchNativeConsent {
         while (clickable != null && !clickable.isClickable) clickable = clickable.parent
         return clickable?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
     }
+    fun editPrompt(old: String, value: String): Boolean {
+        val field = nodes(instrumentation.uiAutomation.rootInActiveWindow).firstOrNull { it.isEditable && it.text?.toString() == old } ?: return false
+        return field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) })
+    }
+    fun openSetup() {
+        waitFor("open setup") { click("Set up watch control", "Setup & permissions") }
+        Thread.sleep(400)
+    }
     fun grant(activity: ComponentActivity) {
         check(context.packageName.endsWith(".watchtest")) { "Native consent tests require isolatedWatchTest=true" }
         val permissions = listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.POST_NOTIFICATIONS)

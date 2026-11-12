@@ -113,3 +113,7 @@ Disable preserves the saved setup, replay tombstones and retained audio while st
 capture authority. Grant revocation invalidates capture consent; a connection-only listener may remain to return a
 setup error until you stop it. A cold listener never restores the interactive signing identity or an interrupted
 microphone. Force-stop, reboot and locked credentials can require reopening the app and enabling again.
+
+The optional watch default prompt is saved in private app storage and copied into each new watch recording's draft.
+It is sent as ordinary message text with that recording to the selected destination. Changing the default affects
+future recordings; retained audio/retries keep the text that was captured when recording began.

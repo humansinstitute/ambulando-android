@@ -408,7 +408,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
                     }
                     // Atomic producer receipt prevents a crash between enqueue and clearing the audio from creating another message.
                     owner.store.writer.enqueueSend(destination.target, destination.origin, destination.signerNpub, destination.appNpub,
-                        StorageMarkdown.file(objectId, draft.filename), emptyList(), attachments = listOf(owner.outbox.retainUploadedAudio(draft.id, bytes, draft.filename, objectId)),
+                        studio.otherstuff.ambulando.app.voice.voiceMessageBody(draft, objectId), emptyList(), attachments = listOf(owner.outbox.retainUploadedAudio(draft.id, bytes, draft.filename, objectId)),
                         id = draft.id, preserveDraft = true, once = true)
                     voice.drafts.clear()
                     owner.outbox.kick(owner.connection)

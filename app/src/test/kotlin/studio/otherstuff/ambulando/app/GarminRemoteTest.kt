@@ -118,4 +118,21 @@ class GarminRemoteTest {
         assertFalse(freshWatchStart("101_1234", 100, 222))
     }
 
+    @Test fun promptDefaultsMigrateAndEditsPreserveBindingConsentAndSessions() {
+        val dir = Files.createTempDirectory("watch-prompt").toFile()
+        try {
+            val j = journal(dir); j.bind(RemoteBinding(7, destination()))
+            assertEquals(DEFAULT_WATCH_PROMPT, j.data.prompt)
+            j.consent(WatchConsent(j.data.binding!!, 100))
+            val consent = j.data.consent
+            j.begin("old_session"); j.update("old_session", "sent", "Delivered")
+            j.prompt("  Custom instruction  ")
+            val restored = journal(dir)
+            assertEquals("Custom instruction", restored.data.prompt)
+            assertEquals(consent, restored.data.consent)
+            assertEquals("sent", restored.find("old_session")!!.status)
+            assertThrows(IllegalArgumentException::class.java) { j.prompt(" ") }
+        } finally { dir.deleteRecursively() }
+    }
+
 }

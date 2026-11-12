@@ -47,11 +47,14 @@ class GarminRemoteFlowTest {
                 val c = model.connection!!; val w = model.workspaces.first { it.id == SampleIds.STUDIO }
                 val destination = VoiceDestination.capture(c, w, ChatTarget(c.id, w.id, SampleIds.GENERAL, null), "Synthetic original channel")
                 remote.bind(device, destination)
+                remote.savePrompt("Pinned voice instruction")
                 record = remote.journal.begin(session)
                 model.watchDelivery(destination) // Same pinned delivery lifetime; capture source alone is the stand-in.
-                model.voice.start(destination, record.recording, headsetOnly = false)
+                model.voice.start(destination, record.recording, headsetOnly = false, prompt = remote.prompt)
             }
             compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
+            instrumentation.runOnMainSync { remote.savePrompt("Changed instruction for future recordings") }
+            assertEquals("Pinned voice instruction", model.voice.state.value!!.prompt)
             Thread.sleep(1500)
             shell("input keyevent KEYCODE_HOME")
             shell("input keyevent KEYCODE_SLEEP")
@@ -76,6 +79,8 @@ class GarminRemoteFlowTest {
             val owner = model.runtimeMap.values.first { it.workspace.id == SampleIds.STUDIO }
             val messages = kotlinx.coroutines.runBlocking { owner.store.reader.latestMessages(SampleIds.STUDIO, SampleIds.GENERAL, 500) }
             assertEquals(1, messages.count { it.clientRequestId == record.recording })
+            assertTrue(messages.single { it.clientRequestId == record.recording }.body.startsWith("Pinned voice instruction\n\n"))
+            assertFalse(messages.single { it.clientRequestId == record.recording }.body.contains("Changed instruction"))
             instrumentation.runOnMainSync { remote.receive(device, command("finish")); remote.receive(device, command("cancel")); remote.receive(device, command("start")) }
             assertEquals("sent", remote.sessions.first { it.session == session }.status)
             assertNull(model.voice.state.value)

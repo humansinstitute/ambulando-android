@@ -1,8 +1,8 @@
-# Ambulando Remote — draft store listing
+# Ambulando Voice — draft store listing
 
 Control Ambulando voice messages from your Vivoactive 6. Record with a Bluetooth microphone connected to your Android phone; this app does not record from the watch.
 
-Choose Start, wait for the phone to confirm recording, then Finish to send to your explicitly selected Ambulando conversation. Cancel discards the current unsent recording. Status and Retry help recover interrupted communication and upload failures.
+Tap the large red Record button, wait for Recording, then tap Stop to send to your explicitly selected Ambulando conversation. The small bin discards the current unsent recording. The cog opens status, setup, diagnostics and interrupted-upload recovery options.
 
 Requires Ambulando for Android, Garmin Connect, a paired Vivoactive 6, an unlocked signed-in Ambulando account and a Bluetooth headset with microphone support. Configure the destination in Ambulando first. Enable watch control once in Android Settings, grant ordinary recording permissions and Display over other apps (or retain a valid existing companion association), and consent to automatic headset recording for the saved destination. Fresh wrist Start then opens the real recorder and starts capture without a phone tap; the phone may wake but stays locked. A persistent listener notification offers Stop. Force-stop, reboot or a locked account can require reopening Ambulando and enabling again. Music pause depends on the player respecting audio focus; music is not resumed automatically.
 

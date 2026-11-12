@@ -82,3 +82,11 @@ claim. The body remains a link to that existing File. This guarded recovery neve
 another File. A missing or unreadable original File leaves the failed send intact. Other conflicts and uncertain
 responses retain their original frozen request; a 409 is never considered acceptance. Old builds may already
 have deleted the local audio after handoff, but the uploaded File and durable send are preserved by recovery.
+
+## Watch message prompt
+
+Ambulando Voice settings provide a persistent default instruction for watch audio. The watch recording captures
+that text into the durable VoiceDraft at Record. Send places the pinned instruction above the audio link in the same
+message. Editing the default cannot change a retained recording or retry; its object checkpoint, message request ID
+and original destination remain unchanged. Older retained drafts and ordinary phone recordings keep their existing
+attachment-only content. The watch's Stop sends; discard abandons the unsent recording.

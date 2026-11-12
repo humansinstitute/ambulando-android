@@ -1,5 +1,7 @@
 ## 0.9.10 (38)
 
+- Add a clean Ambulando Voice status/prompt screen with separate setup, an editable default instruction included with watch audio, and prompt pinning through retained drafts and retries. The Android app remains Ambulando.
+
 - Add explicit, destination-specific watch control consent and a persistent Bluetooth listener with a Stop action, preserving saved setup and retained audio.
 - Fresh wrist Start verifies an application nonce receipt, opens the real recorder over the lock screen with one-time Android screen-opening access, then automatically starts a verified Bluetooth microphone after the screen is resumed and focused.
 - Keep recording and the original conversation's delivery active when the screen sleeps; Finish retains deterministic upload/message replay protection and waits for server acknowledgement.

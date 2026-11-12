@@ -7,8 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.*
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.*
 import androidx.compose.ui.platform.testTag
 import studio.otherstuff.ambulando.core.transport.ChannelRecord
 import androidx.compose.ui.Modifier
@@ -20,6 +19,7 @@ import studio.otherstuff.ambulando.app.AppModel
 import studio.otherstuff.ambulando.app.voice.VoiceDestination
 import studio.otherstuff.ambulando.core.store.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GarminSetup(model: AppModel) {
     val remote = model.garmin
@@ -28,6 +28,8 @@ fun GarminSetup(model: AppModel) {
     val draft by model.voice.state.collectAsState()
     val captureBusy = draft?.phase in setOf(studio.otherstuff.ambulando.app.voice.VoicePhase.STARTING, studio.otherstuff.ambulando.app.voice.VoicePhase.RECORDING, studio.otherstuff.ambulando.app.voice.VoicePhase.SENDING) || remote.sessions.any { it.status in setOf("recording", "sending") }
     val busy = captureBusy || remote.sessions.any { it.status == "waiting" }
+    var configure by remember { mutableStateOf(binding == null) }
+    var prompt by remember(remote.prompt) { mutableStateOf(remote.prompt) }
     var consent by remember { mutableStateOf(false) }
     var diagnostics by remember { mutableStateOf(false) }
     var permissionRevision by remember { mutableIntStateOf(0) }
@@ -51,17 +53,38 @@ fun GarminSetup(model: AppModel) {
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         error = if (result.values.all { it }) null else "Enable denied recording permissions in Android settings."
     }
-    Column {
-        Text(binding?.destination?.label ?: "No watch destination configured", Modifier.testTag("watch.saved"))
-        binding?.let { Text(remote.devices.firstOrNull { device -> device.deviceIdentifier == it.device }?.friendlyName ?: "Saved watch") }
-        Text(remote.connection, Modifier.testTag("watch.status"))
-        Text(remote.readiness, Modifier.testTag("watch.readiness"))
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (remote.enabled && remote.listening) "Watch control on" else if (binding == null) "Set up your watch" else "Watch control off", style = MaterialTheme.typography.titleMedium)
+                Text(binding?.destination?.label ?: "Choose where your voice messages go.", Modifier.testTag("watch.saved"))
+                binding?.let { Text(remote.devices.firstOrNull { device -> device.deviceIdentifier == it.device }?.friendlyName ?: "Saved watch", style = MaterialTheme.typography.bodySmall) }
+                remote.sessions.lastOrNull()?.let { Text("${it.status.replaceFirstChar(Char::uppercase)} · ${it.detail}", style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+        OutlinedTextField(prompt, { if (it.length <= 4000) prompt = it }, label = { Text("Default prompt") },
+            supportingText = { Text("Sent with every watch recording. Changes apply to new recordings.") },
+            minLines = 3, maxLines = 6, modifier = Modifier.fillMaxWidth().testTag("watch.prompt"))
+        if (prompt != remote.prompt) Button(enabled = prompt.isNotBlank(), onClick = {
+            try { remote.savePrompt(prompt); error = null } catch (e: Exception) { error = e.message }
+        }, modifier = Modifier.testTag("watch.prompt.save")) { Text("Save prompt") }
+        TextButton(onClick = { configure = true }, modifier = Modifier.testTag("watch.configure")) { Text(if (remote.enabled) "Setup & permissions" else "Set up watch control") }
+        if (remote.enabled || remote.listening) TextButton(onClick = { remote.disable() }, modifier = Modifier.testTag("watch.disable.main")) { Text("Disable watch control") }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+    if (configure) ModalBottomSheet(onDismissRequest = { configure = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Set up Ambulando Voice", style = MaterialTheme.typography.headlineSmall)
+        Text("1 · Destination and watch", style = MaterialTheme.typography.titleMedium)
+        Text(binding?.destination?.label ?: "Choose a saved conversation and paired watch.")
         TextButton(enabled = !busy, modifier = Modifier.testTag("watch.setup"), onClick = {
             selectedBoundary = workspaces.firstOrNull { binding?.destination?.matches(it.connection, it.workspace) == true }?.boundary?.id
             selectedChannel = binding?.destination?.channelId
             selectedDevice = binding?.device
             error = null; open = true; remote.connect()
-        }) { Text(if (binding == null) "Set up watch recorder" else "Change destination or watch") }
+        }) { Text(if (binding == null) "Choose destination and watch" else "Change destination or watch") }
+        Text("2 · Android permissions", style = MaterialTheme.typography.titleMedium)
+        Text("One-time access lets wrist Record open the real headset recorder above the lock screen. The display may wake; the phone stays locked.")
         val required = buildList {
             add(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -82,10 +105,13 @@ fun GarminSetup(model: AppModel) {
                 context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     android.net.Uri.parse("package:${context.packageName}")))
             }, modifier = Modifier.testTag("watch.screenAccess")) { Text("Allow recorder screen over lock screen") }
+            Text("3 · Enable watch control", style = MaterialTheme.typography.titleMedium)
+            Text(remote.readiness, Modifier.testTag("watch.readiness"))
             TextButton(enabled = (!remote.enabled || !remote.listening) && !captureBusy, onClick = { consent = true }, modifier = Modifier.testTag("watch.enable")) { Text("Enable watch control") }
             if (remote.enabled || remote.listening) TextButton(onClick = { remote.disable() }, modifier = Modifier.testTag("watch.disable")) { Text("Disable watch control") }
             TextButton(onClick = { diagnostics = !diagnostics }) { Text(if (diagnostics) "Hide diagnostics" else "Connection diagnostics") }
             if (diagnostics) {
+                Text(remote.connection, Modifier.testTag("watch.status"))
                 Text(remote.replyStatus)
                 Text(remote.diagnostics)
                 remote.sessions.lastOrNull()?.let { Text("Last request: ${it.status}. ${it.detail}") }
@@ -93,16 +119,18 @@ fun GarminSetup(model: AppModel) {
                 TextButton(onClick = { remote.connect() }, modifier = Modifier.testTag("watch.reconnect")) { Text("Reconnect watch") }
             }
         }
-        if (busy) Text("Finish recording or sending before changing settings.")
+        if (busy) Text("Stop recording or wait for sending before changing settings.")
         error?.let { Text(it) }
+        TextButton(onClick = { configure = false }) { Text("Done") }
+        }
     }
     if (consent) AlertDialog(onDismissRequest = { consent = false }, title = { Text("Enable watch control?") },
-        text = { Text("For ${binding?.destination?.label ?: "the saved conversation"}, a fresh wrist Start will pause cooperative music and automatically record from the Bluetooth headset. Finish sends once to this conversation. The real recorder screen may wake above the lock screen; the phone stays locked. Display over other apps permits this screen to open; it does not grant microphone access. No overlay is drawn. A persistent notification lets you stop watch control.\n\nAfter enabling, choose New recording on watch. Force-stop, reboot or a locked account may require opening Ambulando and enabling again.") },
+        text = { Text("For ${binding?.destination?.label ?: "the saved conversation"}, a fresh wrist Record will pause cooperative music and automatically record from the Bluetooth headset. Stop sends once to this conversation. The real recorder screen may wake above the lock screen; the phone stays locked. Display over other apps permits this screen to open; it does not grant microphone access. No overlay is drawn. A persistent notification lets you stop watch control.\n\nAfter enabling, use Record on the watch. Force-stop, reboot or a locked account may require opening Ambulando and enabling again.") },
         confirmButton = { TextButton(onClick = {
             try {
                 val activity = generateSequence(context) { (it as? android.content.ContextWrapper)?.baseContext }.filterIsInstance<androidx.activity.ComponentActivity>().firstOrNull()
                 remote.enable(requireNotNull(activity) { "Open Settings in Ambulando." })
-                error = null; consent = false
+                error = null; consent = false; configure = false
             } catch (e: Exception) { error = e.message; consent = false }
         }) { Text("Enable automatic headset recording") } },
         dismissButton = { TextButton(onClick = { consent = false }) { Text("Cancel") } })
@@ -111,7 +139,7 @@ fun GarminSetup(model: AppModel) {
             WatchChoice("Account / workspace", workspaces.firstOrNull { it.id == selectedBoundary }?.let { workspaceLabel(it) }, "watch.workspaces", workspaces.map { it.boundary.id to workspaceLabel(it) }, "watch.workspace") { id -> selectedBoundary = id; selectedChannel = null; workspaces.firstOrNull { it.id == id }?.let { if (!it.enabled) model.setWorkspaceEnabled(it, true) } }
             WatchChoice("Destination", channels.firstOrNull { it.id == selectedChannel }?.let { labels[it.id] ?: it.name }, "watch.channels", channels.filter { watchDestinationAvailable(it) }.map { it.id to (labels[it.id] ?: it.name) }, "watch.channel") { selectedChannel = it }
             WatchChoice("Paired watch", remote.devices.firstOrNull { it.deviceIdentifier == selectedDevice }?.friendlyName, "watch.devices", remote.devices.map { it.deviceIdentifier.toString() to "${it.friendlyName} · ${it.status}" }, "watch.device") { selectedDevice = it.toLong() }
-            Text("An offline paired watch can be saved. Recording waits for its connection. Finish sends to this destination. Bluetooth headset required.")
+            Text("An offline paired watch can be saved. Recording waits for its connection. Stop sends to this destination. Bluetooth headset required.")
             Text(remote.connection)
             error?.let { Text(it) }
         }

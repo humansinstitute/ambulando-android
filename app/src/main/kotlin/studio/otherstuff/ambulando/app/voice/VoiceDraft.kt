@@ -36,6 +36,7 @@ data class VoiceDraft(
     val phase: VoicePhase = VoicePhase.STARTING, val startedAt: Long = System.currentTimeMillis(),
     val elapsedMillis: Long = 0, val startedElapsed: Long = 0, val error: String? = null,
     val headsetOnly: Boolean = false,
+    val prompt: String = "", // Pinned at Start; older/manual voice drafts keep their original attachment-only body.
     val objectId: String? = null, val uploadURL: String? = null, val fileId: String? = null,
 ) {
     val filename get() = "Voice-$id.m4a"
@@ -62,9 +63,9 @@ class VoiceDraftStore(private val directory: File) {
         AtomicFiles.write(journal, json.encodeToString(VoiceDraft.serializer(), draft).toByteArray())
         mutable.value = draft
     }
-    fun begin(destination: VoiceDestination, id: String = UUID.randomUUID().toString(), headsetOnly: Boolean = false): VoiceDraft {
+    fun begin(destination: VoiceDestination, id: String = UUID.randomUUID().toString(), headsetOnly: Boolean = false, prompt: String = ""): VoiceDraft {
         check(state.value == null) { "Finish or cancel the existing recording first." }
-        return VoiceDraft(id = id, destination = destination, headsetOnly = headsetOnly).also(::save)
+        return VoiceDraft(id = id, destination = destination, headsetOnly = headsetOnly, prompt = prompt).also(::save)
     }
     fun clear() {
         // Remove authority first; leftover bytes after a crash can never be sent to a guessed destination.
@@ -72,4 +73,10 @@ class VoiceDraftStore(private val directory: File) {
         state.value?.let { audio(it).delete() }
         mutable.value = null
     }
+}
+
+/** The stored draft owns the text, so changing Settings cannot alter an upload retry. */
+fun voiceMessageBody(draft: VoiceDraft, objectId: String): String {
+    val attachment = studio.otherstuff.ambulando.core.chat.StorageMarkdown.file(objectId, draft.filename)
+    return if (draft.prompt.isBlank()) attachment else draft.prompt + "\n\n" + attachment
 }

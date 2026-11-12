@@ -90,7 +90,7 @@ class VoiceRecordingService : Service() {
                             if (voice.state.value?.phase == VoicePhase.STARTING) {
                                 voice.drafts.save(draft.copy(phase = VoicePhase.RECORDING, startedAt = System.currentTimeMillis(), startedElapsed = startElapsed))
                                 manager.notify(NOTIFICATION, notificationBuilder.setContentTitle("Recording from Bluetooth headset")
-                                    .setContentText("Finish on watch to send; Stop keeps a draft")
+                                    .setContentText("Stop on watch to send; Stop here keeps a draft")
                                     .setUsesChronometer(true).setWhen(System.currentTimeMillis()).build())
                             }
                             handler.postDelayed({

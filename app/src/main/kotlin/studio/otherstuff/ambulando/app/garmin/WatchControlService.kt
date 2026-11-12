@@ -29,7 +29,7 @@ class WatchControlService : Service() {
             val stop = PendingIntent.getService(this, 3413, Intent(this, WatchControlService::class.java).setAction(STOP)
                 .putExtra(AppEnvironment.SAMPLE_EXTRA, model.environment.isSample), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val notification = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Watch control enabled").setContentText("Wrist Start opens the headset recorder; Finish sends to saved conversation")
+                .setContentTitle("Watch control enabled").setContentText("Record opens the headset recorder; Stop sends to saved conversation")
                 .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .addAction(0, "Stop watch control", stop).build()
             startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
@@ -42,7 +42,7 @@ class WatchControlService : Service() {
                         wasEnabled = control.enabled
                         manager.notify(NOTIFICATION, NotificationCompat.Builder(this@WatchControlService, CHANNEL).setSmallIcon(R.drawable.ic_notification)
                             .setContentTitle(if (wasEnabled) "Watch control enabled" else "Watch control needs setup")
-                            .setContentText(if (wasEnabled) "Wrist Start opens the headset recorder" else "Automatic recording is off. Open Ambulando Settings to enable again.")
+                            .setContentText(if (wasEnabled) "Record opens the headset recorder" else "Automatic recording is off. Open Ambulando Settings to enable again.")
                             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
                             .addAction(0, "Stop watch control", stop).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
                     }

@@ -53,6 +53,12 @@ class WatchPocketFlowTest {
             scenario.onActivity { a -> a.setContentView(androidx.compose.ui.platform.ComposeView(a).apply {
                 setContent { MaterialTheme { Column(Modifier.verticalScroll(rememberScrollState())) { GarminSetup(model) } } }
             }) }
+            assertEquals(DEFAULT_WATCH_PROMPT, remote.prompt)
+            WatchNativeConsent.waitFor("editable default prompt") { WatchNativeConsent.editPrompt(DEFAULT_WATCH_PROMPT, "Please transcribe and act on this voice message.") }
+            WatchNativeConsent.waitFor("save default prompt") { WatchNativeConsent.click("Save prompt") }
+            WatchNativeConsent.waitFor("prompt persisted") { remote.prompt == "Please transcribe and act on this voice message." }
+            assertEquals(remote.prompt, RemoteJournal(java.io.File(model.environment.baseDir, "garmin/remote.json")).data.prompt)
+            WatchNativeConsent.openSetup()
             // Explicit ordinary application consent, never inferred from pre-existing grants/binding.
             WatchNativeConsent.waitFor("enable button") { WatchNativeConsent.click("Enable watch control") }
             WatchNativeConsent.waitFor("explicit consent button") { WatchNativeConsent.click("Enable automatic headset recording") }
@@ -81,6 +87,7 @@ class WatchPocketFlowTest {
             input(fresh, "receipt", "--ez echoReply true")
             WatchNativeConsent.waitFor("native state") { remote.sessions.any { it.session == fresh && it.status == "error" } }
             val draft = requireNotNull(model.voice.state.value)
+            assertEquals(remote.prompt, draft.prompt)
             assertTrue(draft.headsetOnly)
             assertEquals(VoicePhase.INTERRUPTED, draft.phase)
             assertTrue("Actual missing headset error: ${draft.error}", draft.error.orEmpty().contains("Bluetooth"))
@@ -101,6 +108,7 @@ class WatchPocketFlowTest {
             shell("input keyevent KEYCODE_BACK")
             WatchNativeConsent.waitFor("main setup visible") { activity!!.hasWindowFocus() }
             instrumentation.runOnMainSync { model.voice.cancel() }
+            WatchNativeConsent.openSetup()
             WatchNativeConsent.waitFor("enable again") { WatchNativeConsent.click("Enable watch control") }
             WatchNativeConsent.waitFor("consent again") { WatchNativeConsent.click("Enable automatic headset recording") }
             WatchNativeConsent.waitFor("listener enabled again") { remote.enabled && remote.listening }
@@ -120,6 +128,7 @@ class WatchPocketFlowTest {
             assertTrue(remote.sessions.last().detail.contains("Display over other apps"))
             assertNull(model.voice.state.value)
             WatchNativeConsent.overlay(activity!!, true)
+            WatchNativeConsent.openSetup()
             WatchNativeConsent.waitFor("enable before channel revoke") { WatchNativeConsent.click("Enable watch control") }
             WatchNativeConsent.waitFor("consent before channel revoke") { WatchNativeConsent.click("Enable automatic headset recording") }
             WatchNativeConsent.waitFor("channel revoke listener ready") { remote.enabled && remote.listening }

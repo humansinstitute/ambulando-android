@@ -7,13 +7,14 @@ import studio.otherstuff.ambulando.core.crypto.AtomicFiles
 import java.io.File
 import java.util.UUID
 
+const val DEFAULT_WATCH_PROMPT = "Please review this message, fix errors in the voice recording and respond and action as appropriate."
 const val GARMIN_APP_ID = "4edbc3d41f924958b53a29734ba5a821"
 @Serializable data class RemoteBinding(val device: Long, val destination: VoiceDestination, val association: Int? = null)
 @Serializable data class RemoteSession(val session: String, val recording: String, val destination: VoiceDestination,
     val status: String = "waiting", val detail: String = "Confirm on phone", val revision: Int = 0)
 /** Consent names the complete binding, rather than a global microphone switch. Old installs default off. */
 @Serializable data class WatchConsent(val binding: RemoteBinding, val enabledAtSeconds: Long)
-@Serializable data class RemoteData(val binding: RemoteBinding? = null, val sessions: List<RemoteSession> = emptyList(), val consent: WatchConsent? = null)
+@Serializable data class RemoteData(val binding: RemoteBinding? = null, val sessions: List<RemoteSession> = emptyList(), val consent: WatchConsent? = null, val prompt: String = DEFAULT_WATCH_PROMPT)
 
 /** Main-thread actor journal. Tombstones never evict: full journal fails closed instead of replaying old Start. */
 class RemoteJournal(private val file: File) {
@@ -31,6 +32,12 @@ class RemoteJournal(private val file: File) {
         check(!damaged) { "Watch journal damaged. Remote disabled." }
         check(value == null || value.binding == data.binding) { "Saved watch destination changed." }
         write(data.copy(consent = value))
+    }
+    fun prompt(value: String) {
+        check(!damaged) { "Watch journal damaged. Settings unavailable." }
+        val text = value.trim()
+        require(text.isNotEmpty() && text.length <= 4000) { "Enter a prompt of 1–4000 characters." }
+        write(data.copy(prompt = text))
     }
     fun find(id: String) = data.sessions.firstOrNull { it.session == id }
     fun begin(id: String): RemoteSession {

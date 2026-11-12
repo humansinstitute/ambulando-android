@@ -12,11 +12,11 @@ class VoiceRecorder(private val context: Context, directory: File, private val s
     val drafts = VoiceDraftStore(directory)
     val state get() = drafts.state
     internal var service: VoiceRecordingService? = null
-    fun start(destination: VoiceDestination, id: String = java.util.UUID.randomUUID().toString(), headsetOnly: Boolean = false) {
+    fun start(destination: VoiceDestination, id: String = java.util.UUID.randomUUID().toString(), headsetOnly: Boolean = false, prompt: String = "") {
         check(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "Microphone permission is required. You can enable it in Android settings." }
         // Require notifications for a reliably visible Stop action, including on Android 13+.
         check(androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) { "Enable Ambulando notifications in Android settings to record with a visible Stop action." }
-        val draft = drafts.begin(destination, id, headsetOnly)
+        val draft = drafts.begin(destination, id, headsetOnly, prompt)
         try {
             ContextCompat.startForegroundService(context, Intent(context, VoiceRecordingService::class.java).putExtra("sample", sample).putExtra("recording", draft.id))
         } catch (e: Exception) {

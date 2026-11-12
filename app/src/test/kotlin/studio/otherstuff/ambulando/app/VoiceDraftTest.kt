@@ -80,4 +80,19 @@ class VoiceDraftTest {
             assertNull(VoiceDraftStore(directory).state.value)
         } finally { directory.deleteRecursively() }
     }
+    @Test fun watchPromptIsPinnedThroughRestartAndUploadRetryWhileOldDraftsStayUnchanged() {
+        val directory = Files.createTempDirectory("voice-prompt").toFile()
+        try {
+            val store = VoiceDraftStore(directory)
+            val pinned = store.begin(destination(), headsetOnly = true, prompt = "Original instruction")
+            store.save(pinned.copy(phase = VoicePhase.SENDING, objectId = "object"))
+            val restored = VoiceDraftStore(directory).state.value!!
+            assertEquals("Original instruction", restored.prompt)
+            assertTrue(voiceMessageBody(restored, "object").startsWith("Original instruction\n\n"))
+            assertEquals(restored.id, pinned.id)
+            val old = restored.copy(prompt = "")
+            assertEquals(studio.otherstuff.ambulando.core.chat.StorageMarkdown.file("object", old.filename), voiceMessageBody(old, "object"))
+        } finally { directory.deleteRecursively() }
+    }
+
 }

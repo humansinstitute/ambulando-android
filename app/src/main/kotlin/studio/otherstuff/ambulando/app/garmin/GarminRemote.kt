@@ -24,6 +24,8 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     var connection by mutableStateOf("Not connected"); private set
     var replyStatus by mutableStateOf("No phone reply sent yet"); private set
     var diagnostics by mutableStateOf("Phone ${BuildConfig.VERSION_CODE}: RX 0 / rejected 0"); private set
+    var prompt by mutableStateOf(journal.data.prompt); private set
+    fun savePrompt(value: String) { journal.prompt(value); prompt = journal.data.prompt }
     private var rx = 0
     private var rejected = 0
     private fun diagnostic(code: String, reject: Boolean = false) {
@@ -312,7 +314,7 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
             authorize(s.destination)
             model.watchDelivery(s.destination)
             android.util.Log.i("WatchRecorder", "focused/resumed; keyguardLocked=${context.getSystemService(KeyguardManager::class.java).isKeyguardLocked}; interactive=${context.getSystemService(android.os.PowerManager::class.java).isInteractive}")
-            model.voice.start(s.destination, s.recording, headsetOnly = true)
+            model.voice.start(s.destination, s.recording, headsetOnly = true, prompt = prompt)
             update(id, "waiting", "Verifying Bluetooth microphone")
             context.getSystemService(NotificationManager::class.java).cancel(3410)
         } catch (e: Exception) { update(id, "error", e.message ?: "Recording could not start") }
