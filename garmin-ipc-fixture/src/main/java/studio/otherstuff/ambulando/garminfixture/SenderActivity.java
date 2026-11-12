@@ -12,8 +12,12 @@ public class SenderActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         try {
+            String target = getIntent().getStringExtra("target");
+            if (target == null) target = "studio.otherstuff.ambulando.android";
+            if (!target.equals("studio.otherstuff.ambulando.android") && !target.equals("studio.otherstuff.ambulando.android.watchtest")) throw new IllegalArgumentException("Unsupported test target");
+            com.garmin.android.apps.connectmobile.connectiq.ConnectIQService.targetPackage = target;
             if (getIntent().getBooleanExtra("verify", false)) {
-                ClassLoader loader = createPackageContext("studio.otherstuff.ambulando.android", CONTEXT_INCLUDE_CODE | CONTEXT_IGNORE_SECURITY).getClassLoader();
+                ClassLoader loader = createPackageContext(target, CONTEXT_INCLUDE_CODE | CONTEXT_IGNORE_SECURITY).getClassLoader();
                 android.os.Parcelable[] values = { new IQDevice(71L, "Canonical probe"), new IQApp("4edbc3d41f924958b53a29734ba5a821"), new IQMessage(new byte[]{1}, "fixture", "fixture") };
                 for (android.os.Parcelable value : values) {
                     String name = value.getClass().getName();
@@ -31,7 +35,7 @@ public class SenderActivity extends Activity {
             String session = getIntent().getStringExtra("session");
             String op = getIntent().getStringExtra("op");
             Map<String, Object> command = new HashMap<>();
-            command.put("v", 1); command.put("s", session); command.put("op", op); command.put("c", session + "_" + op);
+            command.put("b", 39); command.put("v", 1); command.put("s", session); command.put("op", op); command.put("c", session + "_" + op);
             if (getIntent().getBooleanExtra("echoReply", false)) {
                 Map<String, Object> reply = com.garmin.android.apps.connectmobile.connectiq.ConnectIQService.lastReply;
                 if (reply == null) throw new IllegalStateException("No phone reply received");
@@ -43,7 +47,7 @@ public class SenderActivity extends Activity {
                 if ("session".equals(bad)) command.put("s", "stale");
                 if ("build".equals(bad)) command.put("b", 37);
             }
-            Intent message = new Intent("com.garmin.android.connectiq.INCOMING_MESSAGE").setPackage("studio.otherstuff.ambulando.android");
+            Intent message = new Intent("com.garmin.android.connectiq.INCOMING_MESSAGE").setPackage(target);
             if (getIntent().getBooleanExtra("malformed", false)) {
                 message.putExtra("com.garmin.android.connectiq.EXTRA_REMOTE_DEVICE", new IQApp("wrong-type"));
             } else {

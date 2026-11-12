@@ -75,4 +75,22 @@ class WatchRepliesTest {
         assertFalse(h.lane.receipt(7, old)); assertEquals(2, h.sent.size)
         h.time = 7_000; h.lane.tick(); assertEquals(2, h.sent.size)
     }
+    @Test fun appliedReceiptCarriesExactStartSnapshotAndNeverHelloAsStart() {
+        val snapshots = mutableListOf<Map<String, Any>>()
+        var sent: Map<String, Any>? = null
+        val lane = WatchReplies({ 0L }, { "unguessable" }, { _, packet, done -> sent = packet; done(true) }, {}, {}, { _, packet -> snapshots += packet })
+        val hello = mapOf("s" to "hello", "state" to "hello", "r" to 0, "b" to 38)
+        lane.offer(7, hello)
+        assertTrue(lane.receipt(7, sent!!))
+        val start = mapOf("s" to "new", "state" to "waiting", "r" to 1, "b" to 38, "c" to "new_start")
+        lane.offer(7, start)
+        assertFalse(lane.receipt(7, snapshots[0]))
+        assertEquals(1, snapshots.size)
+        assertTrue(lane.receipt(7, sent!!))
+        assertEquals("new_start", snapshots.last()["c"])
+        assertEquals(1, snapshots.last()["r"])
+        lane.reset()
+        assertFalse(lane.receipt(7, sent!!))
+    }
+
 }

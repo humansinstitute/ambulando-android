@@ -9,6 +9,7 @@ import java.util.*;
 /** Emulator-only external process implementing the real SDK Binder contract. */
 public class ConnectIQService extends Service {
     public static Map<String, Object> lastReply;
+    public static String targetPackage = "studio.otherstuff.ambulando.android";
     static IQDevice device() {
         IQDevice device = new IQDevice(71L, "Fixture connected watch");
         // Real known-device Parcelables can retain their constructor-default UNKNOWN.
@@ -40,7 +41,7 @@ public class ConnectIQService extends Service {
                         android.util.Log.i("GarminIpcFixture", "Phone reply device=" + d.getDeviceIdentifier() + " app=" + app.getApplicationId() + " session=" + field(data, "s") + " state=" + field(data, "state"));
                     }
                 }
-                Intent result = new Intent("com.garmin.android.connectiq.SEND_MESSAGE_STATUS").setPackage("studio.otherstuff.ambulando.android");
+                Intent result = new Intent("com.garmin.android.connectiq.SEND_MESSAGE_STATUS").setPackage(targetPackage);
                 result.putExtra("com.garmin.android.connectiq.EXTRA_REMOTE_DEVICE", d);
                 result.putExtra("com.garmin.android.connectiq.EXTRA_APPLICATION_ID", app.getApplicationId());
                 result.putExtra("com.garmin.android.connectiq.EXTRA_STATUS", 0);

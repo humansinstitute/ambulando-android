@@ -146,6 +146,16 @@ internal class GarminLink(
         listening = null; registered = false; active = null; watchConfirmed = false
     }
 
+    fun stop() {
+        ++generation
+        runCatching { clear() }
+        runCatching { transport?.shutdown() }
+        transport = null
+        phase = Phase.IDLE
+        message = "Watch control stopped. Saved destination and drafts kept."
+        changed()
+    }
+
     private fun fail(reason: String) {
         ++generation // Ignore callbacks from a timed-out/shut-down initialization.
         runCatching { clear() }

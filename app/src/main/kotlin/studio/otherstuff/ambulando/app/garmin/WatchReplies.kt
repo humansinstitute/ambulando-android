@@ -9,6 +9,7 @@ internal class WatchReplies(
     private val send: (Long, Map<String, Any>, (Boolean) -> Unit) -> Unit,
     private val status: (String) -> Unit,
     private val confirmed: (Long) -> Unit,
+    private val applied: (Long, Map<String, Any>) -> Unit = { _, _ -> },
 ) {
     private data class Flight(val device: Long, val packet: Map<String, Any>, val started: Long, val receiptRequired: Boolean,
         var attempts: Int = 0, var callbackPending: Boolean = false, var received: Boolean = false)
@@ -62,6 +63,7 @@ internal class WatchReplies(
             integer(m["r"]) != f.packet["r"] || build < 38 || f.received) return false
         f.received = true
         confirmed(device)
+        applied(device, f.packet)
         status("Wrist confirmed phone ${f.packet["b"]} / watch $build, revision ${f.packet["r"]}")
         if (!f.callbackPending) advance()
         return true

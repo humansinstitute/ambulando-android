@@ -91,4 +91,31 @@ class GarminRemoteTest {
             assertTrue(recovered.audio(draft).exists())
         } finally { dir.deleteRecursively() }
     }
+    @Test fun automaticConsentIsAbsentOnUpgradeAndInvalidatedByAnyBindingChange() {
+        val dir = Files.createTempDirectory("watch-consent").toFile()
+        try {
+            val j = journal(dir)
+            val binding = RemoteBinding(7, destination())
+            j.bind(binding)
+            assertNull(j.data.consent)
+            j.consent(WatchConsent(binding, 100))
+            assertEquals(WatchConsent(binding, 100), journal(dir).data.consent)
+            j.bind(binding.copy(destination = destination("other")))
+            assertNull(j.data.consent)
+            assertThrows(IllegalStateException::class.java) { j.consent(WatchConsent(binding, 101)) }
+            j.consent(WatchConsent(j.data.binding!!, 102))
+            j.consent(null)
+            assertEquals("other", journal(dir).data.binding!!.destination.channelId)
+        } finally { dir.deleteRecursively() }
+    }
+    @Test fun queuedAndDuplicateStartsCannotBecomeFreshAfterEnablingOrRestart() {
+        assertFalse(freshWatchStart("100_1234", 100, 101))
+        assertFalse(freshWatchStart("99_1234", 100, 101))
+        assertTrue(freshWatchStart("101_1234", 100, 101))
+        assertFalse(freshWatchStart("101_1234", 102, 103))
+        assertFalse(freshWatchStart("watch_1234", 100, 101))
+        assertFalse(freshWatchStart("200_1234", 100, 101))
+        assertFalse(freshWatchStart("101_1234", 100, 222))
+    }
+
 }

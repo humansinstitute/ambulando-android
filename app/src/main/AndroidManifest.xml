@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -27,6 +29,7 @@
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".garmin.WatchRecordingActivity" android:exported="false" />
+        <service android:name=".garmin.WatchControlService" android:exported="false" android:foregroundServiceType="connectedDevice" android:stopWithTask="false" />
         <service android:name=".voice.VoiceRecordingService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="false" />
         <service android:name=".push.AmbulandoPushService" android:exported="false">
             <intent-filter>

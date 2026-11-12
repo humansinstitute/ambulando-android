@@ -23,7 +23,13 @@ class VoiceRecorder(private val context: Context, directory: File, private val s
             drafts.save(draft.copy(phase = VoicePhase.INTERRUPTED, error = "Could not start microphone recording. Return to Ambulando and retry."))
         }
     }
-    fun stop() { service?.finish() }
+    fun stop() {
+        service?.finish()
+        // A queued service start must not resurrect capture after consent/focus was revoked.
+        state.value?.takeIf { it.phase == VoicePhase.STARTING }?.let {
+            drafts.save(it.copy(phase = VoicePhase.INTERRUPTED, error = "Recording start cancelled before microphone activation."))
+        }
+    }
     fun cancel() {
         check(state.value?.phase != VoicePhase.SENDING) { "Wait for Send to finish; queued messages can be removed in the conversation." }
         service?.finish()

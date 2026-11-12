@@ -7,7 +7,8 @@ plugins {
 }
 
 // Only actual operator-provided public Android config enables Firebase. Missing config builds truthfully unavailable.
-if (file("google-services.json").isFile) apply(plugin = "com.google.gms.google-services")
+val isolatedWatchTest = providers.gradleProperty("isolatedWatchTest").orNull == "true"
+if (!isolatedWatchTest && file("google-services.json").isFile) apply(plugin = "com.google.gms.google-services")
 
 android {
     namespace = "studio.otherstuff.ambulando.app"
@@ -45,6 +46,7 @@ android {
     }
 
     buildTypes {
+        debug { if (isolatedWatchTest) applicationIdSuffix = ".watchtest" }
         release {
             // Public export history is separate from private development history.
             vcsInfo { include = false }

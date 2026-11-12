@@ -99,3 +99,17 @@ bindings remain in private no-backup storage and are excluded from diagnostics. 
 read from the stored trusted Tower; they never follow payload URLs or restore a signer during delivery. Workspace
 opt-out rejects local callbacks/taps immediately, while provider-queued generic alerts may still arrive. Identity
 removal records a durable token reset so a later actor cannot reuse an offline old token. See [setup](android-push-setup.md).
+
+## Optional watch control
+
+Watch control is off until you consent for the exact saved watch and destination. Its connected-device foreground
+service maintains the Garmin SDK listener with a persistent Stop notification; it holds no microphone. The optional
+Display over other apps grant permits the real opaque recorder Activity to open above the lock screen. The app draws
+no overlay and never dismisses keyguard. A fresh Start needs the watch application's exact nonce receipt, current
+consent/grants, and an actually resumed/focused recorder before the microphone service starts. The display may wake
+in the pocket. Headset input must be verified before the watch reports recording; there is no phone microphone fallback.
+
+Disable preserves the saved setup, replay tombstones and retained audio while stopping the listener and automatic
+capture authority. Grant revocation invalidates capture consent; a connection-only listener may remain to return a
+setup error until you stop it. A cold listener never restores the interactive signing identity or an interrupted
+microphone. Force-stop, reboot and locked credentials can require reopening the app and enabling again.

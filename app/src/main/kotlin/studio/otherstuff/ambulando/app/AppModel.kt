@@ -15,7 +15,7 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /** Retained session owner. UI observes SQLite; all requests use the bounded sync engine. */
-class AppModel(val environment: AppEnvironment, private val androidContext: android.content.Context, private val dependencies: AppSessionDependencies? = null) : studio.otherstuff.ambulando.app.background.BackgroundEntryPoint {
+class AppModel(val environment: AppEnvironment, private val androidContext: android.content.Context, private val dependencies: AppSessionDependencies? = null, private val restoreInteractiveIdentity: Boolean = true) : studio.otherstuff.ambulando.app.background.BackgroundEntryPoint {
     internal val androidPush get() = if (BuildConfig.GRANDPARENT_CHAT) null else (androidContext.applicationContext as? AmbulandoApplication)?.push
     internal var pendingPushTap by mutableStateOf<Triple<String, String, Long>?>(null)
     internal var pushDestination by mutableStateOf<Pair<String, studio.otherstuff.ambulando.core.notifications.NotificationDestination>?>(null)
@@ -169,8 +169,18 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         browser.updateLocked(!active || identityState !is IdentityState.Unlocked)
         browser.tabs.forEach { if (active) it.webView.onResume() else it.webView.onPause() }
         runStructureTicker(active)
-        runtimes.setForeground(active)
+        updateRuntimeVisibility()
         if (active) { networkReturn.start(); resumeEnabled(); refresh() } else { networkReturn.stop() }
+    }
+    private var watchDelivery: studio.otherstuff.ambulando.app.voice.VoiceDestination? = null
+    /** A watch recording keeps only its original workspace stream alive for the server acknowledgement. */
+    fun watchDelivery(destination: studio.otherstuff.ambulando.app.voice.VoiceDestination?) = act {
+        watchDelivery = destination
+        updateRuntimeVisibility()
+    }
+    private suspend fun updateRuntimeVisibility() {
+        runtimes.setForeground(foreground)
+        if (!foreground) runtimeMap.values.firstOrNull { watchDelivery?.matches(it.connection, it.workspace) == true }?.setForeground(true)
     }
     private var structureTicker: kotlinx.coroutines.Job? = null
     /**
@@ -448,7 +458,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             }
         }
         act {
-            identity.resumeSession(); identityState = identity.state()
+            if (restoreInteractiveIdentity) identity.resumeSession()
+            identityState = identity.state()
             if (sample != null) {
                 if (identityState == IdentityState.None) {
                     val secret = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }

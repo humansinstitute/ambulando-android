@@ -1,17 +1,13 @@
 package studio.otherstuff.ambulando.app.garmin
 
 import android.os.Bundle
-import android.Manifest
-import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import studio.otherstuff.ambulando.app.*
 
@@ -19,17 +15,23 @@ import studio.otherstuff.ambulando.app.*
 class WatchRecordingActivity : ComponentActivity() {
     private lateinit var model: AppModel
     private var attempted = false
-    private var requestedStart = false
+    private var manualRequested = false
     private var explanation by mutableStateOf<String?>(null)
-    @Suppress("InvalidFragmentVersionForActivityResult") // ComponentActivity; no Fragment integration.
-    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result.isNotEmpty() && result.values.all { it }) { explanation = null; requestedStart = true; window.decorView.post { startWhenVisible() } }
-        else explanation = "Recording permission denied. Allow microphone, nearby devices and notifications in Android settings, then tap Start again."
+    @Suppress("InvalidFragmentVersionForActivityResult")
+    private val permissions = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (result.isNotEmpty() && result.values.all { it }) { manualRequested = true; window.decorView.post { startWhenVisible() } }
+        else explanation = "Allow microphone, nearby devices and notifications in Android Settings, then retry Start."
     }
     private fun startWhenVisible() {
-        if (!requestedStart || !hasWindowFocus() || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
-        requestedStart = false
-        intent.getStringExtra("session")?.let { model.garmin.confirm(it, this) }
+        if (!hasWindowFocus() || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        if (manualRequested && !model.garmin.enabled) {
+            manualRequested = false
+            intent.getStringExtra("session")?.let { model.garmin.confirm(it, this, manual = true) }
+            return
+        }
+        if (attempted) return
+        attempted = true
+        if (model.garmin.enabled) intent.getStringExtra("session")?.let { model.garmin.confirm(it, this) }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,19 +48,17 @@ class WatchRecordingActivity : ComponentActivity() {
                 Text(s?.status ?: "error", style = MaterialTheme.typography.headlineSmall)
                 Text(s?.detail ?: "Return to Ambulando and retry")
                 Text("Bluetooth headset only. Finish on watch sends to the bound conversation.")
-                explanation?.let { Text(it) }
                 if (s?.status == "waiting" && draft == null) {
-                    Text("Waiting for Start on this phone. Optional watch access is not required.")
-                    Button(onClick = {
-                        explanation = null
+                    if (model.garmin.enabled) Text("Opening the headset microphone automatically. No phone tap is required.")
+                    else Button(onClick = {
                         val required = buildList {
-                            add(Manifest.permission.RECORD_AUDIO)
-                            if (android.os.Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
-                            if (android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-                        }.filter { ContextCompat.checkSelfPermission(this@WatchRecordingActivity, it) != PackageManager.PERMISSION_GRANTED }
-                        if (required.isEmpty()) { requestedStart = true; startWhenVisible() }
-                        else permissions.launch(required.toTypedArray())
+                            add(android.Manifest.permission.RECORD_AUDIO)
+                            if (android.os.Build.VERSION.SDK_INT >= 31) add(android.Manifest.permission.BLUETOOTH_CONNECT)
+                            if (android.os.Build.VERSION.SDK_INT >= 33) add(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }.filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+                        if (required.isEmpty()) { manualRequested = true; startWhenVisible() } else permissions.launch(required.toTypedArray())
                     }) { Text("Start headset recording") }
+                    explanation?.let { Text(it) }
                     Button(onClick = { model.garmin.dismiss(s.session) }) { Text("Cancel request") }
                 }
                 if (s?.status in setOf("cancelled", "error", "sent")) Text("Check Status on watch, then choose New to make a new request. Any retained audio stays in its original conversation.")
@@ -67,15 +67,9 @@ class WatchRecordingActivity : ComponentActivity() {
         }
     }
     override fun onResume() { super.onResume(); model.foreground(true); window.decorView.post { startWhenVisible() } }
-    override fun onPause() { model.foreground(false); super.onPause() }
+    override fun onPause() { if (attempted && model.garmin.enabled) intent.getStringExtra("session")?.let { model.garmin.screenHidden(it) }; model.foreground(false); super.onPause() }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        startWhenVisible()
-        if (!hasFocus || attempted || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
-        attempted = true
-        val session = intent.getStringExtra("session") ?: return
-        val permissions = listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.POST_NOTIFICATIONS)
-        if (permissions.any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) return
-        if (model.garmin.canOpenRecordingScreen()) model.garmin.confirm(session, this)
+        if (hasFocus) startWhenVisible() else if (attempted && model.garmin.enabled) intent.getStringExtra("session")?.let { model.garmin.screenHidden(it) }
     }
 }

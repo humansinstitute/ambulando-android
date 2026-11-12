@@ -62,7 +62,7 @@ class GarminSettingsTest {
                 model.voice.drafts.save(studio.otherstuff.ambulando.app.voice.VoiceDraft(destination = originalDestination, phase = studio.otherstuff.ambulando.app.voice.VoicePhase.RECORDING))
             }
             compose.onNodeWithTag("watch.setup").assertIsNotEnabled()
-            compose.onNodeWithTag("watch.disable").assertIsNotEnabled()
+            compose.onNodeWithTag("watch.enable").assertIsNotEnabled()
             compose.runOnIdle { model.voice.drafts.save(model.voice.state.value!!.copy(phase = studio.otherstuff.ambulando.app.voice.VoicePhase.INTERRUPTED, error = "Retained fixture draft")) }
             val retainedDraft = model.voice.state.value!!
             val other = model.channels.first { it.id != SampleIds.GENERAL && !it.accessRemoved }.id
@@ -70,9 +70,9 @@ class GarminSettingsTest {
             compose.runOnIdle { assertEquals(SampleIds.GENERAL, model.garmin.binding!!.destination.channelId) }
             choose(other)
             compose.runOnIdle { assertEquals(other, model.garmin.binding!!.destination.channelId) }
-            compose.onNodeWithTag("watch.disable").performScrollTo().performClick()
-            compose.runOnIdle { assertEquals(retainedDraft, model.voice.state.value); assertEquals(originalDestination, model.voice.state.value!!.destination); assertNull(RemoteJournal(File(model.environment.baseDir, "garmin/remote.json")).data.binding) }
-            compose.onNodeWithText("No watch destination configured").assertExists()
+            compose.runOnIdle { model.garmin.disable() }
+            compose.runOnIdle { assertEquals(retainedDraft, model.voice.state.value); assertEquals(originalDestination, model.voice.state.value!!.destination); assertEquals(model.garmin.binding, RemoteJournal(File(model.environment.baseDir, "garmin/remote.json")).data.binding); assertNull(model.garmin.journal.data.consent) }
+            compose.onNodeWithTag("watch.saved").assertExists()
         }
     }
 }

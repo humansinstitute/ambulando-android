@@ -18,7 +18,7 @@ class AmbulandoApplication : Application(), BackgroundHost {
     var activeModel: AppModel? = null; private set
     private val models = mutableMapOf<Boolean, AppModel>()
     /** One session owner per storage environment for the process, including time granted to WorkManager. */
-    fun model(environment: AppEnvironment): AppModel = models.getOrPut(environment.isSample) { AppModel(environment, this) }.also { activeModel = it }
+    fun model(environment: AppEnvironment, restoreInteractiveIdentity: Boolean = true): AppModel = models.getOrPut(environment.isSample) { AppModel(environment, this, restoreInteractiveIdentity = restoreInteractiveIdentity) }.also { activeModel = it }
     override suspend fun backgroundEntryPoint(): BackgroundEntryPoint {
         activeModel?.takeUnless { it.environment.isSample }?.let { return it }
         return object : BackgroundEntryPoint {

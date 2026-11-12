@@ -58,6 +58,7 @@ class VoiceRecordingService : Service() {
                 val notification = notificationBuilder.build()
                 if (android.os.Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
                 else startForeground(NOTIFICATION, notification)
+                if (draft.headsetOnly) android.util.Log.i("WatchRecorder", "microphone FGS promoted")
                 @Suppress("DEPRECATION")
                 val capture = if (android.os.Build.VERSION.SDK_INT >= 31) MediaRecorder(this@VoiceRecordingService) else MediaRecorder()
                 recorder = capture
