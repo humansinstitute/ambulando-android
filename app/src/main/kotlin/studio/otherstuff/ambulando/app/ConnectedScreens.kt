@@ -5,6 +5,8 @@ package studio.otherstuff.ambulando.app
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.content.*
+import studio.otherstuff.ambulando.app.ui.chat.ComposerRichInput
+import studio.otherstuff.ambulando.app.ui.chat.composerImagePasteMenu
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -59,6 +61,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         } }; return
     }
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
+    val uploads = remember(c.id, w.id) { model.uploads }
     val services = LocalAppServices.current
     val scopedTextAttachments = remember(c.id, c.origin, c.signerNpub, w.id) { model.textAttachments(c, w.id) }
     var visibleMessageLimit by remember(target) { mutableIntStateOf(50) }
@@ -93,7 +96,29 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     val mentionResults by produceState<List<studio.otherstuff.ambulando.core.store.MentionCandidate>?>(null, w.id, activeMention?.query) {
         value = activeMention?.let { model.store.reader.mentionCandidates(w.id, it.query, viewerNpub = c.signerNpub) }
     }
-    val uploadRows by model.uploads.items.collectAsState()
+    val threadRemoved by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.isAccessRemoved(w.id, FlaggedTable.THREADS, it) } ?: false } }.collectAsState(false)
+    var editing by remember(target) { mutableStateOf<MessageRecord?>(null) }
+    var replyValue by remember(target) { mutableStateOf<androidx.compose.ui.text.input.TextFieldValue?>(null) }
+    var replyMentions by remember(target) { mutableStateOf(emptyList<Mention>()) }
+    var editSession by remember(target) { mutableStateOf<String?>(null) }
+    var editSaving by remember(target) { mutableStateOf(false) }
+    val editUploads = remember(target) { mutableSetOf<String>() }
+    fun persistComposer() { if (editing == null) model.saveDraft(target, text, mentions) }
+    fun finishEdit() {
+        // Remove edit-owned jobs before restoring the reply. A late completion cannot find its token there.
+        editUploads.toList().forEach { uploads.remove(it) }; editUploads.clear()
+        replyValue?.let { field.value = it }; mentions = replyMentions
+        editing = null; editSession = null; editSaving = false; replyValue = null; justAdded = null
+    }
+    fun beginEdit(message: MessageRecord) {
+        if (!ready || message.readOnly || message.accessRemoved || message.deleted || message.senderNpub != c.signerNpub) return
+        if (editing != null) finishEdit()
+        replyValue = field.value; replyMentions = mentions
+        editing = message; editSession = java.util.UUID.randomUUID().toString()
+        val decoded = MentionCodec.decode(message.body)
+        text = decoded.text; mentions = decoded.mentions
+    }
+    val uploadRows by uploads.items.collectAsState()
     val uploadHost = remember(target) { object : studio.otherstuff.ambulando.core.chat.UploadTokenHost {
         override val uploadTarget = target
         override val uploadText get() = text
@@ -101,45 +126,96 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             // The finished upload's Markdown takes the placeholder's place; the caret stays where the person is typing.
             val current = field.value
             val selection = studio.otherstuff.ambulando.core.docs.TextRange(current.selection.min, current.selection.length)
-            val edit = ComposerText.replacing(token, replacement, current.text, selection) ?: return false
+            val edit = ComposerText.replacing(token, replacement, current.text, selection)
+            if (edit == null) {
+                // A reply upload may finish while its draft is suspended behind a message edit.
+                val reply = replyValue ?: return false
+                val changed = ComposerText.replacing(token, replacement, reply.text, studio.otherstuff.ambulando.core.docs.TextRange(reply.selection.min, reply.selection.length)) ?: return false
+                replyValue = reply.copy(text = changed.text, selection = changed.selection?.let { androidx.compose.ui.text.TextRange(it.location, it.end) } ?: reply.selection)
+                model.saveDraft(target, changed.text, replyMentions); return true
+            }
             field.value = current.copy(text = edit.text, selection = edit.selection?.let { androidx.compose.ui.text.TextRange(it.location, it.end) } ?: current.selection)
-            model.saveDraft(target, text, mentions); return true
+            persistComposer(); return true
         }
     } }
-    LaunchedEffect(ready, uploadHost) { if (ready) model.uploads.attach(uploadHost) }
-    DisposableEffect(uploadHost) { onDispose { model.uploads.detach(uploadHost) } }
-    fun pasteUri(uri: android.net.Uri) {
-        if (!ready || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true) return
-        if (uri != null) {
-            val type = context.contentResolver.getType(uri) ?: "application/octet-stream"
-            val image = type.startsWith("image/")
-            val item = PastedItem(if (image) UploadToken.Kind.IMAGE else UploadToken.Kind.FILE, mimeType = type, read = {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBounded(32 * 1024 * 1024) } ?: error("Cannot read attachment")
-                require(bytes.size <= 32 * 1024 * 1024) { "Attachment too large" }
-                if (image) studio.otherstuff.ambulando.app.media.ImagePrivacy.strippedPng(bytes) else bytes
-            })
-            val tokens = model.uploads.paste(listOf(item), target, w.appNpub, "message")
-            // Placeholders go where the caret is, so the image is positioned in the message and its Markdown stays editable.
-            field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.placeholders(field.value, tokens); model.saveDraft(target, text, mentions)
+    LaunchedEffect(ready, uploadHost) { if (ready) uploads.attach(uploadHost) }
+    DisposableEffect(uploadHost) { onDispose { uploads.detach(uploadHost) } }
+    fun insertUploads(items: List<PastedItem>) {
+        val tokens = uploads.paste(items, target, w.appNpub, "message")
+        if (editing != null) tokens.flatMap { UploadToken.ids(it) }.forEach { editUploads.add(it.id) }
+        field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.placeholders(field.value, tokens)
+        persistComposer()
+    }
+    fun pasteUri(uri: android.net.Uri, release: () -> Unit = {}): Boolean {
+        if (!ready || !writeAllowed || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true ||
+            threadRemoved) return false
+        if (uri.scheme != "content") return false
+        // Provider queries, reads and image decoding all run in the upload coordinator's IO staging step.
+        insertUploads(listOf(PastedItem(UploadToken.Kind.IMAGE, read = {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBounded(32 * 1024 * 1024) } ?: error("Cannot read attachment")
+            studio.otherstuff.ambulando.app.media.ImagePrivacy.strippedPng(bytes)
+        }, release = release)))
+        return true
+    }
+    fun pastedText(value: String) {
+        if (editing == null) model.addPastedText(target, value) { justAdded = it }
+        else insertUploads(listOf(PastedItem(UploadToken.Kind.FILE, suggestedName = "Pasted text.txt", mimeType = "text/plain; charset=utf-8", read = { value.toByteArray(Charsets.UTF_8) })))
+    }
+    fun changeValue(value: androidx.compose.ui.text.input.TextFieldValue) {
+        if (value.text == field.value.text) { field.value = value; return }
+        var decision = ComposerPaste.decide(field.value.text, value.text, selectionStart = field.value.selection.start, selectionEnd = field.value.selection.end)
+        if (decision == ComposerPaste.Decision.Reject) {
+            val clip = context.getSystemService(android.content.ClipboardManager::class.java).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+            decision = ComposerPaste.decide(field.value.text, value.text, clip, field.value.selection.start, field.value.selection.end)
+        }
+        when (decision) {
+            ComposerPaste.Decision.Accept -> { field.value = value; if (ready) persistComposer() }
+            ComposerPaste.Decision.Reject -> Unit
+            is ComposerPaste.Decision.Attach -> if (ready) pastedText(decision.text)
         }
     }
-    val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> uri?.let(::pasteUri) }
-    val receiver = remember(target) { ReceiveContentListener { content -> content.consume { item ->
-        val uri = item.uri
-        if (uri != null && ready) { pasteUri(uri); true } else false
-    } } }
+    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+    fun pasteClipboard() {
+        if (!ready) return
+        val clip = clipboard.primaryClip ?: return
+        val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+        if (uris.isNotEmpty()) uris.take(ComposerUploads.MAX_ITEMS_PER_PASTE).forEach { pasteUri(it) }
+        else clip.getItemAt(0).text?.toString()?.let { pasted ->
+            val current = field.value
+            val next = current.text.replaceRange(current.selection.min, current.selection.max, pasted)
+            when (val decision = ComposerPaste.decide(current.text, next, pasted, current.selection.start, current.selection.end)) {
+                ComposerPaste.Decision.Accept -> changeValue(androidx.compose.ui.text.input.TextFieldValue(next, androidx.compose.ui.text.TextRange(current.selection.min + pasted.length)))
+                is ComposerPaste.Decision.Attach -> pastedText(decision.text)
+                ComposerPaste.Decision.Reject -> Unit
+            }
+        }
+    }
+    var pickerOwner by remember { mutableStateOf<Pair<ChatTarget, String?>?>(null) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        val owner = pickerOwner; pickerOwner = null
+        val session = editSession
+        if (uri != null && ready && owner == (target to session)) draftScope.launch {
+            val type = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { context.contentResolver.getType(uri) ?: "application/octet-stream" }
+            if (session != editSession || !writeAllowed || threadRemoved || w.accessRemoved) return@launch
+            if (type.startsWith("image/")) pasteUri(uri)
+            else insertUploads(listOf(PastedItem(UploadToken.Kind.FILE, mimeType = type, read = {
+                context.contentResolver.openInputStream(uri)?.use { it.readBounded(32 * 1024 * 1024) } ?: error("Cannot read attachment")
+            })))
+        }
+    }
+    val receiver = ReceiveContentListener { content -> content.consume { item -> item.uri?.let { pasteUri(it) } ?: false } }
+    DisposableEffect(target) { onDispose { editUploads.toList().forEach { uploads.remove(it) } } }
     LaunchedEffect(target) { val saved = model.store.reader.draft(target); text = saved?.text ?: ""; mentions = saved?.mentions ?: emptyList(); ready = true
         if (threadId != null) model.sync.refreshThread(c, w, channel, threadId) else model.sync.catchUpChannel(c, w, channel)
     }
     val ids = messages.map { it.id }
     LaunchedEffect(target, ids) { if (threadId != null) model.markViewed(ViewStateRecord.ResourceType.THREAD, threadId); if (!w.accessRemoved && model.channels.firstOrNull { it.id == channel }?.accessRemoved != true) model.sync.refreshReactions(c, w, threadId ?: channel, ids) }
-    val threadRemoved by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.isAccessRemoved(w.id, FlaggedTable.THREADS, it) } ?: false } }.collectAsState(false)
     val removed = !writeAllowed || threadRemoved || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true
     val richActions = storedRichActions(model, !removed)
-    // The message dialogs live here, outside the list: a row that scrolls away must not take an open dialog with it.
-    var editing by remember(target) { mutableStateOf<MessageRecord?>(null) }
+    // Editing and delete confirmation belong to the screen, independently of recycled message rows.
     var deleting by remember(target) { mutableStateOf<MessageRecord?>(null) }
-    val composing = ready && !removed
+    LaunchedEffect(removed) { if (removed && editing != null) finishEdit() }
+    val composing = ready && !removed && !editSaving
     val voiceAction = if (!family) studio.otherstuff.ambulando.app.voice.rememberVoiceRecorderAction(model, c, w, target, composing) else null
     val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
     val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
@@ -205,9 +281,10 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                         if (threadId == null && message.threadId != null && post.replyCount > 0) RepliesBar(post.replyCount, post.lastReplyAt, Modifier.testTag("chat.thread.${message.threadId}"))
                         if (!family && !message.deleted) ChatMessageReactions(model, message, !removed, Modifier.padding(start = studio.otherstuff.ambulando.app.ui.chat.MessageTextInset, end = 16.dp))
                     }
-                    if (!family) ChatMessageControls(model, message, !removed, onEdit = { editing = it }, onDelete = { deleting = it },
+                    if (!family) ChatMessageControls(model, message, !removed, onEdit = { beginEdit(it); composerFocus.requestFocus(); keyboard?.show() }, onDelete = { deleting = it },
                         modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).offset(x = (-4).dp, y = (-4).dp))
                 }
+                ChatMessageEditStatus(model, message)
                 }
             }
             items(pending, key = { it.id }) { item ->
@@ -234,14 +311,14 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         },
         details = {
         if (removed) Text("No longer available to you", Modifier.padding(12.dp))
-        uploadRows.filter { it.target == target && it.markdown == null }.forEach { upload ->
+        uploadRows.filter { it.target == target && it.markdown == null && (editing == null || it.id in editUploads) }.forEach { upload ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text(upload.filename + " · " + uploadPhase(upload.phase), style = MaterialTheme.typography.labelSmall, maxLines = 1, modifier = Modifier.weight(1f).testTag("chat.upload.${upload.id}"))
-                if (upload.retryable) TextButton(onClick = { model.uploads.retry(upload.id) }) { Text("Retry") }
-                TextButton(onClick = { model.uploads.remove(upload.id) }) { Text("Remove") }
+                if (upload.retryable) TextButton(onClick = { uploads.retry(upload.id) }) { Text("Retry") }
+                TextButton(onClick = { uploads.remove(upload.id) }) { Text("Remove") }
             }
         }
-        draftAttachments.filter { it.isText }.forEach { a ->
+        draftAttachments.filter { editing == null && it.isText }.forEach { a ->
             val preview = rememberStagedPreview(model, a)
             TextAttachmentCard(
                 a.filename, a.sizeBytes, a.text?.lines, preview, if (a.complete) "Uploaded" else "Saved on this device", "chat.draft.attachment.${a.id}",
@@ -249,7 +326,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             )
         }
-        justAdded?.let { added -> Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        justAdded?.takeIf { editing == null }?.let { added -> Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("${added.filename} added from your paste", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).testTag("chat.paste.notice"))
             TextButton(onClick = { model.removeDraftAttachment(target, added.id); justAdded = null }, modifier = Modifier.testTag("chat.paste.undo")) { Text("Undo") }
         } }
@@ -257,38 +334,26 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             studio.otherstuff.ambulando.app.ui.chat.MentionLookahead(results, onPick = { mention ->
                 field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.mention(field.value, mention)
                 mentions = (mentions.filter { it.npub != mention.npub || it.type != mention.type } + mention)
-                model.saveDraft(target, text, mentions)
+                persistComposer()
             })
         }
-        if (!family) studio.otherstuff.ambulando.app.voice.VoiceRecorderUi(model, c, target, composing, voiceAction?.error) { composeOnly?.onEnqueued?.invoke(it) }
+        if (!family && editing == null) studio.otherstuff.ambulando.app.voice.VoiceRecorderUi(model, c, target, composing, voiceAction?.error) { composeOnly?.onEnqueued?.invoke(it) }
         if (!family) studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceComposerContext(model)
         },
         composer = {
         Column(Modifier.fillMaxWidth().background(amb.card)) {
+        editing?.let { message -> Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("chat.edit.banner"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Editing message", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+            TextButton(onClick = { finishEdit() }, modifier = Modifier.testTag("chat.edit.cancel")) { Text("Cancel") }
+        } }
         HorizontalDivider(thickness = 1.dp, color = amb.border)
         Row(Modifier.readingWidth().align(androidx.compose.ui.Alignment.CenterHorizontally).clickable(enabled = composing) { composerFocus.requestFocus(); keyboard?.show() }.testTag("chat.composer.area").padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (family) TextButton(onClick = { picker.launch(arrayOf("image/*")) }, enabled = composing) { Text("Photo") }
-            else studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onRecord = { voiceAction?.record?.invoke() }, recordEnabled = voiceAction?.available == true, onPick = { picker.launch(arrayOf("image/*", "*/*")) }, onPaste = {
-                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-                clipboard.primaryClip?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(::pasteUri) }
-            }, onMention = { composerFocus.requestFocus(); keyboard?.show(); field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); model.saveDraft(target, text, mentions) })
+            if (family) TextButton(onClick = { pickerOwner = target to editSession; picker.launch(arrayOf("image/*")) }, enabled = composing) { Text("Photo") }
+            else studio.otherstuff.ambulando.app.ui.chat.ComposerControls(composing, onRecord = { voiceAction?.record?.invoke() }, recordEnabled = editing == null && voiceAction?.available == true, onPick = { pickerOwner = target to editSession; picker.launch(arrayOf("image/*", "*/*")) }, onPaste = { pasteClipboard() }, onMention = { composerFocus.requestFocus(); keyboard?.show(); field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value); persistComposer() })
             val channelName = labels[channel]
             Column(Modifier.weight(1f)) {
-            androidx.compose.foundation.text.BasicTextField(field.value, { value ->
-                if (value.text == field.value.text) { field.value = value; return@BasicTextField }
-                var decision = ComposerPaste.decide(field.value.text, value.text, selectionStart = field.value.selection.start, selectionEnd = field.value.selection.end)
-                // A short paste that would pass the cap looks like typing; the clipboard tells them apart (read only then).
-                if (decision == ComposerPaste.Decision.Reject) {
-                    val clip = context.getSystemService(android.content.ClipboardManager::class.java).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
-                    decision = ComposerPaste.decide(field.value.text, value.text, clip, field.value.selection.start, field.value.selection.end)
-                }
-                when (decision) {
-                    ComposerPaste.Decision.Accept -> { field.value = value; if (ready) model.saveDraft(target, value.text, mentions) }
-                    // Typing at the cap: the field keeps what it had (the counter shows why).
-                    ComposerPaste.Decision.Reject -> Unit
-                    // A big paste: the field keeps its text and selection; the pasted text becomes a staged file.
-                    is ComposerPaste.Decision.Attach -> if (ready) model.addPastedText(target, decision.text) { justAdded = it }
-                }
+            ComposerRichInput(composing, { uri, release -> pasteUri(uri, release) }, { pasteClipboard() }) {
+            androidx.compose.foundation.text.BasicTextField(field.value, { value -> changeValue(value)
             }, enabled = composing, maxLines = if (family) 3 else 8, visualTransformation = pills,
                 textStyle = androidx.compose.ui.text.TextStyle(color = amb.foreground, fontSize = AmbType.body),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(amb.primary),
@@ -298,22 +363,39 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                         inner()
                     }
                 },
-                modifier = Modifier.fillMaxWidth().then(Modifier.focusRequester(composerFocus)).testTag("chat.composer").contentReceiver(receiver))
+                modifier = Modifier.fillMaxWidth().then(Modifier.focusRequester(composerFocus)).testTag("chat.composer").composerImagePasteMenu(clipboard, composing) { pasteClipboard() }.contentReceiver(receiver))
+            }
             if (PastedTextPolicy.showsCounter(text)) Text("${PastedTextPolicy.remaining(text)} characters left", fontSize = AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(start = 12.dp, top = 2.dp).testTag("chat.counter"))
             }
-            val sendEnabled = composing && (text.isNotBlank() || draftAttachments.any { it.isText }) && !UploadToken.containsAny(text)
+            val sendEnabled = composing && (text.isNotBlank() || (editing == null && draftAttachments.any { it.isText })) && !UploadToken.containsAny(text)
             val sendAction = {
                 val body = text
-                model.send(target, body, c, w, mentions, enqueued = { composeOnly?.onEnqueued?.invoke(it) }) { if (text == body) text = ""; sent++ }; Unit
+                val message = editing
+                if (message != null) {
+                    if (!removed && !message.readOnly && !message.accessRemoved && message.senderNpub == c.signerNpub) {
+                        val encoded = MentionCodec.encode(body.trim(), mentions)
+                        val session = editSession
+                        editSaving = true
+                        model.enqueueMessageEdit(target, message, encoded) { queued ->
+                            if (editSession == session) { editSaving = false; if (queued) finishEdit() }
+                        }
+                    }
+                } else model.send(target, body, c, w, mentions, enqueued = { composeOnly?.onEnqueued?.invoke(it) }) {
+                    if (editing == null && text == body) text = ""
+                    else if (editing != null && replyValue?.text == body) { replyValue = androidx.compose.ui.text.input.TextFieldValue(""); replyMentions = emptyList() }
+                    sent++
+                }
+                Unit
             }
-            if (family) Button(onClick = sendAction, enabled = sendEnabled, modifier = Modifier.heightIn(min = 56.dp).testTag("chat.send")) { Text("Send", style = MaterialTheme.typography.titleMedium) }
+            if (editing != null) Button(onClick = sendAction, enabled = sendEnabled, modifier = Modifier.testTag("chat.edit.save")) { Text("Save") }
+            else if (family) Button(onClick = sendAction, enabled = sendEnabled, modifier = Modifier.heightIn(min = 56.dp).testTag("chat.send")) { Text("Send", style = MaterialTheme.typography.titleMedium) }
             else studio.otherstuff.ambulando.app.ui.chat.SendButton(sendEnabled, sendAction)
         }
         }
         },
     )
     openDraft?.let { a -> draftAttachments.firstOrNull { it.id == a.id }?.let { current -> DraftTextDialog(model, target, current) { openDraft = null } } ?: run { openDraft = null } }
-    ChatMessageDialogs(model, editing.takeIf { !removed }, deleting.takeIf { !removed }, onEditDone = { editing = null }, onDeleteDone = { deleting = null })
+    ChatMessageDeleteDialog(model, deleting.takeIf { !removed }, onDeleteDone = { deleting = null })
     openSent?.let { (messageId, attachment) -> SentTextDialog(model, messageId, channel, attachment, editable = !removed && !family) { openSent = null } }
 
 }

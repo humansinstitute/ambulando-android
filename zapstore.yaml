@@ -1,15 +1,10 @@
 repository: https://github.com/humansinstitute/ambulando-android
-pubkey: npub1llwrq3rtah3rg3r2dyfyht55ek7aa0ey7z47ujju407pzfp38shqa7zcvr
+pubkey: npub1jss47s4fvv6usl7tn6yp5zamv2u60923ncgfea0e6thkza5p7c3q0afmzy
 name: Ambulando
-summary: A native workspace client for Wingman Tower
+summary: A workspace for your agents and your team
 # Live authenticated member workflows remain for field review; see the feature matrix.
 description: |
-  Native Kotlin Android access to your Tower workspaces: chat, tasks, documents, files,
-  Deck, canvases, task trees and Nostr-enabled web apps. Shared workspace, scope and
-  channel navigation, durable drafts and queued writes, isolated editors and browser,
-  and privacy-stripped photo attachments. Create a Nostr identity on the phone or import your own;
-  requires an HTTPS Tower and workspace membership. Phone-created identities have no key export or recovery.
-  See the repository feature matrix for unsupported features and validation limits.
+  Ambulando is the workspace for your agents and your team. It uses an NStack (Nostr Stack) backend so that you can control your own data. It provides controls through Chat, Tasks, Docs, Infinite Canvases and extensible Napplets. Enjoy and get in touch with feedback!
 license: MIT
 website: https://github.com/humansinstitute/ambulando-android
 icon: app/src/main/res/mipmap-xxxhdpi/ic_launcher.png

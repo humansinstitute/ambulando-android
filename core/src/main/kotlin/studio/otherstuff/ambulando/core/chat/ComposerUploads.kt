@@ -103,6 +103,8 @@ class PastedItem(
     /** Known size, so an oversized item is refused before it is read. */
     val sizeBytes: Long? = null,
     val read: suspend () -> ByteArray,
+    /** Releases an IME permission even if staging is cancelled before the read starts. */
+    val release: () -> Unit = {},
 )
 
 /** What an upload needs to reach Tower: staged bytes, the captured target and a prepared object to reuse. */
@@ -225,9 +227,18 @@ class ComposerUploads(
             _items.value = _items.value + item
             tokens.add(item.token)
             loads[id] = scope.launch {
-                val staged = withContext(io) { stage(p, id) }
-                staged(id, staged)
-            }
+                try {
+                    val staged = withContext(io) { stage(p, id) }
+                    staged(id, staged)
+                } catch (e: CancellationException) {
+                    // A provider may finish a blocking read after Remove. The IO result can then be
+                    // cancelled on its way back to main, before staged() gets a chance to clean it.
+                    withContext(kotlinx.coroutines.NonCancellable + io) {
+                        staging.listFiles()?.filter { it.name == "paste-$id" || it.name.startsWith("paste-$id.") }?.forEach { it.delete() }
+                    }
+                    throw e
+                }
+            }.also { job -> job.invokeOnCompletion { runCatching { p.release() } } }
         }
         return tokens
     }

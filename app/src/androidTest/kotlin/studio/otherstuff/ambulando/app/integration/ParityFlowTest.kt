@@ -93,13 +93,13 @@ class ParityFlowTest {
         assertTrue(runBlocking { model.store.reader.reactions(SampleIds.STUDIO, listOf(root.id)) }.none { it.emoji == "❤️" })
         compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("reaction.heart") and inMessage).fetchSemanticsNodes().isNotEmpty() }
 
-        // Edit through the dialog; the body changes and nothing else about the message does.
+        // Edit through the main composer; the body changes and nothing else about the message does.
         compose.onNodeWithTag("message.${root.id}.actions").performClick()
         compose.onNodeWithTag("message.${root.id}.menu.edit").performClick()
-        // The edit dialog is its own window: wait for it to be composed before typing into it.
-        compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.field").fetchSemanticsNodes().isNotEmpty() }
+        // Wait for edit mode before changing the main composer.
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.banner").fetchSemanticsNodes().isNotEmpty() }
         val edited = "$text (edited)"
-        compose.onNodeWithTag("chat.edit.field").performTextReplacement(edited)
+        compose.onNodeWithTag("chat.composer").performTextReplacement(edited)
         compose.onNodeWithTag("chat.edit.save").performClick()
         compose.waitUntil(20_000) { runBlocking { model.store.reader.message(SampleIds.STUDIO, root.id)?.body == edited } }
 
@@ -116,7 +116,7 @@ class ParityFlowTest {
 
     // Found as the intermittent "edit dialog never appears" failure: the dialog state lived in the message row, and a row that
     // leaves the list (the follow scroll, the keyboard resizing the list) closed the dialog and lost the edit.
-    @Test fun anOpenEditDialogSurvivesItsMessageScrollingOutOfTheList() = launch { model ->
+    @Test fun anInlineEditSurvivesItsMessageScrollingOutOfTheList() = launch { model ->
         openGeneralChat(model)
         val text = "Dialog survives ${System.nanoTime()}"
         compose.onNodeWithTag("chat.composer").performTextReplacement(text)
@@ -126,13 +126,13 @@ class ParityFlowTest {
         compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
         compose.onNodeWithTag("message.${root.id}.actions").performClick()
         compose.onNodeWithTag("message.${root.id}.menu.edit").performClick()
-        compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.field").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("chat.edit.field").performTextReplacement("$text (half edited)")
+        compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.edit.banner").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("chat.composer").performTextReplacement("$text (half edited)")
         // The row is composed only while it is near the viewport: scroll to the oldest message and it is gone.
         compose.onNodeWithTag("chat.messages").performScrollToIndex(0)
         compose.waitUntil(20_000) { compose.onAllNodesWithTag("message.${root.id}.actions").fetchSemanticsNodes().isEmpty() }
         compose.waitForIdle()
-        compose.onNodeWithTag("chat.edit.field").assertExists()
+        compose.onNodeWithTag("chat.composer").assertExists()
         compose.onNodeWithTag("chat.edit.save").performClick()
         compose.waitUntil(20_000) { runBlocking { model.store.reader.message(SampleIds.STUDIO, root.id)?.body == "$text (half edited)" } }
     }

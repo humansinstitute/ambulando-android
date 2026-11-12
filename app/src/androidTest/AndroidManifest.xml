@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Installed only in the test APK. Never enable on a personal device. -->
+        <service android:name="studio.otherstuff.ambulando.app.integration.ComposerProbeIme"
+            android:label="Synthetic composer test keyboard" android:exported="true"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
+            <meta-data android:name="android.view.im" android:resource="@xml/composer_probe_ime" />
+        </service>
+    </application>
+</manifest>

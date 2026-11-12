@@ -33,6 +33,11 @@ generic=(
 )
 allowed='npub1llwrq3rtah3rg3r2dyfyht55ek7aa0ey7z47ujju407pzfp38shqa7zcvr|nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5|users\.noreply\.github\.com|@([a-z0-9-]+\.)*example\.(com|org)|\.invalid|noreply@'
 
+# The configured publisher is intentionally public listing metadata. Admit only the exact validated NIP-19
+# public value from the manifest; this grants no exception for secret keys or other owner data.
+publisher="$(sed -nE 's/^pubkey:[[:space:]]*(npub1[02-9ac-hj-np-z]{58})[[:space:]]*$/\1/p' zapstore.yaml 2>/dev/null)"
+if [[ "$publisher" == npub1* && "$publisher" != *$'\n'* ]]; then allowed+="|$publisher"; fi
+
 # Upstream copyright notices must retain their published attribution. This narrow allowlist is reviewed with the
 # locked dependencies; private development author metadata is never allowlisted.
 if [[ -f scripts/public-attributions.txt ]]; then

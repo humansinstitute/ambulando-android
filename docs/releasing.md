@@ -44,8 +44,9 @@ explicit authority before rewriting public history; never silently amend and for
 ## Publish assets and Zapstore events
 
 Publish the verified APK and checksum as GitHub release assets. Keep `zapstore.yaml`, including the intended public
-publisher npub, at the public default-branch HEAD. Use the official [zsp tool](https://github.com/zapstore/zsp) and
-[Zapstore publishing guide](https://zapstore.dev/docs/publish).
+publisher npub, at the public default-branch HEAD. The publisher is the Nostr identity pinned in that manifest; its package and Android certificate are unchanged. Future releases use the enrolled native AP Vault release helper (`scripts/publish.ts` in that checkout) and its `docs/PUBLISHING.md`. Prepare the verified public APK's application/asset/release triple, sign, independently verify, publish, and read back the exact reviewed events. The active certificate-owner proof already exists: ordinary releases must not generate new C1 ownership proofs. Renewal and further ownership changes require their own reviewed operation.
+
+The following `zsp` notes describe unsigned preparation and historical publishing behavior; they do not grant the retired previous-publisher authority. Do not regenerate or replay old-owner proofs.
 
 `zsp` is built from its pinned release into a Git-ignored directory (`GOBIN=<ignored dir> go install github.com/zapstore/zsp@v0.4.17`), never installed from an unverified download. `SIGN_WITH=<public-npub> zsp publish <config> --offline` emits the unsigned events and the upload manifest without any key. An externally held signer can sign the unsigned events emitted that way. Do not export a private
 identity, use an owner's identity as a substitute, or place a bunker secret in the repository. The app/release/asset
@@ -77,3 +78,7 @@ The APK signing certificate SHA-256 is `95ae1a491e106931a25296797a6e99a9efe95a9e
   Ambulando 0.7.1 under Latest releases. The emulator already had build 19 installed from the APK, so the check mark beside the version shows the
   installed version matches; it is not evidence of a store-mediated fresh install. The zapstore.dev app page returned HTTP 200 but its HTML carries
   no version text to read, so web visibility was not established either way.
+
+## Ownership changes
+
+An Android certificate-owner proof is certificate-wide. After transfer to another Nostr owner, retire previous-publisher signing/publication procedures and any retained old-owner proof events. A newer old-owner proof can reverse the network's owner selection even though the Android certificate is unchanged. Use the new owner's authorized AP Vault release path and verify current certificate claims immediately before signing and publication; fail closed on an incomplete or conflicting snapshot. Do not copy an old broker helper into a new release without this gate. The Android repository contains no automated Zapstore publisher; external release tooling must enforce this check.

@@ -269,6 +269,23 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     fun saveDraft(target: ChatTarget, text: String, mentions: List<Mention> = emptyList()) {
         composerCommands.trySend { ownerOf(target).store.writer.saveDraft(target, Draft(text, mentions)) }
     }
+    /** An edit leaves the composer only after its canonical update is durably queued. */
+    fun enqueueMessageEdit(target: ChatTarget, message: MessageRecord, encoded: studio.otherstuff.ambulando.core.chat.EncodedMentions, done: (Boolean) -> Unit) {
+        composerCommands.trySend {
+            try {
+                val owner = ownerOf(target)
+                check(identityState is IdentityState.Unlocked && identityState?.npub == owner.connection.signerNpub) { "Unlock the original account to save." }
+                val current = owner.store.reader.message(target.workspaceId, message.id) ?: error("This message is no longer available.")
+                check(!owner.workspace.accessRemoved && !current.readOnly && !current.accessRemoved && !current.deleted && current.senderNpub == owner.connection.signerNpub) { "This message cannot be edited." }
+                check(!owner.store.reader.isAccessRemoved(target.workspaceId, FlaggedTable.CHANNELS, target.channelId) &&
+                    (target.threadId?.let { !owner.store.reader.isAccessRemoved(target.workspaceId, FlaggedTable.THREADS, it) } ?: true)) { "This conversation is no longer available." }
+                check(owner.store.reader.workspaceWrites(target.connectionId, target.workspaceId, message.id).none { it.kind == WriteKind.MESSAGE_EDIT }) { "Resolve the queued edit before editing this message again." }
+                owner.writes.submit(messageEditIntent(message, encoded), owner.connection, owner.workspace)
+                done(true)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { notice = ConnectionFailure.userMessage(e); done(false) }
+        }
+    }
     /** The composer's staged text attachments are read in the same ordered step, so none added just before Send is missed. */
     fun send(target: ChatTarget, text: String, connection: ConnectionRecord, workspace: WorkspaceRecord, mentions: List<Mention> = emptyList(), enqueued: (String) -> Unit = {}, accepted: () -> Unit) {
         composerCommands.trySend {

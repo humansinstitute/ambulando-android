@@ -37,9 +37,19 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
         MessageMenu(model, message, message.threadSourceId ?: message.takeIf { it.isThreadRoot }?.id,
             "@[Chat message](mention:chat:${message.channelId}#${message.id})", message.takeIf { AutopilotSessionLink.sessionId(it.raw) != null },
             enabled, "message.${message.id}", "Message actions",
-            onEdit = { onEdit(message) }.takeIf { message.senderNpub == c.signerNpub && !message.deleted && !message.readOnly },
+            onEdit = { onEdit(message) }.takeIf { message.senderNpub == c.signerNpub && !message.deleted && !message.readOnly && writes.none { it.kind == WriteKind.MESSAGE_EDIT } },
             onDelete = { onDelete(message) })
     }
+}
+
+/** Queued edits keep the durable-write retry, conflict and discard controls beside the message. */
+@Composable internal fun ChatMessageEditStatus(model: AppModel, message: MessageRecord) {
+    val w = model.workspace ?: return; val c = model.connection ?: return
+    val writes by remember(c.id, w.id, message.id) { model.store.liveQuery({ it.table == StoreTable.WRITES }) {
+        model.store.reader.workspaceWrites(c.id, w.id, message.id).filter { it.kind == WriteKind.MESSAGE_EDIT }
+    } }.collectAsState(emptyList())
+    val actions = rememberWriteActions(model)
+    writes.forEach { item -> studio.otherstuff.ambulando.app.ui.work.WriteStatusLine(item, "Message edit", actions, Modifier.padding(horizontal = 12.dp).testTag("message.${message.id}.edit.status")) }
 }
 
 /** Reactions already on the message, then the quick thumbs-up and "+" (iOS `ReactionBar`). Reactions go by wire name. */
@@ -53,20 +63,10 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
     }
 }
 
-/**
- * The edit and delete dialogs of a chat message. They belong to the screen, not to the message row: a row scrolls out of the
- * list (a new message, the keyboard resizing the list) and its state goes with it, which closed the dialog and lost the edit.
- * [edit] is the message as it was when Edit was tapped: the text being edited and the version it is saved against stay together.
- */
-@Composable internal fun ChatMessageDialogs(model: AppModel, edit: MessageRecord?, delete: MessageRecord?, onEditDone: () -> Unit, onDeleteDone: () -> Unit) {
-    val w = model.workspace ?: return
+/** Delete confirmation belongs to the screen so scrolling its message away cannot dismiss it. */
+@Composable internal fun ChatMessageDeleteDialog(model: AppModel, delete: MessageRecord?, onDeleteDone: () -> Unit) {
+    model.workspace ?: return
     fun payload(block: JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
-    edit?.takeUnless { it.readOnly }?.let { editing -> studio.otherstuff.ambulando.app.ui.chat.MessageEditDialog(model, w.id, editing.body, onSave = { encoded ->
-        model.submit(WriteIntent(WriteKind.MESSAGE_EDIT, editing.id, payload {
-            put("channel_id", editing.channelId); editing.threadId?.let { put("thread_id", it) }; put("body", encoded.body); put("row_version", editing.rowVersion)
-            put("mentions", JsonArray(encoded.mentions.map { m -> buildJsonObject { m.requestObject.forEach { (k, v) -> put(k, v) } } }))
-        })); onEditDone()
-    }, onDismiss = { onEditDone() }) }
     delete?.takeUnless { it.readOnly }?.let { message -> AlertDialog(onDismissRequest = { onDeleteDone() }, title = { Text("Delete message?") }, confirmButton = { TextButton(onClick = {
         model.submit(WriteIntent(WriteKind.MESSAGE_DELETE, message.id, payload { put("channel_id", message.channelId); put("row_version", message.rowVersion); message.threadId?.let { put("thread_id", it) } })); onDeleteDone()
     }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { onDeleteDone() }) { Text("Cancel") } }) }

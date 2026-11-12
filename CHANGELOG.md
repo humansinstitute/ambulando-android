@@ -1,3 +1,10 @@
+## 0.9.4 (32)
+
+- Accept keyboard image commits and clipboard/context-menu image Paste through private attachment uploads.
+- Keep image read grants until staging finishes and clean up cancelled late reads.
+- Edit chat messages in the main composer with mentions, attachment/paste controls, Save and Cancel.
+- Restore reply drafts and selection after edits, isolate cancelled uploads, and show queued edit retry/conflict controls.
+
 ## 0.9.3 (31)
 
 - Send voice recordings directly as private message attachments, avoiding a conflicting File registration.

@@ -49,11 +49,12 @@ class TextAttachmentFlowTest {
             compose.waitForIdle()
             assertEquals(PastedTextPolicy.PASTE_THRESHOLD, editableText().length)
             compose.onAllNodes(hasTagPrefix("chat.draft.attachment.") and hasTagSuffix(".open")).assertCountEquals(0)
-            compose.onNodeWithTag("chat.composer").performTextReplacement("keep me")
+            val kept = "keep me ${System.nanoTime()}"
+            compose.onNodeWithTag("chat.composer").performTextReplacement(kept)
             val pasted = "first line é 😀\r\n" + "z".repeat(3000) + "\r\nlast"
             compose.onNodeWithTag("chat.composer").performTextInput(pasted)
             compose.waitUntil(20_000) { compose.onAllNodes(hasTagPrefix("chat.draft.attachment.") and hasTagSuffix(".name")).fetchSemanticsNodes().isNotEmpty() }
-            assertEquals("existing composer text is retained", "keep me", editableText())
+            assertEquals("existing composer text is retained", kept, editableText())
             compose.onNodeWithTag("chat.paste.undo").assertExists()
             captureTextReview("draft-card")
             val draft = runBlocking { model.store.reader.draft(ChatTarget(model.connection!!.id, SampleIds.STUDIO, SampleIds.GENERAL))!! }
@@ -75,14 +76,23 @@ class TextAttachmentFlowTest {
 
             // Send with text; it arrives once, with the attachment metadata and no text in it.
             compose.onNodeWithTag("chat.send").performClick()
-            compose.waitUntil(30_000) { runBlocking { model.store.reader.latestMessages(SampleIds.STUDIO, SampleIds.GENERAL, 500).any { it.body == "keep me" } } }
-            val sent = runBlocking { model.store.reader.latestMessages(SampleIds.STUDIO, SampleIds.GENERAL, 500).filter { it.body == "keep me" } }
+            compose.waitUntil(30_000) { runBlocking { model.store.reader.latestMessages(SampleIds.STUDIO, SampleIds.GENERAL, 500).any { it.body == kept } } }
+            val sent = runBlocking { model.store.reader.latestMessages(SampleIds.STUDIO, SampleIds.GENERAL, 500).filter { it.body == kept } }
             assertEquals(1, sent.size)
             val attachment = MessageAttachment.from(sent[0].raw).single()
             assertEquals("notes.txt", attachment.filename)
             assertEquals(TextAttachments.bytes(pasted).size.toLong(), attachment.sizeBytes)
             assertEquals(3, attachment.textAttachment?.lines)
             assertFalse(sent[0].raw.toString().contains("zzzzzzzzzz"))
+
+            // A chat-body edit retains the original file attachment contract and message identity.
+            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${sent[0].id}"))
+            compose.onNodeWithTag("message.${sent[0].id}.actions").performClick()
+            compose.onNodeWithTag("message.${sent[0].id}.menu.edit").performClick()
+            compose.onNodeWithTag("chat.composer").performTextReplacement("$kept edited")
+            compose.onNodeWithTag("chat.edit.save").performClick()
+            compose.waitUntil(20_000) { runBlocking { model.store.reader.message(SampleIds.STUDIO, sent[0].id)?.body == "$kept edited" } }
+            assertEquals(sent[0].raw["attachments"], runBlocking { model.store.reader.message(SampleIds.STUDIO, sent[0].id) }!!.raw["attachments"])
 
             // The sent card opens read-only, then Edit saves a new version; the original stays.
             compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.attachment.${attachment.storageObjectId}.open"))
