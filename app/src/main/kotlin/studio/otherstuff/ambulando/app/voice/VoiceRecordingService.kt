@@ -120,6 +120,11 @@ class VoiceRecordingService : Service() {
         val capture = recorder
         recorder = null
         var failure = error
+        // Finish may arrive before the queued routing callback. Recheck before allowing automatic send.
+        if (failure == null && capture != null && owner?.state?.value?.headsetOnly == true &&
+            !runCatching { startElapsed > 0 && route?.verified(capture) == true }.getOrDefault(false)) {
+            failure = "Bluetooth microphone was not verified at Finish. Recording kept for phone review."
+        }
         if (capture != null) {
             try { if (startElapsed > 0) capture.stop() } catch (_: RuntimeException) { if (failure == null) failure = "Recording was too short or interrupted. Cancel and record again if playback fails." }
             finally { runCatching { capture.release() } }

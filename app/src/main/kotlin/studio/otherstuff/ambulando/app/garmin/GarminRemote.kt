@@ -31,7 +31,9 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         if (journal.data.binding != null && !model.environment.isSample) connect()
         scope.launch {
             while (isActive) {
-                refreshCapture()
+                try { refreshCapture() }
+                catch (e: CancellationException) { throw e }
+                catch (_: Exception) { connection = "Status unavailable. Reopen the original workspace." }
                 delay(500)
             }
         }
@@ -78,7 +80,7 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     internal fun receive(device: IQDevice, parcel: Any?) {
         if (journal.data.binding?.device != device.deviceIdentifier) return
         val m = parcel as? Map<*, *> ?: return
-        if ((m["v"] as? Number)?.toInt() != 1) return
+        if (m["v"] != 1 && m["v"] != 1L) return
         val id = m["s"] as? String ?: return
         if (!id.matches(Regex("[A-Za-z0-9_-]{1,64}"))) return
         val op = m["op"] as? String ?: return
