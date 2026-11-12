@@ -37,7 +37,7 @@ class RemoteApp extends Application.AppBase {
     function probe() {
         if (probeTries >= 3) { return; }
         probeTries += 1;
-        Communications.transmit({"v"=>1, "op"=>"hello", "b"=>38}, null, new RemoteListener());
+        Communications.transmit({"v"=>1, "op"=>"hello", "b"=>39}, null, new RemoteListener());
     }
     function poll() as Void {
         if (lastAck == 0) { probe(); }
@@ -61,7 +61,7 @@ class RemoteApp extends Application.AppBase {
     }
     function transmitCommand() {
         tries += 1;
-        Communications.transmit({"v"=>1, "s"=>session, "c"=>session + "_" + pending, "op"=>pending, "b"=>38}, null, new RemoteListener());
+        Communications.transmit({"v"=>1, "s"=>session, "c"=>session + "_" + pending, "op"=>pending, "b"=>39}, null, new RemoteListener());
         WatchUi.requestUpdate();
     }
     function reject(code) {
@@ -74,11 +74,11 @@ class RemoteApp extends Application.AppBase {
         if (!m.hasKey("v") || m["v"] != 1) { reject("D2 version"); return; }
         if (!m.hasKey("s") || !(m["s"] instanceof Lang.String) || !m.hasKey("r") || !(m["r"] instanceof Lang.Number) || m["r"] < 0 ||
             !m.hasKey("state") || !(m["state"] instanceof Lang.String) || !m.hasKey("detail") || !(m["detail"] instanceof Lang.String)) { reject("D3 fields"); return; }
-        var hello = m["s"] == "hello" && m["state"] == "hello" && m["r"] == 0;
-        if (!hello && m["s"] != session) { reject("D4 session"); return; }
+        var hello = m["s"].equals("hello") && m["state"].equals("hello") && m["r"] == 0;
+        if (!hello && !m["s"].equals(session)) { reject("D4 session"); return; }
         if (!hello && m["r"] < revision) { reject("D5 revision"); return; }
         var st = m["state"];
-        if (!hello && st != "waiting" && st != "recording" && st != "sending" && st != "sent" && st != "cancelled" && st != "error") { reject("D6 state"); return; }
+        if (!hello && !st.equals("waiting") && !st.equals("recording") && !st.equals("sending") && !st.equals("sent") && !st.equals("cancelled") && !st.equals("error")) { reject("D6 state"); return; }
         if (m.hasKey("n") && (!(m["n"] instanceof Lang.String) || m["n"].length() > 64 || !m.hasKey("b") || !(m["b"] instanceof Lang.Number))) { reject("D7 nonce"); return; }
         lastAck = System.getTimer();
         if (m.hasKey("b") && m["b"] instanceof Lang.Number) { phoneBuild = m["b"]; }
@@ -86,12 +86,12 @@ class RemoteApp extends Application.AppBase {
         if (!hello) {
             revision = m["r"]; state = st; detail = m["detail"];
             // Only an application state reply clears a user command, never hello or transport success.
-            if (pending == null || !m.hasKey("c") || m["c"] == session + "_" + pending) { pending = null; }
+            if (pending == null || !m.hasKey("c") || (session + "_" + pending).equals(m["c"])) { pending = null; }
         }
         if (m.hasKey("n")) {
             // Repeat a receipt for a bounded phone resend: the previous uplink may have been lost.
             // Receipts never elicit phone replies, so this cannot create an ACK loop.
-            Communications.transmit({"v"=>1, "op"=>"receipt", "s"=>m["s"], "r"=>m["r"], "n"=>m["n"], "b"=>38}, null, new ReceiptListener());
+            Communications.transmit({"v"=>1, "op"=>"receipt", "s"=>m["s"], "r"=>m["r"], "n"=>m["n"], "b"=>39}, null, new ReceiptListener());
         }
         WatchUi.requestUpdate();
     }
@@ -138,15 +138,15 @@ class RemoteDelegate extends WatchUi.BehaviorDelegate {
     function menu() {
         var a = Application.getApp();
         var m = new WatchUi.Menu2({:title=>"Recorder"});
-        if (a.state == "idle") { m.addItem(new WatchUi.MenuItem("Start", null, :start, null)); }
+        if (a.state.equals("idle")) { m.addItem(new WatchUi.MenuItem("Start", null, :start, null)); }
         else {
             m.addItem(new WatchUi.MenuItem("Status", null, :status, null));
-            if (a.state == "recording" || a.state == "waiting") {
+            if (a.state.equals("recording") || a.state.equals("waiting")) {
                 m.addItem(new WatchUi.MenuItem("Finish", null, :finish, null));
                 m.addItem(new WatchUi.MenuItem("Cancel", null, :cancel, null));
             }
-            if (a.state == "error") { m.addItem(new WatchUi.MenuItem("Retry send", null, :retry, null)); m.addItem(new WatchUi.MenuItem("Cancel draft", null, :cancel, null)); }
-            if (a.state == "sent" || a.state == "cancelled" || a.state == "error") { m.addItem(new WatchUi.MenuItem("New recording", null, :fresh, null)); }
+            if (a.state.equals("error")) { m.addItem(new WatchUi.MenuItem("Retry send", null, :retry, null)); m.addItem(new WatchUi.MenuItem("Cancel draft", null, :cancel, null)); }
+            if (a.state.equals("sent") || a.state.equals("cancelled") || a.state.equals("error")) { m.addItem(new WatchUi.MenuItem("New recording", null, :fresh, null)); }
         }
         m.addItem(new WatchUi.MenuItem("Probe phone", null, :probe, null));
         m.addItem(new WatchUi.MenuItem("Diagnostics", null, :diagnostics, null));
@@ -163,7 +163,7 @@ class RemoteMenu extends WatchUi.Menu2InputDelegate {
         else if (id == :diagnostics) {
             var age = a.lastAck == 0 ? "never" : ((System.getTimer() - a.lastAck)/1000).toString() + "s";
             var menu = new WatchUi.Menu2({:title=>"Connection diagnostics"});
-            menu.addItem(new WatchUi.MenuItem("Watch 38 / Phone " + a.phoneBuild, null, :none, null));
+            menu.addItem(new WatchUi.MenuItem("Watch 39 / Phone " + a.phoneBuild, null, :none, null));
             menu.addItem(new WatchUi.MenuItem("RX " + a.rx + " / rejected " + a.rejects, null, :none, null));
             menu.addItem(new WatchUi.MenuItem(a.rejection, "Last reply " + age + " / r " + a.revision, :none, null));
             menu.addItem(new WatchUi.MenuItem("Phone detail", a.detail, :none, null));
