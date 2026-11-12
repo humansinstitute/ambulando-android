@@ -21,6 +21,7 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     var sessions by mutableStateOf(journal.data.sessions); private set
     var devices by mutableStateOf<List<IQDevice>>(emptyList()); private set
     var connection by mutableStateOf("Not connected"); private set
+    var replyStatus by mutableStateOf("No phone reply sent yet"); private set
     var binding by mutableStateOf(journal.data.binding); private set
     private val sdkContext = GarminSdkContext(context) { connection = "Invalid watch message ignored. Retry from watch." }
     private var sdk: ConnectIQ? = null
@@ -55,7 +56,9 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
     }
     init {
         // Process death never restarts a microphone or auto-sends an interrupted recording.
-        sessions.filter { it.status == "recording" || it.status == "waiting" }.forEach { update(it.session, "error", "Phone restarted. Review retained draft in Ambulando.") }
+        sessions.filter { it.status == "recording" || it.status == "waiting" }.forEach {
+            update(it.session, "error", if (it.status == "waiting") "Phone restarted before Start. Check Status, then New recording on watch." else "Phone restarted. Review retained draft in Ambulando.")
+        }
         if (journal.data.binding != null && !model.environment.isSample) link.bind(journal.data.binding!!.device)
         scope.launch {
             while (isActive) {
@@ -108,11 +111,13 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
                 if (op != "start") { update(id, "cancelled", "Start was not received; tap New to try again."); return }
                 authorize(s.destination)
                 check(model.voice.state.value == null) { "Another recording or retained draft is open." }
-                notifyConfirmation()
+                runCatching { notifyConfirmation() }
+                update(id, "waiting", "Open Ambulando and tap Start on phone; optional watch access is not required.")
                 if (canOpenRecordingScreen()) {
                     // CDM permits a visible Activity launch, never direct background microphone use.
-                    context.startActivity(Intent(context, WatchRecordingActivity::class.java)
-                        .putExtra("session", id).putExtra(AppEnvironment.SAMPLE_EXTRA, model.environment.isSample).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    runCatching { context.startActivity(Intent(context, WatchRecordingActivity::class.java)
+                        .putExtra("session", id).putExtra(AppEnvironment.SAMPLE_EXTRA, model.environment.isSample).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        .onFailure { update(id, "waiting", "Open Ambulando and tap Start on phone. Android could not open the recorder automatically.") }
                 }
             } else {
                 val draft = model.voice.state.value
@@ -142,22 +147,18 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
             else runCatching { sdk?.sendMessage(device, IQApp(GARMIN_APP_ID), mapOf("v" to 1, "s" to id, "state" to "error", "r" to 0, "detail" to (e.message ?: "Operation failed")), null) }
         }
     }
-    fun associate(device: Long, association: Int) {
-        val b = requireNotNull(journal.data.binding)
-        check(b.device == device) { "Watch binding changed. Retry association." }
-        journal.bind(b.copy(association = association))
-        binding = journal.data.binding
-    }
+    fun resendStatus() { journal.data.sessions.lastOrNull()?.let(::reply) }
     fun canOpenRecordingScreen(): Boolean {
         if (android.os.Build.VERSION.SDK_INT < 33) return false
         val id = journal.data.binding?.association ?: return false
         return context.getSystemService(android.companion.CompanionDeviceManager::class.java)?.myAssociations?.any { it.id == id } == true
     }
-    fun confirm(id: String) {
+    fun confirm(id: String, activity: Activity) {
         val s = journal.find(id) ?: return
         if (s.status != "waiting" || model.voice.state.value != null) return
+        if (activity !is WatchRecordingActivity || activity.intent.getStringExtra("session") != id || !activity.hasWindowFocus() ||
+            !activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
         try {
-            check(model.foreground) { "Open Ambulando before starting." }
             authorize(s.destination)
             model.voice.start(s.destination, s.recording, headsetOnly = true)
             update(id, "waiting", "Verifying Bluetooth microphone")
@@ -199,15 +200,18 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         reply(s)
     }
     private fun reply(s: RemoteSession) {
-        val device = link.active ?: return
+        val device = link.active ?: run { replyStatus = "Reply pending: reconnect the saved watch, then check Status."; return }
         try {
+            replyStatus = "Sending ${s.status} reply to Garmin Connect…"
             sdk?.sendMessage(device, IQApp(GARMIN_APP_ID), mapOf("v" to 1, "s" to s.session, "r" to s.revision, "state" to s.status, "detail" to s.detail)) { sentDevice, app, status ->
                 main.post {
-                    if (binding?.device == sentDevice.deviceIdentifier && isRecorderApp(app) && status != ConnectIQ.IQMessageStatus.SUCCESS)
-                        link.transportError("Watch acknowledgement failed: $status. Check Garmin Connect, then check Status on watch.")
+                    if (binding?.device == sentDevice.deviceIdentifier && isRecorderApp(app)) {
+                        replyStatus = if (status == ConnectIQ.IQMessageStatus.SUCCESS) "Garmin Connect accepted ${s.status} reply. Wrist receipt is not confirmed." else "Garmin reply failed: $status. Reconnect, then check Status on watch."
+                        if (status != ConnectIQ.IQMessageStatus.SUCCESS) link.transportError(replyStatus)
+                    }
                 }
             }
-        } catch (e: Exception) { link.transportError("Watch acknowledgement failed: ${e.message ?: e.javaClass.simpleName}. Retry from watch.") }
+        } catch (e: Exception) { replyStatus = "Reply failed. Reconnect, then check Status on watch."; link.transportError("Watch acknowledgement failed: ${e.message ?: e.javaClass.simpleName}. Retry from watch.") }
     }
     private fun notifyConfirmation() {
         val nm = context.getSystemService(NotificationManager::class.java)

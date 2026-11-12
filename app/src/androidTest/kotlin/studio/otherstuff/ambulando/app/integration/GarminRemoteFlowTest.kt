@@ -47,7 +47,7 @@ class GarminRemoteFlowTest {
                     remote.sessions.filter { it.status == "waiting" }.forEach { remote.dismiss(it.session) }
                     val c = model.connection!!; val w = model.workspaces.first { it.id == SampleIds.STUDIO }
                     remote.bind(device, VoiceDestination.capture(c, w, ChatTarget(c.id, w.id, SampleIds.GENERAL, null), "Synthetic test destination"))
-                    remote.associate(device.deviceIdentifier, association.id)
+                    remote.journal.bind(remote.binding!!.copy(association = association.id))
                     assertTrue(remote.canOpenRecordingScreen())
                 }
                 shell("input keyevent KEYCODE_HOME")

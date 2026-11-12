@@ -1,3 +1,10 @@
+## 0.9.9 (37)
+
+- Replace the empty optional watch-device scan with phone confirmation; preserve existing Garmin pairing and valid saved Android associations.
+- Open a visible recorder with an explicit Start button, permission retry guidance and clear Bluetooth microphone errors.
+- Keep Start pending when notifications or automatic opening are unavailable; expose saved request state and resend the latest phone reply.
+- Distinguish Garmin Connect accepting a reply from confirmed wrist receipt; preserve terminal replay protection and retained audio.
+
 ## 0.9.8 (36)
 
 - Fix Garmin setup when paired-watch entries have unknown cached status; query current connectivity separately and allow a known watch to be saved while offline.

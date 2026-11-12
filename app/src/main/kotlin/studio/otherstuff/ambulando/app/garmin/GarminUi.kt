@@ -16,8 +16,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.*
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonPrimitive
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import studio.otherstuff.ambulando.app.AppModel
 import studio.otherstuff.ambulando.app.voice.VoiceDestination
 import studio.otherstuff.ambulando.core.store.*
@@ -43,18 +41,11 @@ fun GarminSetup(model: AppModel) {
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         error = if (result.values.all { it }) null else "Enable denied recording permissions in Android settings."
     }
-    var associatingDevice by remember { mutableStateOf<Long?>(null) }
-    val association = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        if (Build.VERSION.SDK_INT >= 33 && result.resultCode == android.app.Activity.RESULT_OK) {
-            val info = result.data?.getParcelableExtra(android.companion.CompanionDeviceManager.EXTRA_ASSOCIATION, android.companion.AssociationInfo::class.java)
-            try { if (info != null && associatingDevice != null) remote.associate(associatingDevice!!, info.id) }
-            catch (e: Exception) { error = e.message }
-        }
-    }
     Column {
         Text(binding?.destination?.label ?: "No watch destination configured", Modifier.testTag("watch.saved"))
         binding?.let { Text(remote.devices.firstOrNull { device -> device.deviceIdentifier == it.device }?.friendlyName ?: "Saved watch") }
         Text(remote.connection, Modifier.testTag("watch.status"))
+        Text(remote.replyStatus)
         TextButton(enabled = !busy, modifier = Modifier.testTag("watch.setup"), onClick = {
             selectedBoundary = workspaces.firstOrNull { binding?.destination?.matches(it.connection, it.workspace) == true }?.boundary?.id
             selectedChannel = binding?.destination?.channelId
@@ -67,22 +58,19 @@ fun GarminSetup(model: AppModel) {
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
         }
         val granted = required.all { androidx.core.content.ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
-        TextButton(enabled = !busy, onClick = { permissions.launch(required.toTypedArray()) }, modifier = Modifier.testTag("watch.permissions")) { Text(if (granted) "Recording permissions granted" else "Grant recording permissions") }
+        TextButton(enabled = draft == null, onClick = { permissions.launch(required.toTypedArray()) }, modifier = Modifier.testTag("watch.permissions")) { Text(if (granted) "Recording permissions granted" else "Grant recording permissions") }
         if (binding != null) {
-            if (Build.VERSION.SDK_INT >= 33) TextButton(enabled = !busy, modifier = Modifier.testTag("watch.associate"), onClick = {
-                val bound = remote.binding ?: return@TextButton
-                val name = remote.devices.firstOrNull { it.deviceIdentifier == bound.device }?.friendlyName
-                if (name == null) { remote.connect(); error = "Reconnect the saved watch, then try again."; return@TextButton }
-                associatingDevice = bound.device
-                try {
-                    val request = android.companion.AssociationRequest.Builder().addDeviceFilter(android.companion.BluetoothLeDeviceFilter.Builder().setNamePattern(java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(name), java.util.regex.Pattern.CASE_INSENSITIVE)).build()).build()
-                    context.getSystemService(android.companion.CompanionDeviceManager::class.java).associate(request, context.mainExecutor, object : android.companion.CompanionDeviceManager.Callback() {
-                        override fun onAssociationPending(sender: android.content.IntentSender) { association.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build()) }
-                        override fun onFailure(message: CharSequence?) { error = message?.toString() ?: "Association failed" }
-                    })
-                } catch (e: Exception) { error = e.message }
-            }) { Text(if (remote.canOpenRecordingScreen()) "Watch screen access allowed" else "Allow watch to open recording screen (optional)") }
-            TextButton(enabled = !busy, onClick = { remote.connect() }, modifier = Modifier.testTag("watch.reconnect")) { Text("Reconnect watch") }
+            Text(if (remote.canOpenRecordingScreen()) "Saved watch screen access is allowed." else "Start recordings on this phone. Optional automatic opening is unavailable without an existing Android association.")
+            Text("Open Ambulando after Start on the watch, then open the recorder and tap Start headset recording. No device scan or extra association is required.")
+            remote.sessions.lastOrNull()?.let { session ->
+                Text("Last watch request: ${session.status}. ${session.detail}")
+                if (session.status == "waiting" && draft == null) TextButton(onClick = {
+                    context.startActivity(android.content.Intent(context, WatchRecordingActivity::class.java).putExtra("session", session.session))
+                }) { Text("Open pending recording on phone") }
+                if (session.status in setOf("error", "cancelled", "sent")) Text("On watch, check Status, then choose New for a new recording request.")
+                TextButton(onClick = { remote.resendStatus() }) { Text("Send latest status to watch") }
+            }
+            TextButton(onClick = { remote.connect() }, modifier = Modifier.testTag("watch.reconnect")) { Text("Reconnect watch") }
             TextButton(enabled = !busy, modifier = Modifier.testTag("watch.disable"), onClick = { try { remote.disable(); error = null } catch (e: Exception) { error = e.message } }) { Text("Disable watch recorder") }
         }
         if (busy) Text("Finish recording or sending before changing settings.")
@@ -138,24 +126,11 @@ fun GarminConfirmation(model: AppModel) {
     if (model.environment.isSample) return
     val remote = model.garmin
     val pending = remote.sessions.firstOrNull { it.status == "waiting" && model.voice.state.value == null } ?: return
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var grantingSession by remember { mutableStateOf<String?>(null) }
-    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        val requested = grantingSession
-        grantingSession = null
-        if (requested != null && result.values.all { it } && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) remote.confirm(requested)
-    }
+    val context = androidx.compose.ui.platform.LocalContext.current
     AlertDialog(onDismissRequest = { remote.dismiss(pending.session) }, title = { Text("Record from watch?") },
-        text = { Text("Use Bluetooth headset microphone. Phone music will pause. Finish on watch automatically sends to ${pending.destination.label}. Audio will not resume automatically.") },
+        text = { Text("The watch is waiting for Start on this phone. Optional watch screen access is not required. Use the Bluetooth headset microphone to record for ${pending.destination.label}. Phone music will pause; Finish on watch sends the recording.") },
         confirmButton = { TextButton(onClick = {
-            if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                grantingSession = pending.session
-                permissions.launch(buildList {
-                add(Manifest.permission.RECORD_AUDIO)
-                if (Build.VERSION.SDK_INT >= 31) add(Manifest.permission.BLUETOOTH_CONNECT)
-                if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-            }.toTypedArray())
-            }
-        }) { Text("Start headset recording") } },
-        dismissButton = { TextButton(onClick = { remote.dismiss(pending.session) }) { Text("Cancel") } })
+            context.startActivity(android.content.Intent(context, WatchRecordingActivity::class.java).putExtra("session", pending.session))
+        }) { Text("Open recorder") } },
+        dismissButton = { TextButton(onClick = { remote.dismiss(pending.session) }) { Text("Cancel request") } })
 }

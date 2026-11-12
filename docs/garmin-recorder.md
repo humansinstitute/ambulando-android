@@ -5,10 +5,10 @@ The Vivoactive 6 is a remote control, not a microphone. Ambulando records phone 
 ## Set up
 
 1. Install Ambulando and Garmin Connect on the same phone; pair the watch in Garmin Connect. The Connect IQ Store app by itself is not the phone transport.
-2. Sign into Ambulando and verify the Tower. Open **Settings → Watch recorder → Set up watch recorder**. Select the trusted account/workspace, choose the destination channel or conversation from the searchable picker, select the connected watch, and tap **Save**. No conversation needs to be open. This stores account, origin, Tower, workspace, app and channel authority locally. There are no built-in private destination identifiers. Setup survives restart. Settings shows the saved destination and watch status, with recording permission grants, reconnect, optional screen access, change and disable controls. Changing is refused while recording or sending; failed audio drafts remain pinned to their original destination. Existing saved bindings are read without conversion or deletion. The ordinary chat composer has no watch setup row. Tower checks channel write authority when sending; unavailable/read-only destinations are excluded where the server supplies that metadata, and rejected sends retain the draft for review.
+2. Sign into Ambulando and verify the Tower. Open **Settings → Watch recorder → Set up watch recorder**. Select the trusted account/workspace, choose the destination channel or conversation from the searchable picker, select the connected watch, and tap **Save**. No conversation needs to be open. This stores account, origin, Tower, workspace, app and channel authority locally. There are no built-in private destination identifiers. Setup survives restart. Settings shows the saved destination and watch status, with recording permission grants, reconnect, saved request state, reply resend, change and disable controls. Changing is refused while recording or sending; failed audio drafts remain pinned to their original destination. Existing saved bindings are read without conversion or deletion. The ordinary chat composer has no watch setup row. Tower checks channel write authority when sending; unavailable/read-only destinations are excluded where the server supplies that metadata, and rejected sends retain the draft for review.
 3. Choose **Grant recording permissions** for microphone, nearby-device/Bluetooth and notification permissions. Connect a Bluetooth headset that supports microphone communication audio (SCO or BLE headset), not just A2DP music output.
 4. Open **Ambulando Remote** on the watch and choose Start. Normally the phone posts a notification: open Ambulando and confirm headset recording. The watch stays waiting until the real recorder starts and its routed input is verified.
-5. Optional on Android 13+: in Watch recorder choose **Allow watch to open recording screen**, then select the same watch in Android's companion association dialog. This authorizes a visible, opaque recording screen to open on a watch request, including over the lock screen. It starts the microphone only after the Activity is resumed with window focus and required permissions already granted. This is an Activity-launch exception, **not** an exemption from microphone while-in-use permission. If launch is blocked or permissions are missing, use the normal notification/open/confirmation path. GrapheneOS and physical-watch behavior need device validation.
+5. On the phone choose **Open recorder → Start headset recording**. Recording permission denial leaves the request waiting with retry guidance. No fresh Bluetooth scan or companion association is needed. Previously saved valid Android associations can still open the visible recorder automatically after the Activity is resumed with window focus and required permissions; this grants no background microphone exemption. GrapheneOS and physical-watch behavior need device validation.
 6. Wait for **recording**, speak, then choose Finish. Finish stops capture and automatically uploads to the original destination. **sending** is not **sent**: sent requires the existing store's server-acknowledged message. Cancel discards only this session's draft; a sending/enqueued message cannot be cancelled remotely.
 
 The Garmin SDK registers its Android receiver in the running app process. This version does not claim process-death wake-up or continuous background availability: reopen Ambulando if the watch cannot reach it. A process restart never reopens the microphone or automatically sends an interrupted recording. Keep the original account unlocked and workspace available; otherwise the operation fails with retained audio. Association does not unlock signing authority.
@@ -88,3 +88,36 @@ is required for this Android connection fix.
 The external-process fixture intentionally leaves known-device status `UNKNOWN` and returns connectivity through its
 separate Binder `getStatus()` implementation. Host lifecycle tests cover readiness, status snapshots, reconnect,
 late callbacks, timeouts, vanished selections and offline save. These simulations do not establish physical device success.
+
+
+## Optional Android consent and phone recovery
+
+Start on the watch requests recording; the phone must show a visible recorder before microphone use.
+Open Ambulando and choose **Open recorder**, then **Start headset recording**. This path requires no
+companion association. Missing/denied microphone, nearby-device or notification permissions are explained
+on that screen; missing Bluetooth microphone fails visibly and retains any draft. Finish/Cancel on the watch
+keep the original session and destination. Terminal requests are never restarted by replayed Start: check
+Status on the watch and choose New recording. Settings shows the last saved request and offers a status resend.
+Garmin Connect accepting a reply is reported separately from actual wrist receipt, which the protocol does not acknowledge.
+
+The old optional association chooser required a fresh BLE advertisement matching Garmin's display name.
+A watch already connected through Garmin Connect need not advertise that name, so the chooser could stay empty.
+New setup uses phone confirmation and does not open that scan. Previously saved valid Android associations
+remain usable; existing pairing and associations are never removed by this update.
+
+Self-managed association is not available to ordinary third-party applications: AOSP Android 13 and 16 declare
+`REQUEST_COMPANION_SELF_MANAGED` as `signature|privileged`. Merely adding it to a manifest cannot grant access.
+We do not request privileged/profile permissions or fabricate association IDs/presence. A self-managed request
+would also require `setForceConfirmation(true)` to guarantee named consent; AOSP otherwise permits automatic
+creation. This is a platform limitation, not evidence that Bluetooth is off or that Garmin pairing must be reset.
+
+An existing association permits an Activity launch on the AOSP companion allowlist; it grants no background
+microphone exemption. Android/vendor restrictions can prevent automatic opening. A failed launch or unavailable
+notification leaves Start waiting for the explicit phone path. The recording screen requires resumed lifecycle,
+window focus and microphone/nearby-device/notification permissions before microphone capture.
+
+References: [self-managed requests](https://developer.android.com/reference/android/companion/AssociationRequest.Builder#setSelfManaged(boolean)),
+[AOSP Android 13 permission declaration](https://android.googlesource.com/platform/frameworks/base/+/android-13.0.0_r1/core/res/AndroidManifest.xml),
+[AOSP Android 16 permission declaration](https://android.googlesource.com/platform/frameworks/base/+/android-16.0.0_r1/core/res/AndroidManifest.xml),
+[AOSP consent processing](https://android.googlesource.com/platform/frameworks/base/+/android-16.0.0_r1/services/companion/java/com/android/server/companion/association/AssociationRequestsProcessor.java),
+[AOSP companion Activity allowlist](https://android.googlesource.com/platform/frameworks/base/+/android-16.0.0_r1/services/core/java/com/android/server/wm/BackgroundActivityStartController.java).
