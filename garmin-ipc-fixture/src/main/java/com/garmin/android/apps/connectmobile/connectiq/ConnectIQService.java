@@ -14,6 +14,12 @@ public class ConnectIQService extends Service {
         // Connectivity comes separately from getStatus, not this cached field.
         return device;
     }
+    private static Object field(Map<?, ?> data, String key) {
+        // MonkeyHash.toJava() retains wrapped dictionary keys and values.
+        Object value = data.get(com.garmin.monkeybrains.serialization.MonkeyType.fromJava(key));
+        return value instanceof com.garmin.monkeybrains.serialization.MonkeyType
+            ? ((com.garmin.monkeybrains.serialization.MonkeyType<?>) value).toJava() : value;
+    }
     private final IConnectIQService.Stub binder = new IConnectIQService.Stub() {
         public boolean openStore(String app) { return false; }
         public List<IQDevice> getConnectedDevices() { return Collections.singletonList(device()); }
@@ -27,7 +33,7 @@ public class ConnectIQService extends Service {
                     Object payload = value.toJava();
                     if (payload instanceof Map) {
                         Map<?, ?> data = (Map<?, ?>) payload;
-                        android.util.Log.i("GarminIpcFixture", "Phone reply device=" + d.getDeviceIdentifier() + " app=" + app.getApplicationId() + " session=" + data.get("s") + " state=" + data.get("state"));
+                        android.util.Log.i("GarminIpcFixture", "Phone reply device=" + d.getDeviceIdentifier() + " app=" + app.getApplicationId() + " session=" + field(data, "s") + " state=" + field(data, "state"));
                     }
                 }
             } catch (Exception e) { throw new IllegalArgumentException("Invalid phone payload", e); }
