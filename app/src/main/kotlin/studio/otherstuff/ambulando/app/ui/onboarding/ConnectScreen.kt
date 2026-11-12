@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.EditorialStyle
@@ -90,7 +91,12 @@ fun ConnectScreen(
             } else {
                 PrimaryButton(if (working) "…" else if (family) "Connect" else "Connect and discover workspaces", enabled = !working, modifier = Modifier.testTag("connect.go"), onClick = {
                     working = true
-                    scope.launch { try { connect(origin) } finally { working = false } }
+                    scope.launch {
+                        try { connect(origin) }
+                        catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { checkError = e.message ?: "The Tower could not be connected. Retry or choose another address." }
+                        finally { working = false }
+                    }
                 })
             }
         }

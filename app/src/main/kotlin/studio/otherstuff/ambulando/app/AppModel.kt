@@ -65,6 +65,71 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     val family by lazy { FamilyCoordinator(this) }
     val browser by lazy { studio.otherstuff.ambulando.app.browser.BrowserModel(androidContext) }
     val identity = dependencies?.identity ?: environment.identityService()
+    private val privateIndexRelay = dependencies?.indexRelay ?: studio.otherstuff.ambulando.core.discovery.OkHttpPrivateIndexRelay()
+    var discoveredTowers by mutableStateOf(emptyList<studio.otherstuff.ambulando.core.discovery.DiscoveredTower>()); private set
+    var towerDiscoveryBusy by mutableStateOf(false); private set
+    var towerDiscoveryMessage by mutableStateOf(""); private set
+    private var towerDiscoveryJob: Job? = null
+    fun discoverTowers() {
+        if (environment.isSample || BuildConfig.GRANDPARENT_CHAT || towerDiscoveryJob?.isActive == true || identityState !is IdentityState.Unlocked) return
+        val expected = identityState?.npub
+        discoveredTowers = emptyList()
+        towerDiscoveryBusy = true
+        towerDiscoveryMessage = "Discovering your Towers…"
+        towerDiscoveryJob = viewModelScope.launch {
+            try {
+                val result = studio.otherstuff.ambulando.core.discovery.TowerIndexDiscovery(identity, transport, privateIndexRelay).discover()
+                if (identityState?.npub == expected && identityState is IdentityState.Unlocked) {
+                    discoveredTowers = result.towers
+                    towerDiscoveryMessage = "${result.towers.size} Towers found. Choose a Tower, then explicitly enable a workspace." +
+                        (if (result.skipped > 0) " Stale or inaccessible connections were skipped." else "") +
+                        (if (result.partial) " Some relays were unavailable; retry to check again." else "")
+                }
+            } catch (e: CancellationException) {
+                if (e !is TimeoutCancellationException) throw e
+                towerDiscoveryMessage = "Tower discovery timed out. Retry or enter an address."
+            } catch (_: Exception) { towerDiscoveryMessage = "Tower discovery failed. Unlock and retry, or enter an address." }
+            finally { towerDiscoveryBusy = false }
+        }
+    }
+    private fun clearTowerDiscovery() {
+        towerDiscoveryJob?.cancel(); towerDiscoveryJob = null
+        discoveredTowers = emptyList(); towerDiscoveryBusy = false; towerDiscoveryMessage = ""
+        indexPublicationJobs.values.forEach { it.cancel() }; indexPublicationJobs.clear()
+        privateIndexMessages = emptyMap(); pendingIndexPublications = emptySet()
+    }
+    suspend fun connectDiscoveredTower(tower: studio.otherstuff.ambulando.core.discovery.DiscoveredTower) = connectTower(tower.origin, tower.towerNpub)
+
+    var privateIndexMessages by mutableStateOf(emptyMap<String,String>()); private set
+    var pendingIndexPublications by mutableStateOf(emptySet<String>()); private set
+    private val indexPublicationJobs = HashMap<String,Job>()
+    private fun indexPendingKey(entry: WorkspaceEntry) = studio.otherstuff.ambulando.core.discovery.NativeIndexOutbox.pendingKey(entry.id)
+    fun retryPrivateWorkspaceIndex(entry: WorkspaceEntry) {
+        if (environment.isSample || BuildConfig.GRANDPARENT_CHAT || identityState !is IdentityState.Unlocked || identityState?.npub != entry.connection.signerNpub || entries.none { it.id == entry.id } || !entry.enabled || entry.workspace.accessRemoved || indexPublicationJobs[entry.id]?.isActive == true) return
+        indexPublicationJobs[entry.id] = viewModelScope.launch {
+            val thisJob = currentCoroutineContext()[Job]
+            try {
+                val locator = studio.otherstuff.ambulando.core.discovery.privateLocator(entry.connection.origin,entry.workspace,entry.connection.towerNpub)
+                identity.requireSigner(entry.connection.signerNpub)
+                pendingIndexPublications = pendingIndexPublications + entry.id
+                privateIndexMessages = privateIndexMessages + (entry.id to "Sharing your private workspace connection…")
+                val publisher = studio.otherstuff.ambulando.core.discovery.NativeWorkspacePublisher(identity,transport,privateIndexRelay)
+                studio.otherstuff.ambulando.core.discovery.NativeIndexOutbox(catalog,publisher).send(locator,entry.boundary)
+                if (identityState is IdentityState.Unlocked && identityState?.npub == entry.connection.signerNpub && entries.any { it.id == entry.id } && entry.enabled) {
+                    pendingIndexPublications = pendingIndexPublications - entry.id
+                    privateIndexMessages = privateIndexMessages + (entry.id to "Private workspace connection verified on a relay.")
+                }
+            } catch (e: CancellationException) {
+                if (e !is TimeoutCancellationException) throw e
+                privateIndexMessages = privateIndexMessages + (entry.id to "Workspace announcement pending. Connection is usable; retry publication.")
+            } catch (_: Exception) {
+                catalog.writer.setState(indexPendingKey(entry),catalog.reader.state(indexPendingKey(entry)) ?: "pending")
+                pendingIndexPublications = pendingIndexPublications + entry.id
+                privateIndexMessages = privateIndexMessages + (entry.id to "Workspace announcement pending. Connection is usable; retry publication.")
+            } finally { if (indexPublicationJobs[entry.id] === thisJob) indexPublicationJobs.remove(entry.id) }
+        }
+    }
+
     /** Connections, discovered workspace lists and presentation preferences. Never content, drafts or queues (those live in partitions). */
     val catalog = LocalStore(environment.storeFile.parentFile!!)
     val diagnostics = DiagnosticsLog(file = File(environment.baseDir, "diagnostics/connection.json"))
@@ -454,12 +519,15 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); resumeEnabled(force = true); refresh(); androidPush?.launch { reconcile(this@AppModel) }; resolvePushTap() }
     /** Locking pauses every runtime (jobs, streams, leases); the enabled set is kept, so unlocking resumes exactly it. */
-    fun lock() = act { browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }
+    fun lock() = act { clearTowerDiscovery(); browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }
     suspend fun descriptor(origin: String) = catalogSync.checkDescriptor(TowerOrigin(origin))
 
     /** Connects a Tower for the unlocked identity (the first one, or another: each is its own connection and boundary set). */
-    suspend fun connect(origin: String) {
-        val c = catalogSync.connect(TowerOrigin(origin))
+    suspend fun connect(origin: String) = connectTower(origin, null)
+    private suspend fun connectTower(origin: String, expectedTowerNpub: String?) {
+        // Fresh installations must choose a workspace explicitly. Existing installation preferences are preserved.
+        if (!environment.isSample) WorkspaceCatalog.prepareExplicitConnection(catalog)
+        val c = catalogSync.connect(TowerOrigin(origin), expectedTowerNpub)
         connections = (connections.filter { it.id != c.id } + c)
         startCatalogObserver()
         runtimes.discover(c, SyncPriority.USER, true)
@@ -467,6 +535,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Disconnects every Tower of this identity and removes the identity. Local recovery copies are deleted with it. */
     fun removeIdentity() = act {
+        clearTowerDiscovery()
         voiceSendJob?.cancelAndJoin(); voice.cancel()
         browser.reset()
         runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++
@@ -504,6 +573,10 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Deletes what is outside SQLite for a connection (staged bytes, text caches, file caches), then retires its runtimes and partitions. */
     private suspend fun clearConnection(c: ConnectionRecord) {
+        val indexIds = entries.filter { it.connection.id == c.id }.map { it.id }.toSet()
+        for (id in indexIds) indexPublicationJobs.remove(id)?.cancelAndJoin()
+        privateIndexMessages = privateIndexMessages - indexIds
+        pendingIndexPublications = pendingIndexPublications - indexIds
         if (voice.state.value?.destination?.connectionId == c.id) {
             voiceSendJob?.cancelAndJoin(); voice.stop()
             voice.fail("Original connection was disconnected. Audio is kept locally; cancel it to discard. It cannot be sent through another connection.")
@@ -522,6 +595,10 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         runtimes.removeConnection(c)
         textEdits.removeConnection(c.id)
         val boundaries = listed.map { WorkspaceBoundary.of(c, it) }
+        for (boundary in boundaries) {
+            catalog.writer.setState(studio.otherstuff.ambulando.core.discovery.NativeIndexOutbox.pendingKey(boundary.id),null)
+            catalog.writer.setState(studio.otherstuff.ambulando.core.discovery.NativeIndexOutbox.publishedKey(boundary.id),null)
+        }
         listed.forEach { w ->
             val key = TextCache.scopeKey(c.id, c.origin, c.signerNpub, w.id)
             textServices.remove(key)?.cache?.clear()
@@ -557,6 +634,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             startCatalogObserver()
             if (identityState is IdentityState.Unlocked) connections.forEach { runtimes.discover(it, SyncPriority.VISIBLE, false) }
         }
+        discoverTowers()
     }
 
     /** The catalog (connections, workspace lists, preferences) drives the entries; changes are applied one at a time. */
@@ -594,7 +672,14 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             entry.colour = preferences.colour(entry.id)
         }
         entries = ordered
-        for (entry in ordered) if (entry.enabled) ensureRuntime(entry)
+        for (entry in ordered) {
+            if (entry.enabled) ensureRuntime(entry)
+            if (catalog.reader.state(indexPendingKey(entry)) != null) {
+                pendingIndexPublications = pendingIndexPublications + entry.id
+                privateIndexMessages = privateIndexMessages + (entry.id to "Workspace announcement pending. Connection is usable; retry publication.")
+                if (entry.enabled) retryPrivateWorkspaceIndex(entry)
+            }
+        }
         if (activeEntry?.enabled != true) chooseFallbackActive()
     }
 
@@ -666,7 +751,11 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         entry.enabled = enabled
         preferences = preferences.withEnabled(entry.id, enabled)
         // The synchronous gates close before anything else, so a click can never be outrun by a request already on its way.
-        if (!enabled) entry.runtime?.closeGates()
+        if (!enabled) {
+            entry.runtime?.closeGates()
+            indexPublicationJobs.remove(entry.id)?.cancel()
+            if (entry.id in pendingIndexPublications) privateIndexMessages = privateIndexMessages + (entry.id to "Workspace announcement pending while paused. Enable the workspace to retry.")
+        }
         act {
             // One change at a time, and the latest choice wins: a quick off then on (or the reverse) ends in what the person last
             // asked for, never in the earlier request's pause or start landing after the later one.
@@ -675,6 +764,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
                 if (entry.enabled) {
                     ensureRuntime(entry, force = true)
                     if (activeEntry?.enabled != true) activate(entry)
+                    retryPrivateWorkspaceIndex(entry)
                 } else {
                     entry.navJob?.cancel(); entry.navJob = null
                     entry.runtime?.pause()
@@ -725,6 +815,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     fun openWorkspace(entry: WorkspaceEntry, scopeId: String? = null, channelId: String? = null) = act {
         if (!entry.enabled) { entry.enabled = true; preferences = preferences.withEnabled(entry.id, true); WorkspaceCatalog.save(catalog, preferences); ensureRuntime(entry, force = true) }
         activate(entry)
+        retryPrivateWorkspaceIndex(entry)
         // An explicit open goes where it was asked to (Home when no scope or channel is named), as the old switcher did.
         if (activeBoundaryId == entry.id) selectContextNow(scopeId, channelId)
     }
@@ -802,9 +893,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         }
     }
     fun retryConnection() = act {
-        val c = connection ?: return@act
-        if (identityState !is IdentityState.Unlocked) return@act
-        runtimes.discover(c, SyncPriority.USER, true)
+        val signer = (identityState as? IdentityState.Unlocked)?.npub ?: return@act
+        WorkspaceCatalog.retryListings(catalog, signer, runtimes)
         resumeEnabled(force = true); refresh(force = true)
     }
     fun clearDiagnostics() = act {
@@ -853,4 +943,7 @@ private const val STRUCTURE_RECONCILE_MILLIS = 60_000L
 private const val BACKGROUND_ROTATION_KEY = "background.rotation"
 
 /** Constructor injection for isolated integration tests; no intent, setting or build mode can enable this seam. */
-data class AppSessionDependencies(val identity: IdentityService, val transport: HttpTransport, val streams: EventStreamTransport)
+data class AppSessionDependencies(
+    val identity: IdentityService, val transport: HttpTransport, val streams: EventStreamTransport,
+    val indexRelay: studio.otherstuff.ambulando.core.discovery.PrivateIndexRelay = studio.otherstuff.ambulando.core.discovery.PrivateIndexRelay { _, _ -> emptyList() },
+)

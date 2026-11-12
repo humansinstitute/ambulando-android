@@ -27,6 +27,17 @@ data class WorkspaceListing(val connection: ConnectionRecord, val workspace: Wor
 
 /** Reads and writes everything the catalog owns for multi-workspace use: listings, enabled set, order, colours, selection. */
 object WorkspaceCatalog {
+    /** First explicit Tower connection starts with no enabled workspace; upgrades keep their remembered/local-work migration. */
+    suspend fun prepareExplicitConnection(catalog: LocalStore) {
+        if (preferences(catalog) == null && catalog.reader.connections().isEmpty()) save(catalog, WorkspacePreferences())
+    }
+
+    /** Listing recovery is connection-scoped, so it also works before any workspace is enabled or active. */
+    suspend fun retryListings(catalog: LocalStore, signerNpub: String, discovery: studio.otherstuff.ambulando.core.sync.DiscoveryHook) {
+        val targets = catalog.reader.connections().filter { it.signerNpub == signerNpub }.distinctBy { it.id }.toList()
+        for (connection in targets) discovery.discover(connection, studio.otherstuff.ambulando.core.sync.SyncPriority.USER, true)
+    }
+
     /** The boundary id of the workspace in front. Empty selection is stored explicitly as the empty string. */
     const val SELECTED_KEY = "workspaces.selected.v1"
 

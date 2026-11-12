@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,7 +58,7 @@ fun WorkspaceChooser(model: AppModel, done: () -> Unit) {
     val amb = Amb.colors
     var adding by remember { mutableStateOf(false) }
     if (adding) { AddTower(model) { adding = false }; return }
-    val towers = model.entries.map { it.connection.origin }.distinct().sorted()
+    val towers = (model.connections.map { it.origin } + model.entries.map { it.connection.origin }).distinct().sorted()
     // This screen replaces the shell, so it must own the window insets. Keep dismissal outside the scrolling list.
     Column(Modifier.fillMaxSize().background(amb.background).windowInsetsPadding(WindowInsets.safeDrawing).testTag("workspace.selection")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -74,8 +75,11 @@ fun WorkspaceChooser(model: AppModel, done: () -> Unit) {
             for (tower in towers) {
                 Text(tower.removePrefix("https://"), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = amb.mutedForeground,
                     modifier = Modifier.padding(top = 8.dp).testTag("workspace.tower.$tower"))
-                for (entry in model.entries.filter { it.connection.origin == tower }) EntryRow(model, entry)
+                val listed = model.entries.filter { it.connection.origin == tower }
+                if (listed.isEmpty()) Text("No workspaces listed yet. Refresh the workspace lists to retry.", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground)
+                for (entry in listed) EntryRow(model, entry)
             }
+            OutlinedButton(onClick = { model.retryConnection() }, enabled = model.identityState is IdentityState.Unlocked && model.connections.isNotEmpty(), modifier = Modifier.fillMaxWidth().testTag("workspace.retryLists")) { Text("Refresh workspace lists") }
             HorizontalDivider(color = amb.border)
             OutlinedButton(onClick = { adding = true }, enabled = model.identityState is IdentityState.Unlocked, modifier = Modifier.fillMaxWidth().testTag("workspace.addTower")) {
                 Text("Add Tower connection")
@@ -105,6 +109,10 @@ private fun EntryRow(model: AppModel, entry: WorkspaceEntry) {
                 else if (!entry.enabled) Text("Paused", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
             }
         }
+        model.privateIndexMessages[entry.id]?.let { Text(it,style = MaterialTheme.typography.bodySmall,color = amb.mutedForeground) }
+        if (entry.id in model.pendingIndexPublications) {
+            TextButton(enabled = entry.enabled && model.identityState is IdentityState.Unlocked, onClick = { model.retryPrivateWorkspaceIndex(entry) }, modifier = Modifier.testTag("workspace.index.retry.${entry.id}")) { Text("Retry private workspace announcement") }
+        }
         Row(Modifier.padding(start = 34.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             for (colour in WorkspaceColour.entries) {
                 val chosen = entry.colour == colour
@@ -122,10 +130,7 @@ private fun EntryRow(model: AppModel, entry: WorkspaceEntry) {
 @Composable
 private fun AddTower(model: AppModel, done: () -> Unit) {
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-        ConnectScreen(model.identityState?.npub, model.notice, { origin -> runCatching {
-            val d = model.descriptor(origin)
-            DescriptorSummaryModel(d.tower?.availability?.status ?: "Available", d.tower?.protocols ?: emptyList(), d.services.map { it.kind }, d.advertisesFIPS)
-        } }) { origin -> model.connect(origin); done() }
+        studio.otherstuff.ambulando.app.ui.onboarding.DiscoveryConnectScreen(model, done)
         TextButton(onClick = done, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).testTag("workspace.addTower.cancel")) { Text("Cancel") }
     }
 }
@@ -134,13 +139,18 @@ private fun AddTower(model: AppModel, done: () -> Unit) {
 @Composable
 fun WorkspaceSelectionEmptyState(model: AppModel) {
     val amb = Amb.colors
+    val listingStatus by model.sharedEngine.status.collectAsState()
+    val failed = model.connections.any {
+        val key = studio.otherstuff.ambulando.core.sync.WorkspaceSync.discoverKey(it.id)
+        key in listingStatus.errors || key in listingStatus.connectionFailures
+    }
     var choosing by remember { mutableStateOf(false) }
     if (choosing) { WorkspaceChooser(model) { choosing = false }; return }
     Column(Modifier.fillMaxSize().background(amb.background).padding(24.dp).testTag("workspace.empty"), verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally) {
         if (model.entries.isEmpty()) {
-            Text("Finding your workspaces…", style = MaterialTheme.typography.titleMedium)
-            Text("Your Tower is being asked which workspaces this identity can use.", color = amb.mutedForeground, style = MaterialTheme.typography.bodyMedium)
+            Text(if (failed) "Could not list your workspaces" else "Finding your workspaces…", style = MaterialTheme.typography.titleMedium)
+            Text(if (failed) "Your Tower connection is kept. Retry the workspace list or choose another Tower." else "Your Tower is being asked which workspaces this identity can use.", color = amb.mutedForeground, style = MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick = { model.retryConnection() }, modifier = Modifier.testTag("workspace.empty.retry")) { Text("Retry") }
         } else {
             Text("Choose a workspace", style = MaterialTheme.typography.titleMedium)

@@ -34,10 +34,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         IdentityState.Unavailable -> IdentityUnavailableScreen(false) { model.identity.refreshAvailability() }
         is IdentityState.Locked -> LockScreen(identity.npub, model.notice, model::unlock)
         is IdentityState.Unlocked -> if (model.connections.isEmpty()) {
-            ConnectScreen(identity.npub, model.notice, { origin -> runCatching {
-                val d = model.descriptor(origin)
-                DescriptorSummaryModel(d.tower?.availability?.status ?: "Available", d.tower?.protocols ?: emptyList(), d.services.map { it.kind }, d.advertisesFIPS)
-            } }, model::connect)
+            DiscoveryConnectScreen(model)
         } else if (model.activeBoundaryId == null) {
             studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceSelectionEmptyState(model)
         } else if (model.active == null) {

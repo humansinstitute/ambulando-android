@@ -1,3 +1,9 @@
+## 0.9.7 (35)
+
+- Discover compatible private cross-app Tower indexes after sign-in/unlock; choose a Tower, then explicitly enable workspaces.
+- Publish native private workspace connection indexes after verified selection, with exact relay readback and durable retry.
+- Preserve existing multiple-Tower partitions, enabled workspace preferences, drafts and queued work; retain manual HTTPS entry.
+
 ## 0.9.6 (34)
 
 - Fix Garmin incoming-message crashes in minified releases by preserving cross-process Parcelable identities and preparing the SDK receiver classloader.

@@ -208,15 +208,19 @@ class TowerClient(val origin: TowerOrigin, val transport: HttpTransport, val sig
         val rows = ArrayList<JsonObject>()
         var cursor: String? = null
         val seen = HashSet<String>()
+        var pages = 0
         do {
+            if (++pages > 100) throw TowerError.ListLimitReached(key)
             val query = mutableListOf("limit" to LIST_PAGE_LIMIT.toString())
             cursor?.let { query.add("cursor" to it) }
             val data = request(path = path, query = query, appNpub = appNpub)
             val o = parseJsonObject(data, key)
+            if (o.bool("partial") == true || o.bool("complete") == false) throw TowerError.Malformed("$key incomplete page")
             val page = o.objects(key) ?: throw TowerError.Malformed(key)
             rows.addAll(page)
             cursor = o.string("next_cursor")
             if (cursor != null) {
+                if (page.isEmpty()) throw TowerError.Malformed("$key cursor")
                 if (cursor.isEmpty() || !seen.add(cursor)) throw TowerError.Malformed("$key cursor")
             } else if (o.bool("has_more") == true || page.size >= LIST_PAGE_LIMIT) {
                 throw TowerError.ListLimitReached(key)

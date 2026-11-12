@@ -277,6 +277,20 @@ class IdentityService(
         r.sign(template)
     }
 
+    /** Self-only private locator encryption; available only while the real vault is unlocked. */
+    suspend fun encryptPrivateIndex(plaintext: String): String = locked {
+        if (!vault.isUnlocked) throw IdentityError.Locked
+        val secret = vault.secretCopy()
+        try { Nip44Self.encrypt(secret, plaintext) } finally { secret.fill(0) }
+    }
+
+    /** Self-only private locator decryption. Background read credentials never authorize decryption or key export. */
+    suspend fun decryptPrivateIndex(payload: String): String = locked {
+        if (!vault.isUnlocked) throw IdentityError.Locked
+        val secret = vault.secretCopy()
+        try { Nip44Self.decrypt(secret, payload) } finally { secret.fill(0) }
+    }
+
     suspend fun publicKeyHex(): String = locked {
         val hex = vault.publicKeyHex
         if (vault.isUnlocked && hex != null) return@locked hex

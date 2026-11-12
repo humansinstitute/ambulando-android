@@ -10,6 +10,7 @@ dependencies {
     api(libs.kotlinx.coroutines.core)
     api(libs.kotlinx.serialization.json)
     api(libs.okhttp)
+    implementation(libs.bouncycastle)
     api(libs.secp256k1.kmp)
     api(libs.androidx.sqlite)
     api(libs.androidx.sqlite.bundled)

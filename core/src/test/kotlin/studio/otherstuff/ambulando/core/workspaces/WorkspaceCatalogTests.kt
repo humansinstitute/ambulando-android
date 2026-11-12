@@ -17,6 +17,30 @@ class WorkspaceCatalogTests {
     private val w2 = "00000000-0000-4000-8000-000000000002"
     private val w3 = "00000000-0000-4000-8000-000000000003"
 
+    @Test fun explicitFreshConnectionStaysUnselectedAndExistingPreferencesSurvive() = runBlocking {
+        val fresh = StoreFixtures.store()
+        WorkspaceCatalog.prepareExplicitConnection(fresh)
+        assertTrue(WorkspaceCatalog.preferences(fresh)!!.enabled.isEmpty())
+        assertNull(WorkspaceCatalog.selected(fresh))
+        val one = StoreFixtures.connect(fresh)
+        val two = StoreFixtures.connect(fresh, "https://second.example.com")
+        fresh.writer.replaceWorkspaces(one.id, listOf(StoreFixtures.workspace(w1, "One")))
+        fresh.writer.replaceWorkspaces(two.id, listOf(StoreFixtures.workspace(w1, "Same ID elsewhere")))
+        val listings = WorkspaceCatalog.listings(fresh, one.signerNpub)
+        assertEquals(2, listings.map { it.boundary.id }.toSet().size)
+        assertTrue(WorkspaceCatalog.preferences(fresh)!!.enabled.isEmpty())
+        val chosen = WorkspacePreferences().withEnabled(listings.first().id, true)
+        WorkspaceCatalog.save(fresh, chosen)
+        WorkspaceCatalog.saveSelected(fresh, listings.first().id)
+        WorkspaceCatalog.prepareExplicitConnection(fresh)
+        assertEquals(chosen, WorkspaceCatalog.preferences(fresh))
+        assertEquals(listings.first().id, WorkspaceCatalog.selected(fresh))
+        val legacy = StoreFixtures.store()
+        StoreFixtures.connect(legacy)
+        WorkspaceCatalog.prepareExplicitConnection(legacy)
+        assertNull(WorkspaceCatalog.preferences(legacy)) // Existing upgrade migration retains ownership.
+    }
+
     @Test fun preferencesRoundTripAndDamagedStateRestoresNothing() {
         val p = WorkspacePreferences().withEnabled("a", true).withEnabled("b", true).withEnabled("a", false)
             .withCollapsed("b", true).withColour("b", WorkspaceColour.PURPLE).withOrder(listOf("b", "a", "c"))

@@ -78,9 +78,10 @@ class WorkspaceSync(
     suspend fun checkDescriptor(origin: TowerOrigin): NStackDescriptor = api(origin, signed = false).descriptor()
 
     /** Validates the descriptor, binds the origin to the unlocked identity, and persists the connection. */
-    suspend fun connect(origin: TowerOrigin): ConnectionRecord {
+    suspend fun connect(origin: TowerOrigin, expectedTowerNpub: String? = null): ConnectionRecord {
         val npub = (identity.state() as? IdentityState.Unlocked)?.npub ?: throw IdentityError.Locked
         val descriptor = checkDescriptor(origin)
+        if (expectedTowerNpub != null && descriptor.stack?.towerNpub != expectedTowerNpub) throw TowerError.Descriptor("Tower identity changed; discover again")
         return store.writer.saveConnection(ConnectionRecord.create(origin, npub, descriptor.stack?.towerNpub))
     }
 

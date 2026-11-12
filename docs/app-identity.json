@@ -1,0 +1,10 @@
+{
+  "namespace": "flightdeck_pg",
+  "purpose": "Originating namespace for Ambulando native private workspace-self-index events only; never a workspace locator app identity or a signing identity",
+  "label": "org.wingman.nstack.app:studio.otherstuff.ambulando.native:v1",
+  "derivation": "SHA256 of UTF-8 label + ':' + decimal counter, starting at 0; choose the first digest that is a valid even-y secp256k1 x-only public point",
+  "counter": 1,
+  "app_pubkey": "5494fba97efec3d5d9c66047b17d2172bc6a8bd02e6d539b93d9353d7dcaf553",
+  "app_npub": "npub12j20h2t7lmpatkwxvprmzlfpw27x4z7s9ek48xunmy6n6lw274fs40dp7t",
+  "private_key": "No private scalar was generated, derived, stored or required. Events are signed by the user's unlocked identity."
+}
