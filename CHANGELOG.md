@@ -1,3 +1,7 @@
+## 0.9.11 (39)
+
+- Prepare the configured Firebase Messaging release while preserving current discovery, voice and Garmin behavior. Actual push availability also requires matching Tower configuration, Android permission and workspace opt-in.
+
 ## 0.9.10 (38)
 
 - Add a clean Ambulando Voice status/prompt screen with separate setup, an editable default instruction included with watch audio, and prompt pinning through retained drafts and retries. The Android app remains Ambulando.

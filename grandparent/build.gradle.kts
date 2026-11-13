@@ -52,6 +52,8 @@ dependencies {
     // Shared source includes Ambulando's optional push adapter; the family app does not enroll it.
     implementation("com.google.firebase:firebase-messaging:26.0.0")
     implementation(project(":core"))
+    // Shared source includes Garmin adapters even though the family UI does not expose them.
+    implementation("com.garmin.connectiq:ciq-companion-app-sdk:2.2.0@aar")
     implementation(libs.secp256k1.jni.android)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
