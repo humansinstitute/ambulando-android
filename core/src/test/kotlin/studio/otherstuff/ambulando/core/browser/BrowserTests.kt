@@ -43,6 +43,19 @@ class BrowserURLPolicyTest {
         assertEquals(BrowserURLPolicy.Decision.External(URI("nostr:npub1abc")), decide("nostr:npub1abc"))
     }
 
+    @Test fun navigationEncodesBrowserQueryCharactersWithoutWeakeningAuthority() {
+        val uri = BrowserURLPolicy.navigationAddress("https://example.com/next?q={value}|other&encoded=%2F")!!
+        assertEquals("https://example.com/next?q=%7Bvalue%7D%7Cother&encoded=%2F", uri.toString())
+        assertEquals(BrowserURLPolicy.Decision.Load, BrowserURLPolicy.decide(uri, true))
+        assertEquals("https://example.com", BrowserURLPolicy.origin(uri))
+        assertNull(BrowserURLPolicy.navigationAddress("https://example.com/\\evil"))
+        assertNull(BrowserURLPolicy.navigationAddress("https://example.com/\n"))
+        for (bad in listOf("https://user:pw@example.com/?q={x}", "https://node.fips/?q=|", "file:///tmp/a", "http://example.com/", "https://bad host/")) {
+            val parsed = BrowserURLPolicy.navigationAddress(bad)
+            assertTrue(bad, parsed == null || BrowserURLPolicy.decide(parsed, true) is BrowserURLPolicy.Decision.Refuse)
+        }
+    }
+
     @Test fun originsAndTypedAddresses() {
         assertEquals("https://example.com", BrowserURLPolicy.origin(URI("https://Example.com/x")))
         assertEquals("https://example.com:8443", BrowserURLPolicy.origin(URI("https://example.com:8443/x")))

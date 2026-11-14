@@ -86,6 +86,7 @@ import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.Notice
 import studio.otherstuff.ambulando.app.ui.theme.NoticeTone
 import studio.otherstuff.ambulando.app.ui.theme.PrimaryButton
+import studio.otherstuff.ambulando.core.browser.BrowserURLPolicy
 import studio.otherstuff.ambulando.core.browser.NIP07Decision
 import studio.otherstuff.ambulando.core.browser.NIP07Prompt
 import java.net.URI
@@ -103,7 +104,7 @@ fun BrowserScreen(browser: BrowserModel) {
     val context = LocalContext.current
     val tab = browser.selected
     BackHandler(enabled = browser.presented) {
-        if (tab != null && tab.canGoBack) tab.webView.goBack() else browser.hide()
+        if (tab != null && tab.canGoBack) browser.back(tab) else browser.hide()
     }
     Column(Modifier.fillMaxSize().background(amb.background).statusBarsPadding().testTag("browser")) {
         val unavailable = browser.unavailable
@@ -191,8 +192,8 @@ private fun BottomBar(browser: BrowserModel, tab: BrowserTab?) {
                 TextButton(onClick = { editing = false }) { Text("Cancel") }
             } else {
                 IconButton(onClick = { browser.hide() }, modifier = Modifier.semantics { contentDescription = "Back to Ambulando" }.testTag("browser.ambulando")) { PassageMark(22.dp) }
-                IconButton(onClick = { tab?.webView?.goBack() }, enabled = tab?.canGoBack == true) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
-                IconButton(onClick = { tab?.webView?.goForward() }, enabled = tab?.canGoForward == true) { Icon(Icons.AutoMirrored.Outlined.ArrowForward, "Forward") }
+                IconButton(onClick = { tab?.let { browser.back(it) } }, enabled = tab?.canGoBack == true) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
+                IconButton(onClick = { tab?.let { browser.forward(it) } }, enabled = tab?.canGoForward == true) { Icon(Icons.AutoMirrored.Outlined.ArrowForward, "Forward") }
                 Row(
                     Modifier.weight(1f).heightIn(min = 36.dp).background(amb.muted, RoundedCornerShape(10.dp))
                         .clickable { address = tab?.url?.takeUnless { tab.isBlank }.orEmpty(); editing = true }
@@ -201,7 +202,7 @@ private fun BottomBar(browser: BrowserModel, tab: BrowserTab?) {
                 ) {
                     if (tab?.origin != null) Icon(Icons.Outlined.Lock, contentDescription = "Secure", tint = amb.mutedForeground, modifier = Modifier.size(14.dp))
                     Text(
-                        tab?.url?.takeUnless { tab.isBlank }?.let { runCatching { URI(it).host }.getOrNull() } ?: "Search or enter address",
+                        tab?.url?.takeUnless { tab.isBlank }?.let { BrowserURLPolicy.navigationAddress(it)?.host ?: it.takeIf { value -> value == "about:blank" } } ?: "Search or enter address",
                         style = MaterialTheme.typography.bodyMedium, color = if (tab?.isBlank != false) amb.mutedForeground else amb.foreground,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
@@ -218,7 +219,7 @@ private fun BottomBar(browser: BrowserModel, tab: BrowserTab?) {
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         if (tab != null) {
                             if (tab.loading) DropdownMenuItem(text = { Text("Stop loading") }, leadingIcon = { Icon(Icons.Outlined.Close, null) }, onClick = { menu = false; tab.webView.stopLoading() })
-                            else if (!tab.isBlank) DropdownMenuItem(text = { Text("Reload") }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) }, onClick = { menu = false; tab.webView.reload() })
+                            else if (!tab.isBlank) DropdownMenuItem(text = { Text("Reload") }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) }, onClick = { menu = false; browser.reload(tab) })
                             val url = tab.url
                             if (url != null && url.startsWith("https://")) {
                                 DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Outlined.Share, null) }, onClick = {

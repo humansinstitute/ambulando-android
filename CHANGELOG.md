@@ -1,3 +1,9 @@
+## 0.9.12 (40)
+
+- Keep opener-written blank popups visible, preserve native popup/opener and POST behavior, return to the opener when closing, and refuse excess popups without evicting existing tabs.
+- Accept browser-valid HTTPS query characters without weakening origin checks; retain normal redirect/history handling and the shared isolated browser session.
+- Show main-page network, HTTP and certificate failures with retry guidance while keeping TLS validation and HTTPS-only navigation. Honor mobile viewport metadata.
+
 ## 0.9.11 (39)
 
 - Prepare the configured Firebase Messaging release while preserving current discovery, voice and Garmin behavior. Actual push availability also requires matching Tower configuration, Android permission and workspace opt-in.

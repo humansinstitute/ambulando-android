@@ -18,6 +18,19 @@ object BrowserURLPolicy {
         data class Refuse(val reason: String) : Decision
     }
 
+    /** Browser URL paths/queries may contain these characters; encode them without changing URL structure.
+     * Keep authority validation strict and reject backslashes, which browsers interpret differently from URI.
+     */
+    fun navigationAddress(text: String): URI? {
+        if ('\\' in text || text.any { it.code < 0x20 || it.code == 0x7f }) return null
+        val escaped = buildString {
+            text.forEach { c ->
+                if (c in "{}|^`<>\" ") append("%" + c.code.toString(16).uppercase().padStart(2, '0')) else append(c)
+            }
+        }
+        return parseUri(escaped)
+    }
+
     val externalSchemes: Set<String> = setOf("mailto", "tel", "sms", "facetime", "facetime-audio", "lightning", "nostr")
     internal val frameSchemes: Set<String> = setOf("about", "data", "blob")
     internal val knownSchemes: Set<String> = externalSchemes + frameSchemes + setOf("http", "file", "javascript", "ftp", "ws", "wss", "storage")
@@ -63,7 +76,7 @@ object BrowserURLPolicy {
     fun typedAddress(text: String): URI? {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || trimmed.contains(" ")) return null
-        val url = parseUri(trimmed)
+        val url = navigationAddress(trimmed)
         val scheme = url?.scheme?.lowercase()
         if (url != null && scheme != null) {
             if (scheme == "https") return if (decide(url, mainFrame = true) == Decision.Load) url else null
@@ -72,7 +85,7 @@ object BrowserURLPolicy {
             if (scheme in knownSchemes) return null
         }
         if (!trimmed.contains(".")) return null
-        val prefixed = parseUri("https://$trimmed") ?: return null
+        val prefixed = navigationAddress("https://$trimmed") ?: return null
         return if (decide(prefixed, mainFrame = true) == Decision.Load) prefixed else null
     }
 }

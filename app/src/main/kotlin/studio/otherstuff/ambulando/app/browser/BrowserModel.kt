@@ -55,7 +55,7 @@ import java.net.URI
 import java.util.UUID
 
 /** One browser tab: a live WebView (page, scroll and history stay while other tabs or Ambulando are shown). */
-class BrowserTab internal constructor(val webView: WebView) {
+class BrowserTab internal constructor(val webView: WebView, val openerId: UUID? = null) {
     val id: UUID = UUID.randomUUID()
     var title by mutableStateOf("")
     var url by mutableStateOf<String?>(null)
@@ -71,9 +71,11 @@ class BrowserTab internal constructor(val webView: WebView) {
     @Volatile var origin: String? = null
     /** The WApp or artifact address this tab was opened for from an Ambulando launcher. */
     var launchURL: String? = null
+    /** Provisional main-frame URL, including TLS failures that never reach onPageStarted. */
+    internal var pendingNavigationURL: String? = null
 
-    val isBlank: Boolean get() = url == null || url?.startsWith("about:") == true
-    val displayTitle: String get() = title.ifEmpty { url?.let { runCatching { URI(it).host }.getOrNull() } ?: "New tab" }
+    val isBlank: Boolean get() = openerId == null && (url == null || url?.startsWith("about:") == true)
+    val displayTitle: String get() = title.ifEmpty { url?.let { BrowserURLPolicy.navigationAddress(it)?.host } ?: if (openerId != null) "New window" else "New tab" }
 }
 
 /** Where the favourites list is kept: device app state (`BrowserFavourites.STATE_KEY`). Null clears it. */
@@ -317,7 +319,7 @@ class BrowserModel(private val context: Context) {
      * the address is not one the browser opens.
      */
     fun launch(url: String): Boolean {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        val uri = BrowserURLPolicy.navigationAddress(url) ?: return false
         if (BrowserURLPolicy.decide(uri, mainFrame = true) != BrowserURLPolicy.Decision.Load) return false
         val existing = tabs.firstOrNull { it.launchURL == url }
         if (existing != null) select(existing) else {
@@ -352,18 +354,23 @@ class BrowserModel(private val context: Context) {
         WebViewCompat.removeWebMessageListener(tab.webView, "ambulandoFiles")
         tab.webView.destroy()
         tabs.removeAt(index)
-        if (selectedId == tab.id) selectedId = tabs.getOrNull(index)?.id ?: tabs.lastOrNull()?.id
+        if (selectedId == tab.id) selectedId = tabs.firstOrNull { it.id == tab.openerId }?.id ?: tabs.getOrNull(index)?.id ?: tabs.lastOrNull()?.id
         if (tabs.isEmpty()) { presented = false; showingTabs = false }
     }
 
     fun closeAll() { tabs.toList().forEach { close(it) } }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun addTab(): BrowserTab? {
+    private fun addTab(opener: BrowserTab? = null): BrowserTab? {
         if (!WebProfiles.supported || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
             !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
         ) {
             unavailable = WebProfiles.UNSUPPORTED_MESSAGE
+            return null
+        }
+        // A popup must never evict its opener (including a background opener) or another active session.
+        if (tabs.size >= MAX_TABS && opener != null) {
+            opener.refusal = "Close a browser tab before opening another popup."
             return null
         }
         if (tabs.size >= MAX_TABS) tabs.firstOrNull { it.id != selectedId }?.let { close(it) }
@@ -387,8 +394,10 @@ class BrowserModel(private val context: Context) {
             safeBrowsingEnabled = true
             builtInZoomControls = true
             displayZoomControls = false
+            useWideViewPort = true
+            loadWithOverviewMode = true
         }
-        val tab = BrowserTab(webView)
+        val tab = BrowserTab(webView, opener?.id)
         webView.webViewClient = TabClient(tab)
         webView.webChromeClient = TabChrome(tab)
         webView.setDownloadListener { url, _, disposition, mime, _ ->
@@ -433,10 +442,11 @@ class BrowserModel(private val context: Context) {
     }
 
     fun load(url: String, tab: BrowserTab) {
-        val uri = runCatching { URI(url) }.getOrNull() ?: run { tab.refusal = "This address could not be read."; return }
+        val uri = BrowserURLPolicy.navigationAddress(url) ?: run { tab.refusal = "This address could not be read."; return }
         when (val decision = BrowserURLPolicy.decide(uri, mainFrame = true)) {
             BrowserURLPolicy.Decision.Load -> {
                 tab.refusal = null
+                tab.pendingNavigationURL = uri.toString()
                 val sample = samplePage
                 if (sample != null && runCatching { URI(sample.first).host }.getOrNull() == uri.host) {
                     tab.webView.loadDataWithBaseURL(sample.first, sample.second, "text/html", "utf-8", null)
@@ -454,7 +464,7 @@ class BrowserModel(private val context: Context) {
      * false so the caller hands them to Android as before.
      */
     fun handleLink(url: String): Boolean {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        val uri = BrowserURLPolicy.navigationAddress(url) ?: return false
         return when (val decision = BrowserURLPolicy.decide(uri, mainFrame = true)) {
             BrowserURLPolicy.Decision.Load -> { open(url); true }
             is BrowserURLPolicy.Decision.External -> false
@@ -498,13 +508,17 @@ class BrowserModel(private val context: Context) {
         tabs.forEach { it.webView.clearCache(true) }
     }
 
+    fun reload(tab: BrowserTab) { tab.refusal = null; tab.pendingNavigationURL = tab.webView.url; tab.webView.reload() }
+    fun back(tab: BrowserTab) { tab.refusal = null; tab.webView.goBack() }
+    fun forward(tab: BrowserTab) { tab.refusal = null; tab.webView.goForward() }
+
     // WebView plumbing
 
     private fun committed(tab: BrowserTab, url: String?) {
         cancelFileRequests(tab)
         tab.documentId += 1
-        tab.origin = BrowserURLPolicy.origin(url?.let { runCatching { URI(it) }.getOrNull() })
-        tab.refusal = null
+        tab.origin = BrowserURLPolicy.origin(url?.let { BrowserURLPolicy.navigationAddress(it) })
+        // HTTP errors may arrive before onPageStarted; clearing here hides the failure immediately.
         broker?.documentChanged(tab.id, tab.documentId)
     }
 
@@ -551,10 +565,45 @@ class BrowserModel(private val context: Context) {
             unavailable = "The browser tab stopped. Open the address again to retry."
             return true
         }
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+            if (!request.isForMainFrame) return
+            tab.loading = false
+            tab.origin = null
+            broker?.tabClosed(tab.id)
+            tab.refusal = "Could not load ${hostOf(request.url.toString())}: ${error.description}. Check the address or connection and retry."
+        }
+
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: android.webkit.WebResourceResponse) {
+            if (request.isForMainFrame) {
+                tab.loading = false
+                tab.refusal = "${hostOf(request.url.toString())} returned HTTP ${response.statusCode}. Retry or check the address."
+            }
+        }
+
+        // Never replace certificate validation with a retry or proceed() fallback.
+        override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) {
+            handler.cancel()
+            if (error.url == tab.pendingNavigationURL || error.url == tab.url) {
+                tab.loading = false
+                tab.origin = null
+                broker?.tabClosed(tab.id)
+                tab.refusal = "Could not establish a secure connection to ${hostOf(error.url)}. The website’s certificate could not be verified."
+            }
+        }
+
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val uri = runCatching { URI(request.url.toString()) }.getOrNull() ?: return true
+            val uri = BrowserURLPolicy.navigationAddress(request.url.toString()) ?: run {
+                if (request.isForMainFrame) tab.refusal = "This address could not be read."
+                return true
+            }
             return when (val decision = BrowserURLPolicy.decide(uri, request.isForMainFrame)) {
-                BrowserURLPolicy.Decision.Load -> false
+                BrowserURLPolicy.Decision.Load -> {
+                    if (request.isForMainFrame) {
+                        tab.refusal = null
+                        tab.pendingNavigationURL = request.url.toString()
+                    }
+                    false
+                }
                 is BrowserURLPolicy.Decision.External -> {
                     // Other apps open only from a navigation the user started, and only after a confirmation.
                     if (request.isForMainFrame && request.hasGesture()) pendingExternal = decision.url.toString()
@@ -567,6 +616,7 @@ class BrowserModel(private val context: Context) {
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             committed(tab, url)
             tab.url = url
+            tab.pendingNavigationURL = url
             tab.loading = true
             update(view)
         }
@@ -597,7 +647,9 @@ class BrowserModel(private val context: Context) {
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             if (!isUserGesture) return false
             val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
-            val child = addTab() ?: return false
+            val child = addTab(opener = tab) ?: return false
+            // Opener-written about:blank documents need not emit navigation/title callbacks.
+            child.url = "about:blank"
             transport.webView = child.webView
             resultMsg.sendToTarget()
             presented = true
@@ -627,5 +679,5 @@ class BrowserModel(private val context: Context) {
         override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback) = callback.invoke(origin, false, false)
     }
 
-    private fun hostOf(url: String?): String = url?.let { runCatching { URI(it).host }.getOrNull() } ?: "This page"
+    private fun hostOf(url: String?): String = url?.let { BrowserURLPolicy.navigationAddress(it)?.host } ?: "This page"
 }
