@@ -55,7 +55,10 @@ internal class BrowserHttpsFixture : AutoCloseable {
                             val response = respond(Request(first[0], first[1], headers, String(body)))
                             val bytes = response.body.toByteArray()
                             val head = buildString {
-                                append("HTTP/1.1 ${response.status} Fixture\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n")
+                                append("HTTP/1.1 ${response.status} Fixture\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n")
+                                if (response.headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
+                                    append("Content-Type: text/html; charset=utf-8\r\n")
+                                }
                                 response.headers.forEach { (k,v) -> append("$k: $v\r\n") }
                                 append("\r\n")
                             }

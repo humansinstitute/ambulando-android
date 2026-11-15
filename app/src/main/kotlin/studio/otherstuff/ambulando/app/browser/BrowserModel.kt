@@ -379,7 +379,14 @@ class BrowserModel(private val context: Context) {
             return null
         }
         if (tabs.size >= MAX_TABS) tabs.firstOrNull { it.id != selectedId }?.let { close(it) }
-        val webView = WebView(context)
+        val webView = WebView(context).apply {
+            // WebView treats a wrap-content height as content-sized even when Compose measures it
+            // to fill the screen. Give CSS percentages and viewport units a definite viewport.
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
         try {
             WebProfiles.assign(webView, WebProfiles.BROWSER)
         } catch (e: WebSurfaceUnavailable) {

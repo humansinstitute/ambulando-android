@@ -4,6 +4,11 @@ The browser uses the device's Android System WebView, its normal user agent and 
 Editors and artefacts retain separate profiles. Updating Android System WebView or Chrome is required when the
 provider lacks the existing multi-profile, document-start script or message-listener features; isolation fails closed.
 
+The browser WebView has explicit match-parent layout dimensions inside its Compose container. Without them,
+WebView can treat the page as content-sized despite filling the screen visually: percentage-height and viewport-based
+layouts can collapse an iframe to zero height while its resources and JavaScript still load. Native sizing gives
+the page a definite viewport and follows container resizing without injecting CSS or changing page authentication.
+
 HTTPS navigations stay with WebView, including server redirects and history. Browser-valid characters such as braces
 and pipes in paths/queries are escaped for Java URI policy checks without decoding existing escapes or changing URL
 structure. Invalid authorities, embedded credentials, backslashes, control characters, HTTP, local files and FIPS
@@ -29,6 +34,10 @@ opener communication, HTTP/subframe failures, invalid TLS and tab-limit fixtures
 key is in Android-test assets. Only the debug manifest trusts its test certificate, only for `localhost`; release
 builds contain neither that trust configuration nor the private test key. The same certificate reached through
 `127.0.0.1` must fail validation. This is a fixture trust anchor, never an SSL error-handler bypass.
+
+`BrowserViewportTest` checks visible dimensions as well as loaded content for a cookie-protected same-origin frame
+and nested frame. It covers container resizing, switching tabs, history and retained local storage; subframes still
+receive no native Nostr provider. Its fixture contains no real dashboard or private user data.
 
 Build `:app:assembleDebug :app:assembleDebugAndroidTest`, install both APKs on a dedicated emulator, then run
 `androidx.test.runner.AndroidJUnitRunner` with the `BrowserNavigationTest`, `BrowserNostrTest`, `BrowserFilesTest`,

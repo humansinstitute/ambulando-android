@@ -1,3 +1,8 @@
+## 0.9.14 (42)
+
+- Give browser pages a definite viewport so full-height private dashboards and nested frames remain visible.
+- Preserve browser cookies, local notes, native Nostr consent and isolated website data.
+
 ## 0.9.13 (41)
 
 - Support NIP-44 v2 self and peer encryption/decryption in the embedded browser using the active unlocked account.
