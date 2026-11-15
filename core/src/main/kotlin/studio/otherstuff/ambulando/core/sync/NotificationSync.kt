@@ -53,6 +53,7 @@ suspend fun WorkspaceSync.refreshNotifications(
     connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
 ) {
     if (workspace.accessRemoved) return
+    refreshAttentionPreference(connection, workspace, priority, force)
     engine.enqueueRead(WorkspaceSync.notificationsKey(workspace.id), priority, force) { runNotifications(connection, workspace) }
 }
 

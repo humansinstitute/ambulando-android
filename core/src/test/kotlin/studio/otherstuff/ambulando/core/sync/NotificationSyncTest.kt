@@ -481,7 +481,7 @@ class NotificationSyncTest {
             h.sync.refreshNotifications(h.connection, workspace, force = true); idle(h)
             h.sync.reconcileNotificationCounts(h.connection, workspace)
             h.writes.submitNotificationBulk(h.connection, workspace, NotificationBulkOp.MARK_READ, upToSeq = 5); idle(h)
-            val reads = h.transport.recorded.filter { it.method == "GET" }
+            val reads = h.transport.recorded.filter { it.method == "GET" && pathOf(it.url).contains("/notifications/") }
             assertTrue(reads.isNotEmpty() && reads.all { queryOf(it.url)["client_app_id"] == "ambulando" })
             val replay = h.transport.recorded.last { pathOf(it.url).endsWith("/changes") }
             assertEquals("11", queryOf(replay.url)["rules_revision"])

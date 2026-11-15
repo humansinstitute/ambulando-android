@@ -1,5 +1,8 @@
 package studio.otherstuff.ambulando.app
 
+import studio.otherstuff.ambulando.core.sync.attentionPreference
+import studio.otherstuff.ambulando.core.sync.refreshAttentionPreference
+import studio.otherstuff.ambulando.core.sync.setAttentionType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -100,6 +103,7 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
                 FormDivider()
                 SettingsToggle("Context", model.showContext, "settings.sections.context") { model.showContext = it; model.act { model.catalog.writer.setState("settings.context", it.toString()) } }
             }
+            NativeAttentionSettings(model)
             FormGroup("Documents", "Choose how existing documents open. You can still switch between View and Edit inside a document.") {
                 Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(horizontal = 16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Text("Open documents in", Modifier.weight(1f), color = amb.foreground)
@@ -211,4 +215,29 @@ private fun nameSourceLine(me: studio.otherstuff.ambulando.core.profiles.PersonD
         }
         override fun reload() { attempt += 1 }
     })
+}
+
+@Composable private fun NativeAttentionSettings(model: AppModel) {
+    val c = model.connection ?: return
+    val w = model.workspace ?: return
+    val state by remember(c.id, w.id) { model.store.liveQuery({ it.table == StoreTable.APP_STATE }) {
+        model.store.reader.attentionPreference(c.id, w.id)
+    } }.collectAsState(studio.otherstuff.ambulando.core.sync.AttentionPreferenceState())
+    LaunchedEffect(c.id, w.id) { model.sync.refreshAttentionPreference(c, w, force = true) }
+    FormGroup("Unread and Mentions", "Choose item types for unread activity, mentions and their badges in this workspace. The same choice syncs across your devices. Hidden items stay unread; all-record views and direct links stay available.") {
+        listOf("chat" to "Chats", "document" to "Documents", "task" to "Tasks", "file" to "Files", "other" to "Other notifications").forEach { (kind, label) ->
+            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(horizontal = 16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(label, Modifier.weight(1f), color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.foreground)
+                Switch(state.types.includes(kind), { on -> model.act { model.sync.setAttentionType(c, w, kind, on) } },
+                    Modifier.testTag("settings.attentionTypes.$kind"), enabled = state.editable)
+            }
+        }
+        val message = state.message ?: when {
+            !state.ready -> "Connect to load these settings before choosing."
+            !state.types.supported -> "These settings use a newer format. Update the app before changing them."
+            else -> null
+        }
+        message?.let { Text(it, Modifier.padding(16.dp), color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground) }
+        TextButton(onClick = { model.act { model.sync.refreshAttentionPreference(c, w, force = true) } }) { Text("Refresh settings") }
+    }
 }

@@ -3,6 +3,7 @@ package studio.otherstuff.ambulando.app
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.collectLatest
+import studio.otherstuff.ambulando.core.sync.attentionPreference
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -204,8 +205,8 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         management?.let { target -> WorkspaceManagement(model, target) { management = null }; return@CompositionLocalProvider }
         if (search) { NativeSearch(model) { search = false }; return@CompositionLocalProvider }
         if (notifications) { NativeNotifications(model) { notifications = false }; return@CompositionLocalProvider }
-        val notificationUnread by remember(c.id, w?.id) { model.store.liveQuery({ it.table == StoreTable.NOTIFICATIONS }) { w?.let { model.store.reader.notificationCounts(c.id, it.id).unread } ?: 0 } }.collectAsState(0)
-        val unread by remember(w?.id) { model.store.liveQuery({ it.workspaceId == w?.id }) { w?.let { model.store.reader.unreadChannelIds(it.id) } ?: emptySet() } }.collectAsState(emptySet())
+        val notificationUnread by remember(model.activeBoundaryId, c.id, w?.id) { model.store.liveQuery({ it.table == StoreTable.NOTIFICATIONS || it.table == StoreTable.APP_STATE }) { w?.let { ws -> val types = model.store.reader.attentionPreference(c.id, ws.id).types; model.store.reader.notificationRows(c.id, ws.id, studio.otherstuff.ambulando.core.transport.NotificationView.ALL, limit = Int.MAX_VALUE).count { it.unread && types.includes(studio.otherstuff.ambulando.core.preferences.AttentionTypes.notificationType(it.item.target?.kind)) } } ?: 0 } }.collectAsState(0)
+        val unread by remember(model.activeBoundaryId, c.id, w?.id) { model.store.liveQuery({ it.workspaceId == w?.id || it.table == StoreTable.APP_STATE }) { w?.let { ws -> val types = model.store.reader.attentionPreference(c.id, ws.id).types; model.store.reader.viewStates(ws.id).filter { (it.unread || it.needsAttention) && types.includes(studio.otherstuff.ambulando.core.preferences.AttentionTypes.notificationType(it.resourceType.wire)) }.mapNotNull { it.channelId }.toSet() } ?: emptySet() } }.collectAsState(emptySet())
         val people by remember(c.id, w?.id) { model.store.liveQuery({ it.workspaceId == w?.id || it.table == StoreTable.PROFILES }) { w?.let { model.store.reader.people(c.id, it.id) } } }.collectAsState(null)
         person?.let { npub ->
             AlertDialog(onDismissRequest = { person = null }, title = { Text(people?.name(npub) ?: "Workspace member") }, text = { Column { people?.person(npub)?.let { PersonAvatar(it) }; Text(npub) } }, confirmButton = { TextButton(onClick = { person = null }) { Text("Done") } })
@@ -214,7 +215,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         val groups = model.scopes.map { scope -> studio.otherstuff.ambulando.core.context.SidebarGroup(
             studio.otherstuff.ambulando.core.context.NavScope(scope.id, scope.name, scope.kind),
             model.channels.filter { it.scopeId == scope.id }.map { studio.otherstuff.ambulando.core.context.NavChannel(it.id, it.scopeId, it.name, it.kind) }, studio.otherstuff.ambulando.core.context.SidebarNavigation.isDirectMessageScope(studio.otherstuff.ambulando.core.context.NavScope(scope.id, scope.name, scope.kind))) }
-        fun choose(scopeId: String?, channelId: String?) { if (!model.viewLocked) { stacks.resetContextBound(); model.selectContext(scopeId, channelId) }; sidebar = false }
+        fun choose(scopeId: String?, channelId: String?) { if (!model.viewLocked) { stacks.resetContextBound(); model.section = AppSection.DECK; model.selectContext(scopeId, channelId) }; sidebar = false }
         val actions = object : ShellActions {
             override fun select(section: AppSection) { focusManager.clearFocus(force = true); keyboard?.hide(); model.section = section; model.refresh() }
             override fun reselect(section: AppSection) { stacks.popToRoot(section) }
@@ -288,7 +289,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 override fun retry() { model.retryConnection() }
                 override fun close() { sidebar = false }
                 override fun chooseWorkspaces() { sidebar = false; chooser = true }
-                override fun openIn(id: String, scopeId: String?, channelId: String?) { model.entries.firstOrNull { it.id == id }?.let { stacks.resetContextBound(); model.openWorkspace(it, scopeId, channelId) } }
+                override fun openIn(id: String, scopeId: String?, channelId: String?) { model.entries.firstOrNull { it.id == id }?.let { stacks.resetContextBound(); model.section = AppSection.DECK; model.openWorkspace(it, scopeId, channelId) } }
                 override fun toggleWorkspaceCollapsed(id: String) { model.entries.firstOrNull { it.id == id }?.let(model::toggleWorkspaceCollapsed) }
                 override fun toggleScopeIn(id: String, scopeId: String) { model.entries.firstOrNull { it.id == id }?.let { model.toggleScopeCollapsed(it, scopeId) } }
                 override fun moveWorkspace(id: String, offset: Int) { model.entries.firstOrNull { it.id == id }?.let { model.moveWorkspace(it, offset) } }

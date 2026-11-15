@@ -1,5 +1,8 @@
 package studio.otherstuff.ambulando.app.ui.deck
 
+import studio.otherstuff.ambulando.core.sync.attentionPreference
+import studio.otherstuff.ambulando.core.store.StoreTable
+import studio.otherstuff.ambulando.core.store.liveQuery
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.size
@@ -89,6 +92,9 @@ import studio.otherstuff.ambulando.core.store.LocalStore
     val query by rememberPausableQuery(DeckInboxSnapshot(), store, visible, "inbox:$screen", DeckInbox.matches(screen.workspaceId), { intents.refreshInbox(navigation.context) }) {
         DeckInbox.load(store, screen.workspaceId, screen.signerNpub, navigation.context, navigation.context.scopeId?.let { navigation.channels().map { it.id } })
     }
+    val attention by remember(store, screen.connectionId, screen.workspaceId) { store.liveQuery({ it.table == StoreTable.APP_STATE }) {
+        store.reader.attentionPreference(screen.connectionId, screen.workspaceId).types
+    } }.collectAsState(studio.otherstuff.ambulando.core.preferences.AttentionTypes())
     // Every record type shows until its toggle is turned off (iOS `kinds`).
     var kinds by remember { mutableStateOf(DeckActivity.Kind.entries.toSet()) }
     var search by remember { mutableStateOf("") }
@@ -96,7 +102,7 @@ import studio.otherstuff.ambulando.core.store.LocalStore
     val channel = navigation.channel(navigation.context.channelId)
     val snapshot = query.value
     fun markAll(label: String, of: Set<DeckActivity.Kind>) {
-        val states = snapshot.items.filter { it.isUnread && it.kind in of }.mapNotNull { snapshot.viewState(it) }
+        val states = snapshot.items.filter { it.isUnread && it.kind in of && it.kind in kinds && attention.includes(it.kind.name.lowercase()) && (search.isBlank() || it.searchText.contains(search.trim().lowercase())) }.mapNotNull { snapshot.viewState(it) }
         if (states.isNotEmpty()) intents.markRead(states)
     }
     DeckCardFrame(channel?.let { "Inbox: #${navigation.label(it)}" } ?: "Inbox", "inbox", actions = {
@@ -123,7 +129,7 @@ import studio.otherstuff.ambulando.core.store.LocalStore
             }
         }
         query.error?.let { item { DeckNote(it) } }
-        val shown = snapshot.items.filter { it.kind in kinds && (search.isBlank() || it.searchText.contains(search.trim().lowercase())) }
+        val shown = snapshot.items.filter { attention.showsActivity(it.isUnread, it.kind.wire) && it.kind in kinds && (search.isBlank() || it.searchText.contains(search.trim().lowercase())) }
         if (shown.isEmpty()) item { DeckNote(when {
             kinds.isEmpty() -> "All record types are hidden. Turn on a type to show activity."
             !query.loaded -> "Loading activity…"

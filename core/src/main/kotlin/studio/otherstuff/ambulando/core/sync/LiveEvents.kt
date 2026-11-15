@@ -135,6 +135,7 @@ class EventPlan {
                     }
                     "resource_view_state" -> plan.refreshes.add(Refresh.Inbox)
                     "notification_item" -> plan.refreshes.add(Refresh.Notifications)
+                    "private_preference" -> plan.refreshes.add(Refresh.Notifications)
                     "scope", "channel" -> plan.refreshes.add(Refresh.Structure)
                     "canvas", "canvas_order" -> {
                         plan.refreshes.add(Refresh.Canvases)

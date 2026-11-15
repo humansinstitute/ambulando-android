@@ -16,6 +16,8 @@ import studio.otherstuff.ambulando.core.notifications.NotificationFilter
 import studio.otherstuff.ambulando.core.notifications.NotificationInboxLogic
 import studio.otherstuff.ambulando.core.notifications.NotificationRouting
 import studio.otherstuff.ambulando.core.store.*
+import studio.otherstuff.ambulando.core.preferences.AttentionTypes
+import studio.otherstuff.ambulando.core.sync.attentionPreference
 import studio.otherstuff.ambulando.core.sync.ObservedNotification
 import studio.otherstuff.ambulando.core.sync.WorkspaceSync
 import studio.otherstuff.ambulando.core.sync.refreshNotificationItem
@@ -37,12 +39,13 @@ private data class InboxData(val rows: List<NotificationRow>, val categories: Li
     val filter = filterState.value
     var detail by remember { mutableStateOf<NotificationRow?>(null) }
     val data by remember(c.id, w.id, filter) {
-        model.store.liveQuery({ it.table == StoreTable.NOTIFICATIONS && (it.workspaceId == null || it.workspaceId == w.id) }) {
+        model.store.liveQuery({ (it.table == StoreTable.NOTIFICATIONS || it.table == StoreTable.APP_STATE) && (it.workspaceId == null || it.workspaceId == w.id) }) {
             val r = model.store.reader
+            val types = r.attentionPreference(c.id, w.id).types
             val all = r.notificationRows(c.id, w.id, NotificationView.ALL, limit = Int.MAX_VALUE)
             InboxData(
-                r.notificationRows(c.id, w.id, filter.view, filter.category), all.map { it.item.category }.distinct(),
-                r.notificationCounts(c.id, w.id).unread, r.notificationSync(c.id, w.id), all.size, r.notificationMaxSeq(c.id, w.id),
+                r.notificationRows(c.id, w.id, filter.view, filter.category, limit = Int.MAX_VALUE).filter { types.showsNotification(filter.view.wire, it.item.category, it.item.target?.kind) }.take(500), all.map { it.item.category }.distinct(),
+                all.count { it.unread && types.includes(AttentionTypes.notificationType(it.item.target?.kind)) }, r.notificationSync(c.id, w.id), all.size, r.notificationMaxSeq(c.id, w.id),
             )
         }
     }.collectAsState(null)
@@ -59,7 +62,7 @@ private data class InboxData(val rows: List<NotificationRow>, val categories: Li
         empty = NotificationInboxLogic.emptyReason(current?.sync, current?.rows ?: emptyList(), current?.held ?: 0, filter, key in engine.running || key in engine.queued || current == null),
         syncing = key in engine.running, error = engine.errors[key], message = model.notificationMessage, canChange = unlocked && !w.accessRemoved,
     )
-    val actions = remember(c.id, w.id, current?.maxSeq, filter) { object : NotificationsActions {
+    val actions = object : NotificationsActions {
         override fun open(row: NotificationRow) {
             when (val destination = NotificationRouting.destination(row.item)) {
                 NotificationDestination.Unavailable -> {
@@ -88,11 +91,11 @@ private data class InboxData(val rows: List<NotificationRow>, val categories: Li
             model.act { model.store.reader.notificationRow(c.id, w.id, row.id)?.let { model.changeNotification(row.id, NotificationPatch(dismissed = false), it.observed()) } }
         }
         override fun setArchived(row: NotificationRow, archived: Boolean) { model.changeNotification(row.id, NotificationPatch(archived = archived), row.observed()) }
-        override fun markAllRead() { model.bulkNotifications(NotificationBulkOp.MARK_READ, current?.maxSeq ?: 0, filter.category) }
+        override fun markAllRead() { current?.rows?.filter { it.unread }?.forEach { model.changeNotification(it.id, NotificationPatch(read = true), it.observed()) } }
         override fun refresh() { model.refreshNotifications(force = true) }
         override fun dismissMessage() { model.dismissNotificationMessage() }
         override fun close() { done() }
-    } }
+    }
     NotificationsScreen(state, actions)
     detail?.let { row ->
         AlertDialog(

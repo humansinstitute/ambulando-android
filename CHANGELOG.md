@@ -1,3 +1,9 @@
+## 0.9.15 (43)
+
+- Open channels selected from either Android sidebar in Deck view while retaining explicit links to conversations and records.
+- Add workspace Settings switches for the item types in Unread and Mentions, synced through private account preferences across Android, web, iPhone and Mac.
+- Keep hidden items unread, preserve all-record navigation, and retain offline switch choices with conflict-safe synchronization.
+
 ## 0.9.14 (42)
 
 - Give browser pages a definite viewport so full-height private dashboards and nested frames remain visible.

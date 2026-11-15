@@ -1,5 +1,8 @@
 package studio.otherstuff.ambulando.core.workspaces
 
+import studio.otherstuff.ambulando.core.sync.attentionPreference
+import studio.otherstuff.ambulando.core.store.viewStates
+import studio.otherstuff.ambulando.core.preferences.AttentionTypes
 import studio.otherstuff.ambulando.core.context.NavChannel
 import studio.otherstuff.ambulando.core.context.NavScope
 import studio.otherstuff.ambulando.core.context.ScopeOrdering
@@ -99,7 +102,9 @@ data class NavSnapshot(
             val navChannels = channels.map { NavChannel(it.id, it.scopeId, it.name, it.kind, it.position, it.raw) }
             val groups = SidebarNavigation.groups(scopes.map { NavScope(it.id, it.name, it.kind) }, navChannels, order)
             val labels = navChannels.associate { it.id to SidebarNavigation.label(it, connection.signerNpub, people.names) }
-            return NavSnapshot(groups, collapsed, store.reader.unreadChannelIds(workspace.id), labels, loaded = true)
+            val types = store.reader.attentionPreference(connection.id, workspace.id).types
+            val unread = store.reader.viewStates(workspace.id).filter { (it.unread || it.needsAttention) && types.includes(AttentionTypes.notificationType(it.resourceType.wire)) }.mapNotNull { it.channelId }.toSet()
+            return NavSnapshot(groups, collapsed, unread, labels, loaded = true)
         }
     }
 }

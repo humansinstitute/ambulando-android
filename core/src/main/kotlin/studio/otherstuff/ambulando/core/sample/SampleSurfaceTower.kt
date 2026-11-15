@@ -66,7 +66,7 @@ class SampleSurfaceTower(
     companion object {
         val COLLECTIONS = listOf(
             "components", "references", "canvases", "naplets", "elements", "board_versions", "agents", "activities", "wapps", "pins", "pin_mutations",
-            "records",
+            "records", "private_preferences", "private_preference_mutations",
         )
 
         fun owns(p: List<String>): Boolean {
@@ -74,7 +74,7 @@ class SampleSurfaceTower(
             return when (first) {
                 "canvases", "workspace-agents", "agent-activities", "personal-wapps", "record-sync" -> true
                 "scopes" -> p.size >= 4 && p[2] == "context"
-                "me" -> p.size >= 2 && p[1] in setOf("pins", "pin-order", "autopilot-agents")
+                "me" -> p.size >= 2 && p[1] in setOf("pins", "pin-order", "autopilot-agents", "preferences")
                 "files" -> p.size == 5 && p[2] == "versions" && p[4] == "object"
                 else -> false
             }
@@ -354,9 +354,9 @@ class SampleSurfaceTower(
         if (!owns(parts)) return null
         // File version bytes belong here only for the canvas artefact versions seeded here; other files fall through.
         if (parts[0] == "files" && synchronized(lock) { state.row("board_versions", "${parts[1]}/${parts[3]}") == null && parts[1] !in state.list("denied_records") }) return null
-        when (val result = auth.verify(request)) {
+        val signer = when (val result = auth.verify(request)) {
             is SampleAuth.Result.Invalid -> return SampleAuth.unauthorized(result.reason)
-            is SampleAuth.Result.Valid -> Unit
+            is SampleAuth.Result.Valid -> result.npub
         }
         val fault = synchronized(lock) {
             log.add("$method $path")
@@ -370,7 +370,7 @@ class SampleSurfaceTower(
             else -> Unit
         }
         val o = SampleJson.objectOf(request.body)
-        val result = mutate { route(parts, method, o, url) }
+        val result = mutate { route(parts, method, o, url, signer) }
         if (fault == SampleFault.DropResponseAfterCommit) throw SampleConnectionLostException()
         return result
     }
@@ -386,7 +386,7 @@ class SampleSurfaceTower(
 
     private val bySortOrder = compareBy<Row>({ it["sort_order"].asInt() ?: 0 }, { it["id"] as? String ?: "" })
 
-    private fun route(p: List<String>, method: String, o: Row, url: SampleURL): Reply {
+    private fun route(p: List<String>, method: String, o: Row, url: SampleURL, signer: String): Reply {
         val capabilities = linkedMapOf("read" to true, "manage" to false, "edit" to false, "scope_manage" to false)
         val n = p.size
         val head = p[0]
@@ -458,6 +458,29 @@ class SampleSurfaceTower(
                 val bytes = v?.get("bytes").asString()?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
                 if (p[1] in state.list("denied_records") || bytes == null) return errorReply(404, "file_version_object_not_found")
                 200 to bytes
+            }
+            // Actor-bound preferences use the same CAS and receipt protocol as Tower (sample data only).
+            n == 3 && head == "me" && p[1] == "preferences" -> {
+                val actor = java.util.UUID.nameUUIDFromBytes(signer.toByteArray()).toString()
+                val id = "$actor:${p[2]}"
+                val identity = mapOf("workspace_id" to workspaceId)
+                val current = state.row("private_preferences", id)
+                if (method == "GET") return 200 to mapOf("identity" to identity, "preference" to current)
+                if (method != "PUT") return errorReply(405, "method_not_allowed")
+                val mutation = o["mutation_id"].asString() ?: return errorReply(400, "invalid_preference")
+                val receiptId = "$actor:$mutation"
+                state.row("private_preference_mutations", receiptId)?.let { receipt ->
+                    if (receipt["request"] != o) return errorReply(409, "mutation_id_reused")
+                    return 200 to mapOf("identity" to identity, "preference" to receipt["row"])
+                }
+                val version = (current?.get("row_version") as? Number)?.toLong() ?: 0L
+                if ((o["expected_row_version"] as? Number)?.toLong() != version) return errorReply(409, "preference_conflict")
+                val value = o["value"].asString() ?: return errorReply(400, "invalid_preference")
+                val row = linkedMapOf<String, Any?>("id" to id, "workspace_id" to workspaceId, "actor_id" to actor,
+                    "preference_key" to p[2], "value" to value, "row_version" to version + 1)
+                state.put("private_preferences", id, row)
+                state.put("private_preference_mutations", receiptId, linkedMapOf("request" to o, "row" to row))
+                200 to mapOf("identity" to identity, "preference" to row)
             }
             // Agents
             method == "GET" && n == 1 && head == "workspace-agents" ->
