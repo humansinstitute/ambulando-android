@@ -291,6 +291,18 @@ class IdentityService(
         try { Nip44Self.decrypt(secret, payload) } finally { secret.fill(0) }
     }
 
+    /** Browser encryption uses only the unlocked active vault, never background credentials. */
+    suspend fun nip44(expectedPublicKey: String, peer: String, text: String, decrypt: Boolean): String = locked {
+        if (!vault.isUnlocked) throw IdentityError.Locked
+        if (vault.publicKeyHex != expectedPublicKey) throw IdentityError.SignerMismatch
+        val peerBytes = studio.otherstuff.ambulando.core.nostr.Hex.decode(peer)
+            ?.takeIf { it.size == 32 } ?: throw IllegalArgumentException("Invalid peer key")
+        val secret = vault.secretCopy()
+        try {
+            if (decrypt) Nip44Self.decrypt(secret, text, peerBytes) else Nip44Self.encrypt(secret, text, peerBytes)
+        } finally { secret.fill(0); peerBytes.fill(0) }
+    }
+
     suspend fun publicKeyHex(): String = locked {
         val hex = vault.publicKeyHex
         if (vault.isUnlocked && hex != null) return@locked hex

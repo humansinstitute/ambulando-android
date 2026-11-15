@@ -297,6 +297,8 @@ private fun TabsSheet(browser: BrowserModel) {
 fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
     val amb = Amb.colors
     val connect = prompt.kind is NIP07Prompt.Kind.Connect
+    val cipher = prompt.kind as? NIP07Prompt.Kind.Cipher
+    val action = if (cipher?.decrypt == true) "Decrypt" else "Encrypt"
     // "Remember this site" starts on for the public key; an until-lock signing grant always starts off.
     var remember by remember(prompt.id) { mutableStateOf(connect) }
     val host = runCatching { URI(prompt.context.origin).host }.getOrNull() ?: prompt.context.origin
@@ -306,7 +308,7 @@ fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
         modifier = Modifier.testTag("nostr.sheet"),
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (connect) "Connect to Nostr" else "Sign with Nostr", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(if (connect) "Connect to Nostr" else if (cipher != null) "$action with NIP-44" else "Sign with Nostr", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Outlined.Lock, null, tint = amb.foreground, modifier = Modifier.size(18.dp))
                 Text(host, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("nostr.origin"))
@@ -314,6 +316,7 @@ fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
             Text(prompt.context.origin, style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace), color = amb.mutedForeground)
             Text(
                 if (connect) "$host wants to see your Nostr public key. It cannot sign anything without asking you."
+                else if (cipher != null) "$host wants to ${action.lowercase()} a message using your active Nostr account. Approval applies only to this request."
                 else "$host wants your signature on the event below.",
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -329,6 +332,7 @@ fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
                 event.tags.take(20).forEach { tag -> Text(tag.joinToString(" · "), style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 if (event.tags.size > 20) Text("and ${event.tags.size - 20} more", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
             }
+            if (cipher != null) Labeled("Peer key", cipher.peer)
             prompt.npub?.let { Labeled("Your key", shortNpub(it)) }
             if (connect) {
                 SwitchRow("Remember this site", remember) { remember = it }
@@ -342,7 +346,7 @@ fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
                     Text(if (connect) "Don't allow" else "Reject")
                 }
                 Box(Modifier.weight(1f)) {
-                    PrimaryButton(if (connect) "Allow" else "Sign", onClick = { decide(NIP07Decision.Allow(remember = remember && (connect || prompt.offersSessionGrant))) },
+                    PrimaryButton(if (connect) "Allow" else if (cipher != null) action else "Sign", onClick = { decide(NIP07Decision.Allow(remember = remember && (connect || prompt.offersSessionGrant))) },
                         modifier = Modifier.testTag("nostr.allow"))
                 }
             }

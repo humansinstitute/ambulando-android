@@ -165,12 +165,16 @@ class BrowserModel(private val context: Context) {
                 bridge.postMessage(JSON.stringify({ id, method, params: params === undefined ? null : params }));
               });
               const unsupported = (name) => () => Promise.reject(new Error(name + ' is not supported by Ambulando.'));
+              const cipher = (method, pubkey, text, options) => {
+                if (options !== undefined && (!options || options.version !== 2)) return Promise.reject(new Error('Only NIP-44 v2 is supported.'));
+                return call(method, {pubkey, text});
+              };
               const nostr = {
                 getPublicKey: () => call('getPublicKey'),
                 signEvent: (event) => { try { return call('signEvent', JSON.parse(JSON.stringify(event))); } catch (e) { return Promise.reject(e); } },
                 getRelays: () => call('getRelays'),
                 nip04: { encrypt: unsupported('nip04.encrypt'), decrypt: unsupported('nip04.decrypt') },
-                nip44: { encrypt: unsupported('nip44.encrypt'), decrypt: unsupported('nip44.decrypt') },
+                nip44: { encrypt: (pubkey, text, options) => cipher('nip44.encrypt', pubkey, text, options), decrypt: (pubkey, text, options) => cipher('nip44.decrypt', pubkey, text, options) },
               };
               Object.defineProperty(nostr, '__ambulando', { value: true });
               Object.defineProperty(window, 'nostr', { value: Object.freeze(nostr), configurable: true, writable: false });
@@ -228,9 +232,10 @@ class BrowserModel(private val context: Context) {
         publicKey: suspend () -> String,
         sign: suspend (NostrEventTemplate) -> NostrEvent,
         persist: NIP07SitePersistence,
+        cipher: (suspend (String, String, String, Boolean) -> String)? = null,
     ) {
         broker?.setLocked(true)
-        val made = NIP07Broker(locked, savedSites, publicKey, sign, persist)
+        val made = NIP07Broker(locked, savedSites, publicKey, sign, persist, cipher)
         made.onChange = { scope.launch { prompt = made.current; this@BrowserModel.locked = made.locked; sites = made.sites } }
         broker = made
         this.locked = locked

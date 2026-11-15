@@ -1,3 +1,9 @@
+## 0.9.13 (41)
+
+- Support NIP-44 v2 self and peer encryption/decryption in the embedded browser using the active unlocked account.
+- Ask for each encryption/decryption operation and discard results after account, lock, document or permission changes.
+- Preserve existing signing permissions, private workspace indexes, app identity and stored data.
+
 ## 0.9.12 (40)
 
 - Keep opener-written blank popups visible, preserve native popup/opener and POST behavior, return to the opener when closing, and refuse excess popups without evicting existing tabs.

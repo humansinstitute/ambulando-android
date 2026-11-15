@@ -44,6 +44,7 @@ sealed interface NIP07Method {
     data object GetPublicKey : NIP07Method
     /** `requestedPubkey` is the `pubkey` the page put in the event, if any; it must be the user's own. */
     data class SignEvent(val template: NostrEventTemplate, val requestedPubkey: String?) : NIP07Method
+    data class Cipher(val peer: String, val text: String, val decrypt: Boolean) : NIP07Method
     data object GetRelays : NIP07Method
     data class Unsupported(val name: String) : NIP07Method
 
@@ -60,6 +61,16 @@ sealed interface NIP07Method {
             "getPublicKey" -> NIP07Result.Success(GetPublicKey)
             "getRelays" -> NIP07Result.Success(GetRelays)
             "signEvent" -> parseEvent(params, nowSeconds)
+            "nip44.encrypt", "nip44.decrypt" -> {
+                val obj = params as? JsonObject
+                val peer = obj?.get("pubkey")?.let { JsonFields.string(it) }
+                val text = obj?.get("text")?.let { JsonFields.string(it) }
+                val decrypt = method == "nip44.decrypt"
+                if (obj == null || obj.keys != setOf("pubkey", "text")) invalid("NIP-44 requires only pubkey and text")
+                else if (peer == null || !peer.matches(Regex("[0-9a-fA-F]{64}"))) invalid("NIP-44 requires a 32-byte hex peer key")
+                else if (text == null || text.toByteArray(Charsets.UTF_8).size !in (if (decrypt) 132..87472 else 1..65535)) invalid("Invalid NIP-44 input size")
+                else NIP07Result.Success(Cipher(peer.lowercase(), text, decrypt))
+            }
             else -> {
                 val name = method.take(40).filter { it.isLetter() || it.isDigit() || it == '.' }
                 NIP07Result.Success(Unsupported(name.ifEmpty { "This method" }))
@@ -149,6 +160,7 @@ data class NIP07Prompt(
     val npub: String?,
 ) {
     sealed interface Kind {
+        data class Cipher(val peer: String, val decrypt: Boolean) : Kind
         data object Connect : Kind
         data class Sign(val event: NostrEventTemplate) : Kind
     }
@@ -170,11 +182,13 @@ sealed interface NIP07Decision {
 sealed interface NIP07Reply {
     data class PublicKey(val hex: String) : NIP07Reply
     data class Event(val event: NostrEvent) : NIP07Reply
+    data class Text(val text: String) : NIP07Reply
     data object Relays : NIP07Reply
 
     /** The value the page's promise resolves with (plain JSON types). `getRelays` answers `{}`. */
     val javaScriptValue: JsonElement
         get() = when (this) {
+            is Text -> JsonPrimitive(text)
             is PublicKey -> JsonPrimitive(hex)
             Relays -> JsonObject(emptyMap())
             is Event -> event.toJsonObject()
@@ -199,6 +213,7 @@ class NIP07Broker(
     private val publicKey: suspend () -> String,
     private val signer: suspend (NostrEventTemplate) -> NostrEvent,
     private val persist: NIP07SitePersistence = NIP07SitePersistence { },
+    private val cipher: (suspend (String, String, String, Boolean) -> String)? = null,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
 ) {
     companion object {
@@ -211,6 +226,7 @@ class NIP07Broker(
 
     private val lock = Any()
     private val promptList = ArrayList<NIP07Prompt>()
+    private var authorizationRevision = 0L
     private var lockedState = locked
     private var siteMap = sites.toMap()
     private var sessionGrants: Set<String> = emptySet()
@@ -238,11 +254,44 @@ class NIP07Broker(
             NIP07Method.GetRelays -> NIP07Result.Success(NIP07Reply.Relays)
             is NIP07Method.Unsupported -> NIP07Result.Failure(NIP07Error.Unsupported(parsed.name))
             NIP07Method.GetPublicKey -> connect(context, isCurrent)
+            is NIP07Method.Cipher -> crypt(parsed, context, isCurrent)
             is NIP07Method.SignEvent -> sign(parsed.template, parsed.requestedPubkey, context, isCurrent)
         }
     }
 
     private fun failure(e: NIP07Error) = NIP07Result.Failure(e)
+
+    private suspend fun crypt(call: NIP07Method.Cipher, context: NIP07Context, isCurrent: () -> Boolean): NIP07Result<NIP07Reply> {
+        val operation = cipher ?: return failure(NIP07Error.Unsupported("nip44"))
+        val revision = synchronized(lock) { authorizationRevision }
+        fun invalid(): NIP07Error? {
+            if (locked) return NIP07Error.Locked
+            if (!isCurrent()) return NIP07Error.PageChanged
+            if (synchronized(lock) { revision != authorizationRevision } || sites[context.origin] == NIP07SitePermission.DENIED) return NIP07Error.Denied
+            return null
+        }
+        return try {
+            invalid()?.let { return failure(it) }
+            val own = publicKey()
+            invalid()?.let { return failure(it) }
+            when (val answer = ask(NIP07Prompt.Kind.Cipher(call.peer, call.decrypt), context, isCurrent)) {
+                is NIP07Result.Failure -> return answer
+                is NIP07Result.Success -> if (answer.value !is NIP07Decision.Allow) return failure(NIP07Error.Denied)
+            }
+            invalid()?.let { return failure(it) }
+            if (publicKey() != own) return failure(NIP07Error.Denied)
+            invalid()?.let { return failure(it) }
+            val result = operation(own, call.peer, call.text, call.decrypt)
+            invalid()?.let { return failure(it) }
+            if (publicKey() != own) return failure(NIP07Error.Denied)
+            invalid()?.let { return failure(it) }
+            NIP07Result.Success(NIP07Reply.Text(result))
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            failure(if (locked) NIP07Error.Locked else NIP07Error.Invalid("NIP-44 operation failed"))
+        }
+    }
 
     private suspend fun connect(context: NIP07Context, isCurrent: () -> Boolean): NIP07Result<NIP07Reply> {
         when (sites[context.origin]) {
@@ -339,6 +388,7 @@ class NIP07Broker(
     fun setLocked(value: Boolean) {
         synchronized(lock) {
             if (value == lockedState) return
+            authorizationRevision++
             lockedState = value
             if (value) sessionGrants = emptySet()
         }
@@ -348,12 +398,15 @@ class NIP07Broker(
 
     /** Settings › browser: forget what was decided for `origin`. */
     fun forget(origin: String) {
+        synchronized(lock) { authorizationRevision++ }
+        cancel { it.context.origin == origin }
         synchronized(lock) { sessionGrants = sessionGrants.filterNot { it.startsWith("$origin|") }.toSet() }
         setSite(origin, null)
     }
 
     /** Identity removed or disconnected: nothing a site was allowed survives. */
     fun reset() {
+        synchronized(lock) { authorizationRevision++ }
         synchronized(lock) { sessionGrants = emptySet() }
         cancel { true }
         val saved = synchronized(lock) { siteMap = emptyMap(); siteMap }
@@ -363,6 +416,7 @@ class NIP07Broker(
 
     private fun setSite(origin: String, value: NIP07SitePermission?) {
         val saved = synchronized(lock) {
+            if (value == NIP07SitePermission.DENIED) authorizationRevision++
             siteMap = if (value == null) siteMap - origin else siteMap + (origin to value)
             siteMap
         }

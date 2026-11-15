@@ -119,7 +119,7 @@ class NIP07RequestTest {
         )
         for (params in bad) assertTrue("accepted ${params.keys}", NIP07Method.parse("signEvent", j(params), now) is NIP07Result.Failure)
         assertTrue(NIP07Method.parse("signEvent", j("x"), now) is NIP07Result.Failure)
-        assertEquals(NIP07Result.Success(NIP07Method.Unsupported("nip44.encrypt")), NIP07Method.parse("nip44.encrypt", null, now))
+        assertTrue(NIP07Method.parse("nip44.encrypt", null, now) is NIP07Result.Failure)
         assertEquals(NIP07Result.Success(NIP07Method.GetRelays), NIP07Method.parse("getRelays", null, now))
     }
 
@@ -280,7 +280,7 @@ class NIP07BrokerTest {
         broker.tabClosed(tab)
         tasks.forEach { it.await() }
         assertEquals(NIP07Result.Failure(NIP07Error.Unsupported("nip04.encrypt")), broker.handle("nip04.encrypt", null, ctx()) { true })
-        assertEquals(NIP07Result.Failure(NIP07Error.Unsupported("nip44.decrypt")), broker.handle("nip44.decrypt", null, ctx()) { true })
+        assertTrue(broker.handle("nip44.decrypt", null, ctx()) { true } is NIP07Result.Failure)
         val relays = broker.handle("getRelays", null, ctx()) { true }
         assertEquals(NIP07Result.Success(NIP07Reply.Relays), relays)
         assertEquals(JsonObject(emptyMap()), NIP07Reply.Relays.javaScriptValue)

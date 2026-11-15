@@ -20,8 +20,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 40
-        versionName = "0.9.12"
+        versionCode = 41
+        versionName = "0.9.13"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
