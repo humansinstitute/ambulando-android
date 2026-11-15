@@ -50,7 +50,7 @@ class BrowserNip44Test {
           <html><title>READY</title><body><script>
           const own = '$own';
           const slot = '$slot';
-          const list = JSON.stringify([['service','https://private.example','synthetic fixture']]);
+          const list = JSON.stringify([['g','wss://private.example/']]);
           async function save() {
             try {
               const content = await nostr.nip44.encrypt(own, list, {version:2});
@@ -92,7 +92,7 @@ class BrowserNip44Test {
             assertTrue(SignatureVerifier.verify(event!!))
             assertEquals(10318, event!!.kind)
             assertFalse(event!!.content.contains("private.example"))
-            assertEquals("[[\"service\",\"https://private.example\",\"synthetic fixture\"]]", identity.nip44(own, own, event!!.content, true))
+            assertEquals("[[\"g\",\"wss://private.example/\"]]", identity.nip44(own, own, event!!.content, true))
             instrumentation.runOnMainSync { browser.selected!!.webView.reload() }
             title(browser, "READY")
             js(browser, "read()")

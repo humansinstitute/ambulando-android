@@ -26,4 +26,5 @@ Tests include the official [NIP-44 vectors](https://github.com/paulmillr/nip44/b
 tampering, vault/account refusal and in-flight authorization changes. The Android `BrowserNip44Test` uses a disposable
 public test identity and a local HTTPS sample page to encrypt, sign kind 10318, save in browser localStorage, reload,
 read back, decrypt and reject unapproved calls. It verifies the signature independently on the native side.
-That fixture is local browser persistence, not a relay write or evidence about a real user's service list.
+The fixture uses the GRASP08 `[["g","wss://private.example/"]]` private-list shape. It is local browser persistence,
+not full GitWorkshop UI parsing, a relay write or evidence about a real user's service list.
