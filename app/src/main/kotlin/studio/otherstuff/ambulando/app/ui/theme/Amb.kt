@@ -62,6 +62,9 @@ data class AmbColors(
     val info: Color,
     val infoBackground: Color,
 ) {
+    /** Link ink uses the accessible blue palette in each appearance. Underlines provide a non-colour cue. */
+    val link get() = info
+
     /** Selected row (`.sidebar-scope-channel-row.active`): muted fill, bold primary text. */
     val selectedFill get() = muted
     val selectedForeground get() = primary

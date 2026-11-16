@@ -1,3 +1,8 @@
+## 0.9.18 (46)
+
+- Make message URLs, named Markdown links and internal document links clearly clickable with accessible theme-aware blue text and underlines.
+- Preserve existing navigation, text selection, mention chips, inline code and formatting.
+
 ## 0.9.16 (44)
 
 - Support confirmed Nostr signer handoffs, explicit JavaScript prompts and leave-page dialogs, and fullscreen content with Back cleanup.

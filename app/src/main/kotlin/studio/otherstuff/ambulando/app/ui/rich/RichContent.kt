@@ -302,6 +302,9 @@ fun ImageNotice(text: String, tag: String) {
 }
 
 object InlineText {
+    private fun linkDecoration(style: SpanStyle): TextDecoration =
+        TextDecoration.combine(listOfNotNull(style.textDecoration, TextDecoration.Underline))
+
     /**
      * Styled text for runs. Mentions are tappable chips that stay selectable; only http(s)/mailto links leave the
      * app (through the screen's handler).
@@ -332,19 +335,19 @@ object InlineText {
                 run.wiki != null -> {
                     val target = run.wiki!!
                     val bound = target.documentId != null
-                    style = style.merge(SpanStyle(color = amb.primary, background = amb.accent, textDecoration = TextDecoration.Underline, fontStyle = if (bound) style.fontStyle else FontStyle.Italic))
+                    style = style.merge(SpanStyle(color = amb.link, background = amb.accent, textDecoration = linkDecoration(style), fontStyle = if (bound) style.fontStyle else FontStyle.Italic))
                     val open = { actions.openWiki?.invoke(target) ?: target.documentId?.let { actions.openMention("document", it) } ; Unit }
                     withLink(LinkAnnotation.Clickable("wiki:" + (target.documentId ?: target.title), TextLinkStyles(style)) { open() }) { append(run.text) }
                 }
                 // A stable document link opens that page by id; Tower decides whether this person may read it.
                 WikiLinks.targetId(run.link) != null -> {
                     val target = WikiLinks.targetId(run.link)!!
-                    style = style.merge(SpanStyle(color = amb.primary, background = amb.accent, textDecoration = TextDecoration.Underline))
+                    style = style.merge(SpanStyle(color = amb.link, background = amb.accent, textDecoration = linkDecoration(style)))
                     withLink(LinkAnnotation.Clickable("wiki:$target", TextLinkStyles(style)) { actions.openMention("document", target) }) { append(run.text) }
                 }
                 run.link != null && (RichLinks.isSafeWeb(run.link!!) || RichLinks.storageObjectId(run.link!!) != null) -> {
                     val url = run.link!!
-                    style = style.merge(SpanStyle(color = amb.primary))
+                    style = style.merge(SpanStyle(color = amb.link, textDecoration = linkDecoration(style)))
                     withLink(LinkAnnotation.Clickable(url, TextLinkStyles(style)) { actions.openUrl(url) }) { append(run.text) }
                 }
                 run.`object` -> withStyle(style.merge(SpanStyle(color = amb.primary, background = amb.accent))) { append(run.text) }
