@@ -1,0 +1,9 @@
+<resources>
+    <!-- Release owners must enroll the verified CURRENT durable NBrowser signer.
+         Entries: actual.package|lowercase SHA-256 hex. Unlisted packages/signers deliberately deny.
+         Never enroll a debug or guessed signer to make source acceptance pass. -->
+    <string-array name="fips_shared_providers">
+        <item>com.wingmanbefree.wingman_app|6c0da09b9e2375d657645f197419be7b8227a7434e0225512fc760cedf383c8c</item>
+        <item>com.wingmanbefree.wingman_app.nightly|5edec981796544b29118b53d424ed5067b54cbb0b871d5c37b1cc9ccbc807be0</item>
+    </string-array>
+</resources>

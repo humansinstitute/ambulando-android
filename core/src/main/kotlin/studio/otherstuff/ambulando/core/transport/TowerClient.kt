@@ -14,7 +14,7 @@ import java.net.URI
 sealed class TowerError(message: String) : Exception(message, null, false, false) {
     data object UnsafeOrigin : TowerError("Use an HTTPS origin without credentials, path, query or fragment.")
     data object FipsNotSupported : TowerError(
-        "This Android app connects over HTTPS only. FIPS (.fips) endpoints need the Wingman app shell; nothing was sent over another transport.",
+        "FIPS requires a canonical peer_npub.fips endpoint and an approved shared Nostr Browser VPN grant with enrolled durable certificates. No other transport was used.",
     )
     data object UnsafePath : TowerError("Refused a request outside the Tower API.")
     data class Http(val status: Int, val code: String?, val stage: String?) : TowerError(
@@ -28,8 +28,8 @@ sealed class TowerError(message: String) : Exception(message, null, false, false
 }
 
 /**
- * Validated HTTPS Tower origin, normalised to `https://host[:port]` (lower-case host, no default port). FIPS hosts are
- * refused explicitly: the user selected HTTPS, and this client never falls back across a transport boundary.
+ * Validated HTTPS or canonical peer-bound FIPS origin. FIPS carries its explicit port and requires the shared native
+ * VPN grant at the transport layer. No request falls back across a transport boundary.
  */
 class TowerOrigin(value: String) {
     /** Lower-case host. */
@@ -40,20 +40,27 @@ class TowerOrigin(value: String) {
 
     /** `https://host[:port]` without a trailing slash. */
     val url: String
+    val isFips: Boolean
 
     init {
         val trimmed = value.trim()
         val uri = runCatching { URI(trimmed) }.getOrNull() ?: throw TowerError.UnsafeOrigin
         val rawHost = uri.host
         if (rawHost.isNullOrEmpty()) throw TowerError.UnsafeOrigin
-        if (rawHost.lowercase().endsWith(".fips")) throw TowerError.FipsNotSupported
+        isFips = try { FipsUrlPolicy.endpoint(trimmed) != null }
+        catch (e: TowerError) { throw e }
+        catch (_: IllegalArgumentException) { throw TowerError.UnsafeOrigin }
+        if (isFips) {
+            val peer = rawHost.removeSuffix(".fips")
+            if (uri.scheme != "http" || studio.otherstuff.ambulando.core.nostr.NostrKeys.publicKeyHex(peer)?.let { studio.otherstuff.ambulando.core.nostr.NostrKeys.npub(it) } != peer || uri.port !in 1..65535) throw TowerError.FipsNotSupported
+        }
         val path = uri.rawPath ?: ""
-        if (uri.scheme?.lowercase() != "https" || uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null ||
+        if ((!isFips && uri.scheme?.lowercase() != "https") || uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null ||
             !(path.isEmpty() || path == "/")
         ) throw TowerError.UnsafeOrigin
         host = rawHost.lowercase()
-        port = uri.port.takeIf { it >= 0 && it != 443 }
-        url = "https://" + host + (port?.let { ":$it" } ?: "")
+        port = uri.port.takeIf { it >= 0 && (isFips || it != 443) }
+        url = (if (isFips) "http://" else "https://") + host + (port?.let { ":$it" } ?: "")
         if (url.toHttpUrlOrNull() == null) throw TowerError.UnsafeOrigin
     }
 
@@ -70,11 +77,11 @@ class TowerOrigin(value: String) {
         if (!(path.startsWith("/api/v4/") || path == "/.well-known/nstack.json" || path in AUTOPILOT_ACTIVATION_PATHS) || path.contains("..") || path.contains("?") ||
             path.contains("#")
         ) throw TowerError.UnsafePath
-        val builder = HttpUrl.Builder().scheme("https").host(host).port(port ?: 443)
+        val builder = HttpUrl.Builder().scheme(if (isFips) "http" else "https").host(host).port(port ?: 443)
         runCatching { builder.encodedPath(path) }.getOrElse { throw TowerError.UnsafePath }
         for ((name, value) in query) builder.addQueryParameter(name, value)
         val result = runCatching { builder.build() }.getOrNull() ?: throw TowerError.UnsafePath
-        if (result.host != host || result.scheme != "https") throw TowerError.UnsafePath
+        if (result.host != host || result.scheme != (if (isFips) "http" else "https")) throw TowerError.UnsafePath
         return result.toString()
     }
 

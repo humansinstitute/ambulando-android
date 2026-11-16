@@ -21,6 +21,7 @@ import kotlin.coroutines.resumeWithException
 class OkHttpEventStreamTransport(
     private val bufferLimit: Int = DEFAULT_BUFFER_LIMIT,
     base: OkHttpClient = OkHttpClient(),
+    private val allowFips: Boolean = false,
 ) : EventStreamTransport {
     val client: OkHttpClient = base.newBuilder()
         .followRedirects(false)
@@ -33,6 +34,8 @@ class OkHttpEventStreamTransport(
         .build()
 
     override suspend fun open(request: HttpRequest): Pair<HttpResponseHead, EventChunks> {
+        val endpoint = FipsUrlPolicy.endpoint(request.url)
+        if (!allowFips && endpoint != null) throw TowerError.FipsNotSupported
         val call = client.newCall(OkHttpTransport.toOkHttp(request))
         val response: Response = suspendCancellableCoroutine { continuation ->
             continuation.invokeOnCancellation { call.cancel() }

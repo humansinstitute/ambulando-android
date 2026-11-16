@@ -1,5 +1,9 @@
 package studio.otherstuff.ambulando.core.transport
 
+import studio.otherstuff.ambulando.core.transport.LocalStages
+import studio.otherstuff.ambulando.core.transport.LocalStages.Stage
+import studio.otherstuff.ambulando.core.transport.LocalStages.Result
+
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
@@ -347,6 +351,7 @@ suspend fun TowerAPI.prepareStorage(
  * Tower routes are used in-process).
  */
 suspend fun TowerAPI.presignedDownloadURL(objectId: String): PresignedDownload? {
+    if (client.origin.isFips) return null // Keep bytes on the granted peer; never use an external presigned route.
     val meta = storageObject(objectId) ?: return null
     val raw = meta.string("download_url") ?: return null
     runCatching { TransferPolicy.validate(raw, client.origin.host) }.getOrNull() ?: return null
@@ -369,8 +374,14 @@ suspend fun TowerAPI.storageObject(objectId: String): JsonObject? = try {
  * - Anything else (another path on the Tower host, plain HTTP elsewhere, credentials in the URL) is refused.
  */
 suspend fun TowerAPI.upload(prepared: PreparedObject, bytes: ByteArray, contentType: String) {
+    if (client.origin.isFips) {
+        if (bytes.size > FALLBACK_UPLOAD_LIMIT) throw FileTransferError.FallbackTooLarge
+        client.request(method = "PUT", path = "/api/v4/storage/" + TowerAPI.uuid(prepared.objectId),
+            jsonBody = jsonBody(jsonObjectOf("base64_data" to Base64.getEncoder().encodeToString(bytes))))
+        return
+    }
     val url = prepared.uploadURL.toHttpUrlOrNull()
-    if (url == null || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null || url.host.isEmpty()) {
+    if (url == null || FipsUrlPolicy.isProtected(url) || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null || url.host.isEmpty()) {
         throw FileTransferError.UnsafeUploadURL
     }
     val towerHost = client.origin.host
@@ -417,16 +428,16 @@ suspend fun TowerAPI.store(
     var prepared = existing
     if (prepared != null && storageObject(prepared.objectId) == null) prepared = null   // gone: prepare a fresh one
     if (prepared == null) {
-        val fresh = prepareStorage(workspaceId, appNpub, contentType, bytes.size.toLong(), fileName, sha)
+        val fresh = LocalStages.trace(Stage.UPLOAD_PREPARE) { prepareStorage(workspaceId, appNpub, contentType, bytes.size.toLong(), fileName, sha) }
         onPrepared(fresh)
         prepared = fresh
     }
     val meta = storageObject(prepared.objectId)
     if (meta?.string("completed_at") == null) {
-        upload(prepared, bytes, contentType)
-        completeStorage(prepared.objectId, bytes.size.toLong(), sha)
+        LocalStages.trace(Stage.UPLOAD_BYTES) { upload(prepared, bytes, contentType) }
+        LocalStages.trace(Stage.UPLOAD_COMPLETE) { completeStorage(prepared.objectId, bytes.size.toLong(), sha) }
     }
-    val done = storageObject(prepared.objectId)
+    val done = LocalStages.trace(Stage.UPLOAD_VERIFY) { storageObject(prepared.objectId) }
     if (done == null || done.string("completed_at") == null || done.string("sha256_hex")?.lowercase() != sha ||
         flexibleLong(done["size_bytes"]) != bytes.size.toLong() || done.bool("is_public") == true
     ) throw FileTransferError.NotAttachable
@@ -435,8 +446,9 @@ suspend fun TowerAPI.store(
 
 /** Unsigned upload to a presigned object-store URL. Never carries the NIP-98 header or cookies. */
 suspend fun TowerClient.putUnsigned(url: String, body: ByteArray, contentType: String) {
+    if (origin.isFips) throw FileTransferError.UnsafeUploadURL
     val parsed = url.toHttpUrlOrNull()
-    if (parsed == null || parsed.scheme != "https" || parsed.username.isNotEmpty() || parsed.password.isNotEmpty()) {
+    if (parsed == null || FipsUrlPolicy.isProtected(parsed) || parsed.scheme != "https" || parsed.username.isNotEmpty() || parsed.password.isNotEmpty()) {
         throw FileTransferError.UnsafeUploadURL
     }
     currentCoroutineContext().ensureActive()

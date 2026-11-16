@@ -17,10 +17,21 @@ object ConnectionFailure {
     }
     /** Normal screens never expose raw transport descriptions; auth and validation remain actionable. */
     fun userMessage(error: Throwable): String? = when {
+        error is SafeConnectionIssue -> error.connectionIssue.userMessage
         isTransient(error) -> null
         error is SSLException -> "Secure connection failed. Check the Tower certificate."
         error is java.io.IOException -> "The network request could not be completed."
         else -> error.message ?: "Operation failed"
+    }
+    fun validationMessage(error: Throwable): String = when (error) {
+        is SafeConnectionIssue -> error.connectionIssue.userMessage
+        is TowerError.Http -> when (error.status) {
+            401 -> "Tower did not accept the identity signature. Verify the connection again."
+            403 -> "Workspace access was denied. Verify your access before sending."
+            else -> "Tower could not validate this connection. Verify the connection again."
+        }
+        is SSLException -> "Secure connection failed. Check the Tower certificate."
+        else -> "Connection validation failed. Unlock and verify the connection again."
     }
     fun code(error: Throwable): String = when (error) {
         is CancellationException -> "cancelled"

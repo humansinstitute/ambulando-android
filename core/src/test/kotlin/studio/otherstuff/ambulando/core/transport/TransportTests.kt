@@ -58,7 +58,7 @@ class TowerOriginTests {
     @Test fun refusesFIPSWithoutFallback() {
         expectThrows(TowerError.FipsNotSupported) { TowerOrigin("http://npub1abc.fips:8080") }
         expectThrows(TowerError.FipsNotSupported) { TowerOrigin("https://npub1abc.FIPS") }
-        assertTrue(TowerError.FipsNotSupported.message!!.startsWith("This Android app connects over HTTPS only."))
+        assertTrue(TowerError.FipsNotSupported.message!!.startsWith("FIPS requires a canonical peer_npub.fips endpoint"))
     }
 
     @Test fun pathsAreConfinedToTheAPI() {

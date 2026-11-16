@@ -113,7 +113,9 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     var chooser by remember { mutableStateOf(false) }
     val c = model.connection ?: return
     val w = model.workspace
-    val syncStatus by model.engine.status.collectAsState()
+    val activeScheduler = model.engine
+    val syncStatus by activeScheduler.status.collectAsState()
+    LaunchedEffect(activeScheduler, syncStatus) { activeScheduler.observeActiveFailures(syncStatus) }
     val profilesEnabled by remember(model) { model.catalog.liveQuery({ it.table == StoreTable.APP_STATE }) { studio.otherstuff.ambulando.core.profiles.ProfileSync.isEnabled(model.catalog) } }.collectAsState(false)
     LaunchedEffect(profilesEnabled) { avatars.setEnabled(profilesEnabled && !model.environment.isSample) }
     LaunchedEffect(model.identityState) {

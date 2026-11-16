@@ -40,12 +40,12 @@ suspend fun WorkspaceSync.setAttentionType(c: ConnectionRecord, w: WorkspaceReco
     refreshAttentionPreference(c, w, SyncPriority.USER, force = true)
 }
 
-suspend fun WorkspaceSync.refreshAttentionPreference(c: ConnectionRecord, w: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
+suspend fun WorkspaceSync.refreshAttentionPreference(c: ConnectionRecord, w: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false, readOnly: Boolean = false) {
     if (w.accessRemoved) return
-    engine.enqueueRead("attention-types:${w.id}", priority, force) { runAttentionPreference(c, w) }
+    engine.enqueueRead("attention-types:${w.id}", priority, force) { runAttentionPreference(c, w, readOnly) }
 }
 
-internal suspend fun WorkspaceSync.runAttentionPreference(c: ConnectionRecord, w: WorkspaceRecord) {
+internal suspend fun WorkspaceSync.runAttentionPreference(c: ConnectionRecord, w: WorkspaceRecord, readOnly: Boolean = false) {
     identity.requireReader(c.signerNpub)
     val key = AttentionPreferenceState.key(c.id, w.id)
     val path = "/api/v4/flightdeck-pg/workspaces/${w.id}/me/preferences/${AttentionTypes.KEY}"
@@ -77,6 +77,7 @@ internal suspend fun WorkspaceSync.runAttentionPreference(c: ConnectionRecord, w
     }
     try {
         materialize(request(), authoritativeRead = true)
+        if (readOnly) return // Explicit proof recovery retries the GET, never a retained mutation.
         val pending = store.reader.attentionPreference(c.id, w.id).pending ?: return
         // Background credentials are GET-only; the durable intent waits for unlock.
         if (identity.state() !is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked) return
@@ -95,7 +96,7 @@ internal suspend fun WorkspaceSync.runAttentionPreference(c: ConnectionRecord, w
             store.writer.setState(key, state.copy(message = if (state.pending != null) "Saved on this device; waiting to sync." else "Could not refresh settings. The last saved choice is shown.").encode())
         }
         // Older Towers have no private preferences. Preserve cached choices without putting all content sync in error.
-        if (e is TowerError.Http && e.status in listOf(403, 404, 405, 501)) return
+        if (!readOnly && e is TowerError.Http && e.status in listOf(403, 404, 405, 501)) return
         throw e
     }
 }

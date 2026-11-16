@@ -1,5 +1,9 @@
 package studio.otherstuff.ambulando.app
 
+import studio.otherstuff.ambulando.core.transport.connectionWorkspace
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
 import androidx.compose.runtime.*
 import kotlinx.coroutines.*
 import studio.otherstuff.ambulando.core.crypto.*
@@ -139,7 +143,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     /** Sample data also has a second synthetic Tower serving the same workspace ids, so adding a Tower can be exercised on a device. */
     private val secondSample = if (environment.isSample) SampleTower(File(environment.baseDir, "tower2"), originUrl = "https://second.sample.invalid") else null
     private val sampleRouter = if (sample != null && secondSample != null) studio.otherstuff.ambulando.core.sample.SampleTowerRouter(listOf(sample, secondSample)) else null
-    private val sessionTransport = dependencies?.transport ?: sampleRouter ?: OkHttpTransport()
+    private val sharedFips = studio.otherstuff.ambulando.app.fips.SharedFipsTransport(androidContext)
+    private val sessionTransport = dependencies?.transport ?: sampleRouter ?: sharedFips
     val transport = ObservedTransport(if (BuildConfig.GRANDPARENT_CHAT) FamilyGuardTransport(sessionTransport, catalog, identity) else sessionTransport, diagnostics)
     internal val secondSampleTower: SampleTower? get() = secondSample
     /** The in-process synthetic Tower of sample-data mode (null otherwise); connected tests move its documents as "someone else". */
@@ -149,7 +154,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     /** Descriptor reads and connecting a Tower use the catalog; workspace content never does. */
     val catalogSync = WorkspaceSync(catalog, sharedEngine, identity, transport, transfers = transfers)
-    private val streamTransport = dependencies?.streams ?: sampleRouter?.events ?: OkHttpEventStreamTransport()
+    private val streamTransport = dependencies?.streams ?: sampleRouter?.events ?: sharedFips
     private val storePool = WorkspaceStorePool(catalog, File(environment.storeFile.parentFile!!, "Workspaces"))
     val runtimes = WorkspaceRuntimes(catalog, storePool) { hook ->
         RuntimeEnvironment(
@@ -530,7 +535,62 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); resumeEnabled(force = true); refresh(); androidPush?.launch { reconcile(this@AppModel) }; resolvePushTap() }
     /** Locking pauses every runtime (jobs, streams, leases); the enabled set is kept, so unlocking resumes exactly it. */
-    fun lock() = act { clearTowerDiscovery(); browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }
+    fun lock() = act { sharedFips.releaseAll(); clearTowerDiscovery(); browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }
+    suspend fun connectWorkspaceQr(envelope: String, mode: String) {
+        val qr = studio.otherstuff.ambulando.core.transport.WorkspaceConnection.parse(envelope)
+        val signer = (identity.state() as? IdentityState.Unlocked)?.npub ?: throw IdentityError.Locked
+        val origin = qr.origin(mode)
+        val pinned = catalog.reader.connections().filter { it.origin == origin.toString() }
+        check(pinned.none { it.towerNpub != null && it.towerNpub != qr.serviceNpub }) { "Existing Tower identity differs from this QR" }
+        for (c in pinned.filter { it.signerNpub == signer }) {
+            for (w in catalog.reader.workspaces(c.id).filter { it.id == qr.workspaceId }) {
+                val oldAuthority = w.raw["identity"]?.jsonObject?.get("workspace_service_npub")?.jsonPrimitive?.content
+                check(oldAuthority == null || oldAuthority == qr.authority) { "Existing workspace authority differs from this QR" }
+            }
+        }
+        sharedFips.selectConsentOrigin(origin.toString())
+        val api = catalogSync.api(origin)
+        val consentEpoch = wikiContextEpoch
+        val proofRuntime = active?.takeIf { activeEntry?.enabled == true && it.connection.origin == origin.toString() && it.workspace.id == qr.workspaceId }
+        val proofLease = proofRuntime?.activity?.lease()
+        val workspace = try { api.connectionWorkspace(qr) }
+        catch (e: studio.otherstuff.ambulando.app.fips.FipsConsentRequired) {
+            // The transport never launches UI. Keep the explicit confirmation's account/revision fence at handoff.
+            throw studio.otherstuff.ambulando.app.fips.FipsConsentRequired(handoff = { isResumed ->
+                if ((identityState as? IdentityState.Unlocked)?.npub != signer || wikiContextEpoch != consentEpoch) {
+                    e.abandonConsent()
+                    throw studio.otherstuff.ambulando.core.transport.SharedConnectionException(studio.otherstuff.ambulando.core.transport.ConnectionIssue.CONSENT)
+                }
+                e.takeConsent(isResumed)
+            }, abandon = e::abandonConsent)
+        }
+        check((identity.state() as? IdentityState.Unlocked)?.npub == signer && wikiContextEpoch == consentEpoch) { "Connection context changed; preview again" }
+        if (!origin.isFips) {
+            val descriptor = catalogSync.checkDescriptor(origin)
+            check(descriptor.stack?.towerNpub == qr.serviceNpub) { "Tower service identity mismatch" }
+        }
+        check((identity.state() as? IdentityState.Unlocked)?.npub == signer && wikiContextEpoch == consentEpoch) { "Connection context changed; preview again" }
+        if (!environment.isSample) WorkspaceCatalog.prepareExplicitConnection(catalog)
+        val c = catalog.writer.saveConnection(ConnectionRecord.create(origin, signer, qr.serviceNpub))
+        val existing = catalog.reader.workspaces(c.id)
+        catalog.writer.replaceWorkspaces(c.id, existing.filterNot { it.id == workspace.id && it.appNpub == workspace.appNpub } + workspace)
+        runtimes.retryFailedDiscovery(c)
+        startCatalogObserver()
+        applyListings()
+        val entry = entries.single { it.connection.id == c.id && it.workspace.id == workspace.id && it.workspace.appNpub == workspace.appNpub }
+        if (!entry.enabled) { entry.enabled = true; preferences = preferences.withEnabled(entry.id, true); WorkspaceCatalog.save(catalog, preferences) }
+        activate(entry)
+        // activate deliberately does nothing for the already observed entry. Explicit proof recovery
+        // must still revisit its failed scoped reads without refreshing every read or changing screens.
+        if (proofRuntime != null && proofLease != null && entry.runtime === proofRuntime) {
+            proofRuntime.awaitStarted()
+            proofRuntime.retryFailedReadsAfterProof(c, workspace, proofLease) {
+                wikiContextEpoch == consentEpoch && activeBoundaryId == entry.id && entry.enabled &&
+                    entry.runtime === proofRuntime && (identityState as? IdentityState.Unlocked)?.npub == signer
+            }
+        }
+    }
+
     suspend fun descriptor(origin: String) = catalogSync.checkDescriptor(TowerOrigin(origin))
 
     /** Connects a Tower for the unlocked identity (the first one, or another: each is its own connection and boundary set). */
@@ -546,6 +606,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
 
     /** Disconnects every Tower of this identity and removes the identity. Local recovery copies are deleted with it. */
     fun removeIdentity() = act {
+        sharedFips.releaseAll()
         clearTowerDiscovery()
         voiceSendJob?.cancelAndJoin(); voice.cancel()
         browser.reset()
@@ -570,6 +631,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     /** Disconnects one Tower: its jobs, observers and leases stop first, its partitions are retired, a reconnect starts fresh. */
     suspend fun disconnect(c: ConnectionRecord) {
+        sharedFips.releaseOrigin(c.origin)
         browser.reset()
         clearConnection(c)
         identity.disableBackgroundRead()

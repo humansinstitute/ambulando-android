@@ -1,3 +1,6 @@
+# Keep the explicitly categorical observation sink in optimized diagnostic releases.
+-keep class studio.otherstuff.ambulando.core.transport.LocalStages { *; }
+-keep class studio.otherstuff.ambulando.core.transport.LocalStages$* { *; }
 # secp256k1 JNI bindings are looked up by name from native code.
 -keep class fr.acinq.secp256k1.** { *; }
 # kotlinx.serialization generated serializers.

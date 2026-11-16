@@ -70,7 +70,7 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
             }
             if (c != null) FormGroup("Connection") {
                 SettingsValue("Tower", c.origin)
-                FormDivider(); SettingsValue("Transport", "HTTPS + NIP-98")
+                FormDivider(); SettingsValue("Transport", connectionTransportLabel(c.origin))
                 FormDivider(); SettingsValue("Workspaces", "${model.workspaces.size}")
                 FormDivider(); SettingsValue("Status", studio.otherstuff.ambulando.core.sync.connectionStatus(failing, syncStatus), tag = "settings.status")
                 FormDivider(); SettingsAction("Retry", tag = "settings.retry") { model.retryConnection() }
@@ -128,7 +128,7 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
                 FormDivider(); SettingsValue("Build", "${BuildConfig.VERSION_CODE}", "settings.build")
                 FormDivider(); SettingsValue("Platform", "Android", "settings.platform")
                 FormDivider()
-                Text("FIPS transport is not part of this build. This app uses HTTPS only; notifications are read from Tower's inbox.", fontSize = AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(16.dp))
+                Text("Shared FIPS connections require the enrolled Nostr Browser provider and native approval. Notifications are read from Tower's inbox.", fontSize = AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(16.dp))
             }
         }
     }
@@ -241,3 +241,8 @@ private fun nameSourceLine(me: studio.otherstuff.ambulando.core.profiles.PersonD
         TextButton(onClick = { model.act { model.sync.refreshAttentionPreference(c, w, force = true) } }) { Text("Refresh settings") }
     }
 }
+
+/** Use the exact transport parser used by shared I/O; malformed protected endpoints remain invalid. */
+internal fun connectionTransportLabel(origin: String): String = try {
+    if (studio.otherstuff.ambulando.core.transport.FipsUrlPolicy.endpoint(origin) != null) "Shared FIPS + NIP-98" else "HTTPS + NIP-98"
+} catch (_: Exception) { "Invalid connection endpoint" }

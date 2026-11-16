@@ -99,6 +99,9 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
 /** Queued-write actions for the status lines in the lists (retry, apply mine, discard). */
 @Composable internal fun rememberWriteActions(model: AppModel): WriteActions = remember(model) {
     object : WriteActions {
+        override fun validationIssue(item: WriteItem) = model.runtimeMap.values.firstOrNull {
+            it.connection.id == item.connectionId && it.workspace.id == item.workspaceId
+        }?.validationIssue
         override fun retryWrite(item: WriteItem) { model.connection?.let { c -> model.act { model.writes.retry(item.id, c) } } }
         override fun applyMine(item: WriteItem) { model.connection?.let { c -> model.act { model.writes.retry(item.id, c, force = true) } } }
         override fun discardWrite(item: WriteItem) { model.act { model.store.writer.discardWrite(item.id) } }

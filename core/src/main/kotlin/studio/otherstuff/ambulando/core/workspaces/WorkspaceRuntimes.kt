@@ -72,6 +72,16 @@ class WorkspaceRuntimes(
         catalogSync.discoverListing(connection, priority, force) { listing -> applyListing(connection, listing) }
     }
 
+    /** Explicit connection verification may recover consent, but only a fresh listing can resolve its old failure. */
+    suspend fun retryFailedDiscovery(connection: ConnectionRecord) {
+        val key = WorkspaceSync.discoverKey(connection.id)
+        val status = env.engine.snapshot()
+        if (key !in status.errors && key !in status.connectionFailures) return
+        // Keep the original connection/signing boundary; never retry using the current workspace's identity.
+        env.identity.requireReader(connection.signerNpub)
+        discover(connection, SyncPriority.USER, true)
+    }
+
     private suspend fun applyListing(connection: ConnectionRecord, listing: List<WorkspaceRecord>) {
         for (runtime in _runtimes.value.values) {
             if (runtime.connection.id != connection.id) continue

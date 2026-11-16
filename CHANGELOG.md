@@ -1,3 +1,44 @@
+## 0.9.25 (53)
+
+- After a successful explicit QR verification of the already active workspace, retry only its failed pins, attention preference and notification reads. Keep each warning until its read succeeds.
+- Fence recovery to the original account, connection, workspace and proof context; preserve unrelated failures and pending preference edits without sending them.
+- Add a fixed pins category to the bounded local active-failure diagnostics.
+
+## 0.9.24 (52)
+
+- Add bounded, process-local fixed job categories for failed active workspace status observations to diagnose a warning that persists after healthy reads.
+- Diagnostic release only; recovery and warning behavior are unchanged.
+
+## 0.9.23 (51)
+
+- After explicit workspace verification, retry a previously failed connection listing and clear its warning only when that read succeeds.
+- Preserve unrelated connection errors and reject verification completed after an account or workspace context change.
+
+## 0.9.22 (50)
+
+- Preserve trusted pending native approval in memory so explicit workspace confirmation can recover after a background connection check.
+- Revalidate approval ownership and connection binding before a single UI handoff; discard stale or canceled approval without replaying requests.
+- Show the current connection transport accurately in Settings.
+
+## 0.9.21 (49)
+
+- Distinguish queued uploads waiting for connection validation from active sending, and show safe connection validation and grant guidance.
+- Avoid reusing idle shared FIPS connections while retaining active streams and ordinary HTTPS pooling.
+- Keep shared connection requests within the grant-owned cancellation boundary, including calls waiting for DNS before a socket exists.
+- Add bounded, process-local categorical observations for write admission, validation, shared connection checks and upload stages without recording request or user data.
+
+## 0.9.20 (48)
+
+- Trust separately enrolled stable and nightly Nostr Browser providers using exact package, authority and current release certificate checks.
+- Require one trusted provider to be installed; explain how to resolve ambiguity without switching providers or transport.
+- Invalidate existing transport clients and close their I/O when the bound provider changes, requiring a restart and fresh connection verification.
+
+## 0.9.19 (47)
+
+- Preview signed shared workspace QR connections, verify the exact backend and workspace, and retain app-specific access checks.
+- Reuse the consented shared Android FIPS VPN with peer pinning and fail-closed transport, including cancellation when access or the network changes.
+- Reject noncanonical FIPS host aliases before ordinary HTTP, streams or file networking.
+
 ## 0.9.18 (46)
 
 - Make message URLs, named Markdown links and internal document links clearly clickable with accessible theme-aware blue text and underlines.

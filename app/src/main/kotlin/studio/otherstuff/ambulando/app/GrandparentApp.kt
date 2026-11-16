@@ -52,7 +52,7 @@ import studio.otherstuff.ambulando.core.transport.*
                 model.connections.isEmpty() -> ConnectScreen(identity.npub, model.notice, { origin -> runCatching {
                     val d = model.descriptor(origin)
                     DescriptorSummaryModel(d.tower?.availability?.status ?: "Available", d.tower?.protocols ?: emptyList(), d.services.map { it.kind }, d.advertisesFIPS)
-                } }, model::connect)
+                } }, connectWorkspaceQr = { envelope, mode -> model.connectWorkspaceQr(envelope, mode) }, connect = model::connect)
                 raw != null && binding == null -> Column(Modifier.padding(20.dp)) {
                     Text("The saved family chat could not be read. Your drafts are still on this device.")
                     Button(onClick = { change = true }) { Text("Choose family chat again") }

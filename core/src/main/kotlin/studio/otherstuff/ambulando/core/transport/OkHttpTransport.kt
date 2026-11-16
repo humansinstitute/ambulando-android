@@ -20,9 +20,10 @@ import kotlin.coroutines.resumeWithException
  * redirects refused (a 3xx comes back as the response, so a signed request is never replayed to another URL), no cookie
  * jar, no response cache, a [timeoutSeconds] connect/read/write timeout and at most four connections per host.
  *
- * [base] exists so tests can add interceptors; production passes nothing.
+ * [preserveDispatcher] is an explicit shared-grant opt-in: revocation must cancel the actual calls, including DNS waits.
+ * Ordinary clients retain their independent four-per-host dispatcher.
  */
-class OkHttpTransport(timeoutSeconds: Long = 45, base: OkHttpClient = OkHttpClient()) : HttpTransport {
+class OkHttpTransport(timeoutSeconds: Long = 45, base: OkHttpClient = OkHttpClient(), private val allowFips: Boolean = false, preserveDispatcher: Boolean = false) : HttpTransport {
     val client: OkHttpClient = base.newBuilder()
         .retryOnConnectionFailure(false)
         .followRedirects(false)
@@ -32,20 +33,27 @@ class OkHttpTransport(timeoutSeconds: Long = 45, base: OkHttpClient = OkHttpClie
         .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
         .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
         .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
-        .dispatcher(Dispatcher().apply { maxRequestsPerHost = 4 })
+        .dispatcher(if (preserveDispatcher) base.dispatcher else Dispatcher().apply { maxRequestsPerHost = 4 })
         .build()
 
     override suspend fun send(request: HttpRequest): HttpResponse {
-        val call = client.newCall(toOkHttp(request))
+        val endpoint = FipsUrlPolicy.endpoint(request.url)
+        if (!allowFips && endpoint != null) throw TowerError.FipsNotSupported
+        val observation = LocalStages.next()
+        val call = client.newCall(toOkHttp(request).newBuilder().tag(StageObservation::class.java, StageObservation(observation)).build())
+        LocalStages.emit(observation, LocalStages.Stage.HTTP, LocalStages.Result.BEGIN, LocalStages.current())
         return suspendCancellableCoroutine { continuation ->
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
+                    LocalStages.emit(observation, LocalStages.Stage.HTTP, LocalStages.Result.FAILED)
                     if (continuation.isActive) continuation.resumeWithException(e)
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    val result = runCatching { response.use { HttpResponse(it.code, it.body.bytes(), headersOf(it)) } }
+                    LocalStages.emit(observation, LocalStages.Stage.HTTP_HEADERS, LocalStages.Result.END)
+                    val result = runCatching { LocalStages.blocking(LocalStages.Stage.HTTP_BODY, observation) { response.use { HttpResponse(it.code, it.body.bytes(), headersOf(it)) } } }
+                    LocalStages.emit(observation, LocalStages.Stage.HTTP, if (result.isSuccess) LocalStages.Result.END else LocalStages.Result.FAILED)
                     result.fold({ continuation.resume(it) }, { if (continuation.isActive) continuation.resumeWithException(it) })
                 }
             })
@@ -73,3 +81,6 @@ class OkHttpTransport(timeoutSeconds: Long = 45, base: OkHttpClient = OkHttpClie
             response.headers.names().associateWith { response.headers[it] ?: "" }
     }
 }
+
+/** Numeric process-local tag only; never serialized onto the wire. */
+data class StageObservation(val id: Long)

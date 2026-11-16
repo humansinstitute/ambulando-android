@@ -61,9 +61,12 @@ internal suspend fun WorkspaceSync.channelIds(workspace: WorkspaceRecord, scopeI
 /** One job per channel (the task list route is per channel). */
 suspend fun WorkspaceSync.refreshTasks(
     connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String? = null, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
+    failedJobKeys: Set<String>? = null,
 ) {
     val channels = runCatching { channelIds(workspace, scopeId) }.getOrNull() ?: return
     for (channel in channels) {
+        // Opt-in proof recovery selects only exact keys built from this workspace’s stored channels.
+        if (failedJobKeys != null && WorkspaceSync.tasksKey(workspace.id, channel) !in failedJobKeys) continue
         engine.enqueueRead(WorkspaceSync.tasksKey(workspace.id, channel), priority, force) {
             identity.requireReader(connection.signerNpub)
             val tasks = api(connection).channelTasks(workspace.id, workspace.appNpub, channel)
@@ -110,9 +113,12 @@ suspend fun WorkspaceSync.refreshTaskRelationships(
 
 suspend fun WorkspaceSync.refreshDocs(
     connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String? = null, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
+    failedJobKeys: Set<String>? = null,
 ) {
     val channels = runCatching { channelIds(workspace, scopeId) }.getOrNull() ?: return
     for (channel in channels) {
+        // Opt-in proof recovery selects only exact keys built from this workspace’s stored channels.
+        if (failedJobKeys != null && WorkspaceSync.docsKey(workspace.id, channel) !in failedJobKeys) continue
         engine.enqueueRead(WorkspaceSync.docsKey(workspace.id, channel), priority, force) {
             identity.requireReader(connection.signerNpub)
             val page = api(connection).channelDocs(workspace.id, workspace.appNpub, channel)
@@ -146,9 +152,12 @@ suspend fun WorkspaceSync.refreshDoc(
 
 suspend fun WorkspaceSync.refreshFiles(
     connection: ConnectionRecord, workspace: WorkspaceRecord, scopeId: String? = null, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
+    failedJobKeys: Set<String>? = null,
 ) {
     val channels = runCatching { channelIds(workspace, scopeId) }.getOrNull() ?: return
     for (channel in channels) {
+        // Opt-in proof recovery selects only exact keys built from this workspace’s stored channels.
+        if (failedJobKeys != null && WorkspaceSync.filesKey(workspace.id, channel) !in failedJobKeys) continue
         engine.enqueueRead(WorkspaceSync.filesKey(workspace.id, channel), priority, force) {
             identity.requireReader(connection.signerNpub)
             val api = api(connection)

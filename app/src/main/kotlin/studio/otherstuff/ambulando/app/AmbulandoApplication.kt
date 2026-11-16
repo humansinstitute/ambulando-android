@@ -12,6 +12,9 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntimes
 class AmbulandoApplication : Application(), BackgroundHost {
     override fun onCreate() {
         super.onCreate()
+        studio.otherstuff.ambulando.core.transport.LocalStages.observer = { event ->
+            android.util.Log.i("AmbulandoStages", "${event.sequence} ${event.operation} ${event.parent} ${event.elapsedMillis} ${event.stage.name} ${event.result.name}")
+        }
         if (!BuildConfig.GRANDPARENT_CHAT) push.createChannel() // Before automatic FCM background presentation.
     }
     val push by lazy { studio.otherstuff.ambulando.app.push.AndroidPush(this) }

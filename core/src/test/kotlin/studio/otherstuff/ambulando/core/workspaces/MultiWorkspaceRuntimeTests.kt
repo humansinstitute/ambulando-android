@@ -130,6 +130,7 @@ class MultiWorkspaceRuntimeTests {
         assertEquals(listOf("one.sample.invalid"), posts.toList())
         assertTrue(ra.store.reader.latestMessages(SampleIds.STUDIO, SampleIds.GENERAL, 500).any { it.body == "tower one news" })
         waitFor(20_000) { ra.store.reader.outbox(ca.id, ca.signerNpub).isEmpty() }
+        assertEquals(null, ra.validationIssue.value)
     }
 
     @Test fun lostAccessClosesWritesButKeepsReceivedContentAndPendingWork() = test {
@@ -168,6 +169,8 @@ class MultiWorkspaceRuntimeTests {
         kotlinx.coroutines.delay(500)
         assertTrue("reads are open for cached navigation", ra.activity.isOpen)
         assertFalse("but access could not be revalidated", ra.canSend)
+        ra.awaitStarted()
+        assertTrue(ra.validationIssue.value?.contains("validation failed") == true)
         ra.outbox.send("composed offline", emptyList(), ChatTarget(ca.id, SampleIds.STUDIO, SampleIds.GENERAL), ca, studio(ca))
         a.offline = false
         // Even a direct kick (not through the runtime) cannot send through the closed write gate.

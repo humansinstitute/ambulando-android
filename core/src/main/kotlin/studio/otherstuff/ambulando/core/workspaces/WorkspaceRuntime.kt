@@ -30,12 +30,20 @@ import studio.otherstuff.ambulando.core.sync.LiveStream
 import studio.otherstuff.ambulando.core.sync.ScopedSyncScheduler
 import studio.otherstuff.ambulando.core.sync.SyncEngine
 import studio.otherstuff.ambulando.core.sync.SyncPriority
+import studio.otherstuff.ambulando.core.sync.SyncScheduler
 import studio.otherstuff.ambulando.core.sync.WorkspaceActivity
 import studio.otherstuff.ambulando.core.sync.WorkspaceEventStreamTransport
 import studio.otherstuff.ambulando.core.sync.WorkspaceHttpTransport
 import studio.otherstuff.ambulando.core.sync.WorkspaceSync
 import studio.otherstuff.ambulando.core.sync.WriteSender
 import studio.otherstuff.ambulando.core.sync.catchUpEventsAndWait
+import studio.otherstuff.ambulando.core.sync.refreshAttentionPreference
+import studio.otherstuff.ambulando.core.sync.refreshTasks
+import studio.otherstuff.ambulando.core.sync.refreshDocs
+import studio.otherstuff.ambulando.core.sync.refreshFiles
+import studio.otherstuff.ambulando.core.sync.refreshInbox
+import studio.otherstuff.ambulando.core.sync.refreshNotifications
+import studio.otherstuff.ambulando.core.surfaces.refreshPins
 import studio.otherstuff.ambulando.core.transport.EventChunks
 import studio.otherstuff.ambulando.core.transport.EventStreamTransport
 import studio.otherstuff.ambulando.core.transport.HttpRequest
@@ -46,6 +54,9 @@ import studio.otherstuff.ambulando.core.transport.ObjectTransfers
 import studio.otherstuff.ambulando.core.transport.TowerClient
 import studio.otherstuff.ambulando.core.transport.TowerOrigin
 import studio.otherstuff.ambulando.core.transport.WorkspaceRecord
+import studio.otherstuff.ambulando.core.transport.LocalStages
+import studio.otherstuff.ambulando.core.transport.LocalStages.Stage
+import studio.otherstuff.ambulando.core.transport.ConnectionFailure
 import java.io.File
 import java.net.URI
 
@@ -173,6 +184,8 @@ class WorkspaceRuntime(
     /** Makes "close both gates and forget validation" and "validated, so open the write gate" one step each: neither can interleave. */
     private val gate = Any()
     private var starting: Job? = null
+    private val _validationIssue = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val validationIssue: kotlinx.coroutines.flow.StateFlow<String?> = _validationIssue
     @Volatile var validated = false
         private set
     @Volatile var enabled = false
@@ -198,36 +211,90 @@ class WorkspaceRuntime(
         val lease = activity.currentGeneration
         starting?.cancel()
         starting = scope.launch {
+            _validationIssue.value = null
             try {
-                env.identity.requireReader(connection.signerNpub)
-                if (!validated) {
-                    // A cached membership is not enough: the exact workspace and application must be listed now, and the saved
-                    // cursor caught up, before anything durable is sent.
-                    val listed = engine.perform("resume-access", SyncPriority.VISIBLE) { sync.api(connection).workspaces() }
-                    activity.check(lease)
-                    if (listed.none { it.id == workspace.id && it.appNpub == workspace.appNpub }) {
-                        updateWorkspace(workspace.copy(accessRemoved = true))
-                        env.discovery.discover(connection, SyncPriority.BACKGROUND, true)
-                        return@launch
+                LocalStages.trace(Stage.VALIDATION) validation@{
+                    env.identity.requireReader(connection.signerNpub)
+                    if (!validated) {
+                        // A cached membership is not enough: the exact workspace and application must be listed now, and the saved
+                        // cursor caught up, before anything durable is sent.
+                        val listed = engine.perform("resume-access", SyncPriority.VISIBLE) { LocalStages.trace(Stage.MEMBERSHIP) { sync.api(connection).workspaces() } }
+                        activity.check(lease)
+                        if (listed.none { it.id == workspace.id && it.appNpub == workspace.appNpub }) {
+                            updateWorkspace(workspace.copy(accessRemoved = true))
+                            env.discovery.discover(connection, SyncPriority.BACKGROUND, true)
+                            return@validation
+                        }
+                        sync.refreshWorkspace(connection, workspace, SyncPriority.VISIBLE)
+                        val caught = LocalStages.trace(Stage.CATCH_UP) { sync.catchUpEventsAndWait(connection, workspace, priority = SyncPriority.VISIBLE) }
+                        if (!activity.isCurrent(lease)) return@validation
+                        if (caught.accessLost) { closeAccess(); return@validation }
+                        if (!caught.complete) { _validationIssue.value = "Connection catch-up is incomplete. Refresh to validate before sending."; return@validation }
+                        // A pause that landed after the checks above must not be undone by a stale "validated".
+                        synchronized(gate) { if (!activity.isCurrent(lease)) return@validation; validated = true }
                     }
-                    sync.refreshWorkspace(connection, workspace, SyncPriority.VISIBLE)
-                    val caught = sync.catchUpEventsAndWait(connection, workspace, priority = SyncPriority.VISIBLE)
-                    if (!activity.isCurrent(lease)) return@launch
-                    if (caught.accessLost) { closeAccess(); return@launch }
-                    if (!caught.complete) return@launch
-                    // A pause that landed after the checks above must not be undone by a stale "validated".
-                    synchronized(gate) { if (!activity.isCurrent(lease)) return@launch; validated = true }
+                    openWrites(lease)
+                    onValidated()
+                    if (foreground) stream.start(connection, workspace)
                 }
-                openWrites(lease)
-                onValidated()
-                if (foreground) stream.start(connection, workspace)
             } catch (c: CancellationException) {
                 throw c
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (activity.isCurrent(lease)) _validationIssue.value = ConnectionFailure.validationMessage(e)
                 // Offline or locked: cached navigation stays usable; queued sends wait for validation, which a later
                 // resume, refresh or network return repeats.
             }
         }
+    }
+
+    /**
+     * A successful explicit QR proof for the already active entry may retry only these failed reads.
+     * Never resumes a runtime or replays a pending preference mutation. The proof's UI context and
+     * original activity generation must survive scheduling, signing and every network request.
+     */
+    suspend fun retryFailedReadsAfterProof(
+        verifiedConnection: ConnectionRecord, verifiedWorkspace: WorkspaceRecord, lease: Long,
+        stillCurrent: () -> Boolean,
+    ) {
+        fun current() = stillCurrent() && !closed && enabled && validated &&
+            !workspace.accessRemoved && activity.isCurrent(lease) && connection == verifiedConnection &&
+            boundary == WorkspaceBoundary.of(verifiedConnection, verifiedWorkspace) && !verifiedWorkspace.accessRemoved
+        suspend fun checkProof() {
+            val owner = env.identity.state() as? IdentityState.Unlocked
+            if (owner?.npub != connection.signerNpub || !current()) throw studio.otherstuff.ambulando.core.sync.WorkspacePaused()
+        }
+        if (!current()) return
+        checkProof()
+        val failed = engine.snapshot().errors.keys
+        // The transport fence also runs after NIP-98 signing, including each paginated notification request.
+        val proofScheduler = object : SyncScheduler by engine {
+            override suspend fun enqueueRead(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: SyncEngine.Work) {
+                engine.enqueueRead(key, priority, force, delayMillis) {
+                    checkProof() // Before any signing, including jobs resumed from a page budget.
+                    work.run()
+                    checkProof()
+                }
+            }
+        }
+        val reads = WorkspaceSync(store, proofScheduler, env.identity, object : HttpTransport {
+            override suspend fun send(request: HttpRequest): HttpResponse {
+                checkProof()
+                if (request.method != "GET") throw BoundaryViolation("proof recovery read")
+                val response = readTransport.send(request)
+                checkProof()
+                return response
+            }
+        })
+        // Do not interpret failed key suffixes as channel or scope IDs. Existing readers enumerate
+        // syncable stored channels, then filter exact keys before enqueueing (third argument is scope).
+        if (WorkspaceSync.scopesKey(workspace.id) in failed) reads.refreshWorkspace(connection, workspace, SyncPriority.USER, force = true, refreshChildren = false)
+        reads.refreshTasks(connection, workspace, priority = SyncPriority.USER, force = true, failedJobKeys = failed)
+        reads.refreshDocs(connection, workspace, priority = SyncPriority.USER, force = true, failedJobKeys = failed)
+        reads.refreshFiles(connection, workspace, priority = SyncPriority.USER, force = true, failedJobKeys = failed)
+        if (WorkspaceSync.inboxKey(workspace.id) in failed) reads.refreshInbox(connection, workspace, SyncPriority.USER, force = true)
+        if (WorkspaceSync.pinsKey(workspace.id) in failed) reads.refreshPins(connection, workspace, SyncPriority.USER, force = true)
+        if ("attention-types:${workspace.id}" in failed) reads.refreshAttentionPreference(connection, workspace, SyncPriority.USER, force = true, readOnly = true)
+        if (WorkspaceSync.notificationsKey(workspace.id) in failed) reads.refreshNotifications(connection, workspace, SyncPriority.USER, force = true, recoveryReadOnly = true)
     }
 
     /**

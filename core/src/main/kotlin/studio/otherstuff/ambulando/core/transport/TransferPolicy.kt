@@ -22,8 +22,10 @@ sealed class TransferError(message: String) : Exception(message, null, false, fa
 object TransferPolicy {
     /** Accepts only presigned HTTPS URLs on a host other than the pinned Tower host, outside `/api/v4/`. */
     fun validate(url: String, towerHost: String?): HttpUrl {
+        val tower = towerHost?.let { runCatching { HttpUrl.Builder().scheme("https").host(it).build() }.getOrNull() }
+        if (tower != null && FipsUrlPolicy.isProtected(tower)) throw TransferError.UnsafeURL
         val parsed = url.toHttpUrlOrNull() ?: throw TransferError.UnsafeURL
-        if (parsed.scheme != "https" || parsed.username.isNotEmpty() || parsed.password.isNotEmpty() || parsed.fragment != null ||
+        if (FipsUrlPolicy.isProtected(parsed) || parsed.scheme != "https" || parsed.username.isNotEmpty() || parsed.password.isNotEmpty() || parsed.fragment != null ||
             parsed.host.isEmpty() || parsed.host == towerHost?.lowercase() || decodedPath(parsed).startsWith("/api/v4/")
         ) throw TransferError.UnsafeURL
         return parsed

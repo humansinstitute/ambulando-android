@@ -116,13 +116,17 @@ class WorkspaceSync(
     }
 
     /** Scopes job for one workspace; on success schedules one channel job per scope. */
-    suspend fun refreshWorkspace(connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false) {
+    suspend fun refreshWorkspace(connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
+        refreshChildren: Boolean = true,
+    ) {
         engine.enqueueRead(scopesKey(workspace.id), priority, force) {
             identity.requireReader(connection.signerNpub)
             val api = api(connection)
             val scopes = api.scopes(workspace.id, workspace.appNpub)
             checkCancelled()
             store.writer.upsertScopes(workspace.id, scopes, complete = true)
+            // Proof recovery may retry the actual failed scope read without touching healthy descendants.
+            if (!refreshChildren) return@enqueueRead
             refreshDirectory(connection, workspace, SyncPriority.BACKGROUND)
             for (scope in scopes) {
                 engine.enqueueRead(channelsKey(workspace.id, scope.id), priority) {

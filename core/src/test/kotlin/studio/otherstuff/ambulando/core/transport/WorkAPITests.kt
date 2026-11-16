@@ -62,7 +62,14 @@ class WorkAPITests {
         val api = TowerAPI(TowerClient(origin, transport, makeIdentity()))
         var persisted: PreparedObject? = null
         val bytes = "quarterly numbers".toByteArray()
-        val id = api.store(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB, bytes, "text/plain", "numbers.txt", null) { persisted = it }
+        val observations = mutableListOf<LocalStages.Event>()
+        val priorObserver = LocalStages.observer
+        LocalStages.observer = { observations.add(it) }
+        val id = try { api.store(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB, bytes, "text/plain", "numbers.txt", null) { persisted = it } }
+        finally { LocalStages.observer = priorObserver }
+        assertEquals(listOf(LocalStages.Stage.UPLOAD_PREPARE, LocalStages.Stage.UPLOAD_BYTES, LocalStages.Stage.UPLOAD_COMPLETE, LocalStages.Stage.UPLOAD_VERIFY), observations.filter { it.result == LocalStages.Result.BEGIN }.map { it.stage })
+        assertFalse(observations.toString().contains("numbers.txt"))
+        assertFalse(observations.toString().contains("Signature"))
         assertEquals(id, persisted?.objectId)
         val put = storage.lastPut!!
         assertEquals("objects.example.com", put.url.toHttpUrlOrNull()!!.host)

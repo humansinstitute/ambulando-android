@@ -1,5 +1,9 @@
 package studio.otherstuff.ambulando.core.sync
 
+import studio.otherstuff.ambulando.core.transport.LocalStages
+import studio.otherstuff.ambulando.core.transport.LocalStages.Stage
+import studio.otherstuff.ambulando.core.transport.LocalStages.Result
+
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -58,7 +62,7 @@ class WorkspaceHttpTransport(
     private val closed: () -> Throwable = { WorkspacePaused() },
 ) : HttpTransport {
     override suspend fun send(request: HttpRequest): HttpResponse {
-        val lease = activity.lease() ?: throw closed()
+        val lease = activity.lease() ?: run { LocalStages.emit(LocalStages.next(), Stage.WRITE_GATE, Result.CLOSED); throw closed() }
         val response = base.send(request)
         if (!activity.isCurrent(lease)) throw WorkspacePaused()
         return response
@@ -108,7 +112,12 @@ class ScopedSyncScheduler(
 
     override suspend fun enqueue(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: SyncEngine.Work) {
         val lease = activity.lease() ?: return
-        parent.enqueueFor(namespace, connectionNamespace, scoped(key), priority, force, delayMillis, false, guarded(lease, work))
+        val observation = LocalStages.next()
+        LocalStages.emit(observation, Stage.SCHEDULER_QUEUE, Result.BEGIN)
+        parent.enqueueFor(namespace, connectionNamespace, scoped(key), priority, force, delayMillis, false, guarded(lease, SyncEngine.Work {
+            LocalStages.emit(observation, Stage.SCHEDULER_QUEUE, Result.END)
+            work.run()
+        }))
     }
 
     override suspend fun enqueueRead(key: String, priority: SyncPriority, force: Boolean, delayMillis: Long?, work: SyncEngine.Work) {
@@ -134,7 +143,10 @@ class ScopedSyncScheduler(
 
     override suspend fun <T> perform(key: String, priority: SyncPriority, work: suspend () -> T): T {
         val lease = activity.lease() ?: throw WorkspacePaused()
+        val observation = LocalStages.next()
+        LocalStages.emit(observation, Stage.SCHEDULER_QUEUE, Result.BEGIN)
         return parent.performFor(namespace, connectionNamespace, scoped(key), priority) {
+            LocalStages.emit(observation, Stage.SCHEDULER_QUEUE, Result.END)
             activity.check(lease)
             val result = work()
             activity.check(lease)

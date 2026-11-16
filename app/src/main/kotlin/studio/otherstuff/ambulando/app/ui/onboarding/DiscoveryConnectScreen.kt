@@ -25,7 +25,7 @@ fun DiscoveryConnectScreen(model: AppModel, done: () -> Unit = {}) {
             ConnectScreen(model.identityState?.npub, model.notice, { origin -> runCatching {
                 val d = model.descriptor(origin)
                 DescriptorSummaryModel(d.tower?.availability?.status ?: "Available", d.tower?.protocols ?: emptyList(), d.services.map { it.kind }, d.advertisesFIPS)
-            } }) { origin -> model.connect(origin); done() }
+            } }, connectWorkspaceQr = { envelope, mode -> model.connectWorkspaceQr(envelope, mode); done() }) { origin -> model.connect(origin); done() }
         } else {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("Choose a Tower", style = MaterialTheme.typography.headlineMedium)

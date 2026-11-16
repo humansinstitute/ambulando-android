@@ -1,5 +1,9 @@
 package studio.otherstuff.ambulando.core.sync
 
+import studio.otherstuff.ambulando.core.transport.LocalStages
+import studio.otherstuff.ambulando.core.transport.LocalStages.Stage
+import studio.otherstuff.ambulando.core.transport.LocalStages.Result
+
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -186,7 +190,7 @@ class WriteSender(
     }
 
     suspend fun kick(connection: ConnectionRecord, force: Boolean = false, delayMillis: Long? = null) {
-        engine.enqueue(key(connection), SyncPriority.USER, force, delayMillis) { drain(connection) }
+        LocalStages.trace(Stage.WRITE_QUEUE) { engine.enqueue(key(connection), SyncPriority.USER, force, delayMillis) { LocalStages.trace(Stage.WRITE_GATE) { drain(connection) } } }
     }
 
     internal suspend fun drain(connection: ConnectionRecord) {
@@ -221,13 +225,14 @@ class WriteSender(
                 continue
             }
             if (item.state == WriteState.FAILED || item.state == WriteState.CONFLICT || item.state == WriteState.SENDING) {
+                LocalStages.emit(LocalStages.next(), Stage.WRITE_BLOCKED, Result.CLOSED)
                 blocked.add(item.groupKey)
                 continue
             }
             if (item.groupKey in blocked) continue
             store.writer.markWrite(item.id, WriteState.SENDING, item.lastStatus, item.lastCode, item.lastError)
             val outcome = try {
-                perform(item, api, client)
+                LocalStages.trace(Stage.WRITE_ATTEMPT) { perform(item, api, client) }
             } catch (e: Throwable) {
                 if (e is CancellationException || !currentCoroutineContext().isActive) {
                     withContext(NonCancellable) {
@@ -571,7 +576,7 @@ class WriteSender(
                     if (ambiguous) found()?.let { return WriteOutcome.Done(WriteAcknowledgement(files = listOf(it))) }
                     val o = linkedMapOf<String, JsonElement>("storage_object_id" to JsonPrimitive(objectId), "display_name" to (p["display_name"] ?: JsonPrimitive(name)))
                     p.string("folder_id")?.let { o["folder_id"] = JsonPrimitive(it) }
-                    val r = send("POST", base + "/channels/" + TowerAPI.uuid(channel) + "/files", JsonObject(o))
+                    val r = LocalStages.trace(Stage.UPLOAD_LINK) { send("POST", base + "/channels/" + TowerAPI.uuid(channel) + "/files", JsonObject(o)) }
                     if (ok(r)) record(r.body, "file", FileRecord::parse)?.let { return WriteOutcome.Done(WriteAcknowledgement(files = listOf(it))) }
                     if (r.status == 409) found()?.let { return WriteOutcome.Done(WriteAcknowledgement(files = listOf(it))) }
                     return classify(r.status, r.body, attempts, "upload files to this channel")

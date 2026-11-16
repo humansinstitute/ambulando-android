@@ -20,8 +20,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 46
-        versionName = "0.9.18"
+        versionCode = 54
+        versionName = "0.9.26"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
@@ -74,6 +74,7 @@ android {
 kotlin { jvmToolchain(21) }
 
 dependencies {
+    implementation("com.google.zxing:core:3.5.3")
     implementation("com.google.firebase:firebase-messaging:26.0.0")
     implementation(project(":core"))
     implementation("com.garmin.connectiq:ciq-companion-app-sdk:2.2.0@aar")

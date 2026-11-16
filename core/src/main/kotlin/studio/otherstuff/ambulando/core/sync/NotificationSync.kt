@@ -50,15 +50,15 @@ import studio.otherstuff.ambulando.core.transport.NotificationRulesResult
 
 /** Schedules the inbox sync of one workspace (a hint, a foreground refresh, a reseed or a manual pull to refresh). */
 suspend fun WorkspaceSync.refreshNotifications(
-    connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
+    connection: ConnectionRecord, workspace: WorkspaceRecord, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false, recoveryReadOnly: Boolean = false,
 ) {
     if (workspace.accessRemoved) return
-    refreshAttentionPreference(connection, workspace, priority, force)
-    engine.enqueueRead(WorkspaceSync.notificationsKey(workspace.id), priority, force) { runNotifications(connection, workspace) }
+    if (!recoveryReadOnly) refreshAttentionPreference(connection, workspace, priority, force)
+    engine.enqueueRead(WorkspaceSync.notificationsKey(workspace.id), priority, force) { runNotifications(connection, workspace, recoveryReadOnly) }
 }
 
 /** The `notifications:<w>` job. */
-internal suspend fun WorkspaceSync.runNotifications(connection: ConnectionRecord, workspace: WorkspaceRecord) {
+internal suspend fun WorkspaceSync.runNotifications(connection: ConnectionRecord, workspace: WorkspaceRecord, recoveryReadOnly: Boolean = false) {
     identity.requireReader(connection.signerNpub)
     val w = workspace.id
     val api = api(connection)
@@ -66,7 +66,7 @@ internal suspend fun WorkspaceSync.runNotifications(connection: ConnectionRecord
         var sync = store.reader.notificationSync(connection.id, w)
         if (sync == null || sync.state != NotificationSyncState.Phase.READY) {
             // Not complete (continues in the next job, already scheduled) means nothing is replayed yet.
-            if (!coldStartNotifications(connection, workspace)) return
+            if (!coldStartNotifications(connection, workspace, recoveryReadOnly)) return
             sync = store.reader.notificationSync(connection.id, w)
         }
         var local = sync?.localSeq ?: 0L
@@ -81,7 +81,7 @@ internal suspend fun WorkspaceSync.runNotifications(connection: ConnectionRecord
                 // The cursor is older than Tower keeps tombstones for, ahead of its head after a restore, or the person's
                 // rules changed (what this app may show changed): start over from a fresh snapshot.
                 store.writer.resetNotificationCursor(connection.id, w)
-                if (!coldStartNotifications(connection, workspace)) return
+                if (!coldStartNotifications(connection, workspace, recoveryReadOnly)) return
                 store.reader.notificationSync(connection.id, w).let { local = it?.localSeq ?: 0L; rules = it?.rulesRevision }
                 pages += 1
                 continue
@@ -90,7 +90,7 @@ internal suspend fun WorkspaceSync.runNotifications(connection: ConnectionRecord
             if (page.rulesRevision != null && rules != null && page.rulesRevision != rules) {
                 // Tower answered under other rules without a 410: this page is not comparable with the snapshot. Same recovery.
                 store.writer.resetNotificationCursor(connection.id, w)
-                if (!coldStartNotifications(connection, workspace)) return
+                if (!coldStartNotifications(connection, workspace, recoveryReadOnly)) return
                 store.reader.notificationSync(connection.id, w).let { local = it?.localSeq ?: 0L; rules = it?.rulesRevision }
                 pages += 1
                 continue
@@ -109,6 +109,7 @@ internal suspend fun WorkspaceSync.runNotifications(connection: ConnectionRecord
             404, 405, 501 -> store.writer.markNotificationBackend(connection.id, w, NotificationSyncState.Phase.UNSUPPORTED)
             else -> throw e
         }
+        if (recoveryReadOnly) throw e // Preserve backend access state and the refused read's warning.
     }
 }
 
@@ -119,7 +120,7 @@ internal suspend fun WorkspaceSync.runNotifications(connection: ConnectionRecord
  * is set only when the last page is stored. Returns true when the snapshot completed in this job; false when it continues
  * in a following job (already scheduled) or was superseded by a newer generation.
  */
-internal suspend fun WorkspaceSync.coldStartNotifications(connection: ConnectionRecord, workspace: WorkspaceRecord): Boolean {
+internal suspend fun WorkspaceSync.coldStartNotifications(connection: ConnectionRecord, workspace: WorkspaceRecord, recoveryReadOnly: Boolean = false): Boolean {
     val w = workspace.id
     val api = api(connection)
     val resumed = store.reader.notificationSnapshotProgress(connection.id, w)
@@ -163,7 +164,7 @@ internal suspend fun WorkspaceSync.coldStartNotifications(connection: Connection
         if (next == null) return store.writer.completeNotificationSnapshot(connection.id, w, gen, s)
         if (pages >= WorkspaceSync.NOTIFICATION_PAGE_BUDGET) {
             // Yield to the scheduler and continue from the stored cursor; nothing is declared complete.
-            refreshNotifications(connection, workspace, SyncPriority.VISIBLE)
+            refreshNotifications(connection, workspace, SyncPriority.VISIBLE, recoveryReadOnly = recoveryReadOnly)
             return false
         }
     }

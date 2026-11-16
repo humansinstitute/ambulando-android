@@ -49,6 +49,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("com.google.zxing:core:3.5.3")
     // Shared source includes Ambulando's optional push adapter; the family app does not enroll it.
     implementation("com.google.firebase:firebase-messaging:26.0.0")
     implementation(project(":core"))

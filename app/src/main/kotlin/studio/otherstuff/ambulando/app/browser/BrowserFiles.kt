@@ -83,7 +83,7 @@ object BrowserFilePolicy {
     const val GENERATED_MAX_BYTES = 256 * 1024 * 1024
     fun filename(value: String?): String = value.orEmpty().substringAfterLast('/').substringAfterLast('\\')
         .map { if (it.isISOControl() || it in ":*?\"<>|") '_' else it }.joinToString("").trim().take(160).takeIf { it.isNotBlank() && it != "." && it != ".." } ?: "download"
-    fun https(url: String): Boolean = runCatching { val u = URI(url); u.scheme == "https" && u.host != null && u.userInfo == null }.getOrDefault(false)
+    fun https(url: String): Boolean = runCatching { val u = URI(url); studio.otherstuff.ambulando.core.transport.FipsUrlPolicy.endpoint(url) == null && u.scheme == "https" && u.host != null && u.userInfo == null }.getOrDefault(false)
 
     /** No Tower signer or identity headers. Cookies are read separately for each destination, including redirects. */
     fun fetchTo(url: String, transfer: BrowserFileTransfer, cookies: (String) -> String?, output: java.io.OutputStream, userAgent: String? = null, setCookie: (String, String) -> Unit = { _, _ -> }) {

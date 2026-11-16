@@ -613,6 +613,7 @@ class DocumentSaver(
 
         /** Message for a transport failure. */
         internal fun networkMessage(error: Throwable): String = when (error) {
+            is studio.otherstuff.ambulando.core.transport.SafeConnectionIssue -> error.connectionIssue.userMessage
             is UnknownHostException, is ConnectException, is NoRouteToHostException -> "Offline; will send when the connection returns."
             is SocketTimeoutException -> "Tower did not answer in time; will retry."
             is InterruptedIOException, is java.io.IOException -> "Network problem (${error.javaClass.simpleName}); will retry."

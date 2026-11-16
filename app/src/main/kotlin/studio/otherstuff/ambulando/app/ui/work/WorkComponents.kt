@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
@@ -160,6 +161,7 @@ fun byteLabel(count: Long?): String {
 
 /** Retry, apply-anyway and discard for a queued write. The integrator implements these on the write queue. */
 interface WriteActions {
+    fun validationIssue(item: WriteItem): kotlinx.coroutines.flow.StateFlow<String?>? = null
     /** iOS `WriteSender.retry(id, force: false)`: send a failed or retrying write again. */
     fun retryWrite(item: WriteItem)
     /** iOS `WriteSender.retry(id, force: true)` ("Apply mine"): resend a conflicted change over the newer version. */
@@ -173,12 +175,8 @@ interface WriteActions {
 fun WriteStatusLine(item: WriteItem, label: String, actions: WriteActions, modifier: Modifier = Modifier) {
     val amb = Amb.colors
     val unlocked = LocalAppServices.current.unlocked
-    val text = when (item.state) {
-        WriteState.QUEUED, WriteState.SENDING -> if (unlocked) "$label: sending…" else "$label: waits for unlock"
-        WriteState.RETRYING -> "$label: ${item.lastError ?: "will retry"}"
-        WriteState.FAILED -> "$label not saved. ${item.lastError ?: ""}".trimEnd()
-        WriteState.CONFLICT -> item.lastError ?: "Changed elsewhere."
-    }
+    val validationIssue = actions.validationIssue(item)?.collectAsState()?.value
+    val text = writeStatusText(item.state, label, unlocked, validationIssue, item.lastError)
     val icon: ImageVector = when (item.state) {
         WriteState.QUEUED, WriteState.SENDING -> Icons.Outlined.ArrowCircleUp
         WriteState.RETRYING -> Icons.Outlined.Refresh
@@ -371,4 +369,12 @@ fun WorkSheet(
             content()
         }
     }
+}
+
+internal fun writeStatusText(state: WriteState, label: String, unlocked: Boolean, validationIssue: String?, lastError: String?): String = when (state) {
+    WriteState.QUEUED -> if (!unlocked) "$label: waits for unlock" else "$label: waiting for connection validation or a send slot. ${validationIssue ?: ""}".trimEnd()
+    WriteState.SENDING -> "$label: sending…"
+    WriteState.RETRYING -> "$label: ${lastError ?: "will retry"}"
+    WriteState.FAILED -> "$label not saved. ${lastError ?: ""}".trimEnd()
+    WriteState.CONFLICT -> lastError ?: "Changed elsewhere."
 }

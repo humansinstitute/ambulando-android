@@ -36,8 +36,8 @@ fun interface AvatarTransport {
  * itself: no Authorization header, no cookies (neither sent nor stored) and no HTTP cache. Redirects are followed at most
  * three times and only to an address the avatar URL policy accepts (Blossom servers redirect every picture to their CDN).
  */
-class OkHttpAvatarTransport(timeoutSeconds: Long = 15) : AvatarTransport {
-    private val client = OkHttpClient.Builder()
+class OkHttpAvatarTransport(timeoutSeconds: Long = 15, base: OkHttpClient = OkHttpClient()) : AvatarTransport {
+    private val client = base.newBuilder()
         .followRedirects(false).followSslRedirects(false)
         .cache(null)
         .callTimeout(timeoutSeconds * 2, TimeUnit.SECONDS)
@@ -50,6 +50,8 @@ class OkHttpAvatarTransport(timeoutSeconds: Long = 15) : AvatarTransport {
         var redirects = 0
         while (true) {
             val request = Request.Builder().url(target.toString()).get().header("Accept", "image/*").build()
+            if (studio.otherstuff.ambulando.core.transport.FipsUrlPolicy.isProtected(request.url))
+                throw studio.otherstuff.ambulando.core.transport.TowerError.FipsNotSupported
             client.newCall(request).execute().use { response ->
                 if (response.code in 300..399) {
                     redirects += 1
