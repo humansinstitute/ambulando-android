@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Message
 import android.webkit.GeolocationPermissions
+import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -27,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
@@ -73,6 +75,8 @@ class BrowserTab internal constructor(val webView: WebView, val openerId: UUID? 
     var launchURL: String? = null
     /** Provisional main-frame URL, including TLS failures that never reach onPageStarted. */
     internal var pendingNavigationURL: String? = null
+    @Volatile internal var restorable = false
+    internal var directoryRequested = false
 
     val isBlank: Boolean get() = openerId == null && (url == null || url?.startsWith("about:") == true)
     val displayTitle: String get() = title.ifEmpty { url?.let { BrowserURLPolicy.navigationAddress(it)?.host } ?: if (openerId != null) "New window" else "New tab" }
@@ -91,41 +95,92 @@ class StoreFavouritesPersistence(private val store: LocalStore) : BrowserFavouri
 }
 
 /** A JavaScript `alert()` or `confirm()` waiting for the user. */
-class BrowserDialog(val origin: String, val message: String, val confirm: Boolean, val reply: (Boolean) -> Unit)
+class BrowserDialog(val tab: BrowserTab, val origin: String, val message: String, val confirm: Boolean,
+    val defaultValue: String? = null, private val complete: (Boolean, String) -> Unit) {
+    private val document = tab.documentId
+    private var completed = false
+    fun reply(allow: Boolean, value: String = "") {
+        if (completed) return
+        completed = true
+        complete(allow && tab.documentId == document, value)
+    }
+}
 
 /**
  * The in-app browser: full-screen tabs over Ambulando, with `window.nostr` answered natively by [NIP07Broker].
  *
  * Ambulando's own screens stay alive underneath (the browser is a cover, not a navigation change), so returning finds
- * the same section, channel, scroll position and composer draft. Tabs live while the app runs (not restored after the
- * process ends). Website data lives in the browser's own WebView profile, separate from editors and artefacts.
+ * the same section, channel, scroll position and composer draft. Live history stays in process; cold restoration saves only allowed GET URLs and selection.
+ * Website data lives in the browser's own WebView profile, separate from editors and artefacts.
  */
 class BrowserModel(private val context: Context) {
     companion object {
         const val BRIDGE = "ambulandoNostr"
         const val MAX_TABS = 12
+        private val cleanedStaleFiles = java.util.concurrent.atomic.AtomicBoolean()
         // HTTPS top-frame only. Page-created bytes never receive native credentials or local filesystem paths.
         val FILE_SCRIPT = """
             (() => {
               if (window.top !== window || location.protocol !== 'https:') return;
-              const send = value => window.ambulandoFiles.postMessage(JSON.stringify(value));
-              document.addEventListener('click', async event => {
-                const a = event.target.closest && event.target.closest('a[href]');
-                if (!a || !event.isTrusted) return;
-                const url = new URL(a.href, location.href);
-                if (!a.hasAttribute('download') && !['blob:', 'data:'].includes(url.protocol)) return;
-                if (!['https:', 'blob:', 'data:'].includes(url.protocol)) return;
-                event.preventDefault();
+              let seq = 0; const pending = new Map();
+              window.ambulandoFiles.onmessage = e => {
+                const r=JSON.parse(e.data), p=pending.get(r.id); if (!p) return;
+                pending.delete(r.id); r.error ? p.reject(new Error(r.error)) : p.resolve();
+              };
+              const send = value => new Promise((resolve,reject) => {
+                const id=++seq; pending.set(id,{resolve,reject});
+                window.ambulandoFiles.postMessage(JSON.stringify({...value,id}));
+                setTimeout(()=>{if(pending.delete(id))reject(new Error('Download timed out.'));},30000);
+              });
+              const exportResponse = async (response, filename='download') => {
+                if (!response.ok) throw new Error('Download failed (HTTP '+response.status+').');
+                if(Number(response.headers.get('Content-Length'))>256*1024*1024)throw new Error('Page export exceeds 256 MB.');
+                await send({start:true, filename, mime:response.headers.get('Content-Type') || 'application/octet-stream'});
                 try {
-                  if (url.protocol === 'https:') { send({url: url.href, filename: a.download || url.pathname.split('/').pop()}); return; }
-                  const response = await fetch(url.href); const blob = await response.blob();
-                  if (blob.size > 16 * 1024 * 1024) throw new Error('Download exceeds the 16 MB limit.');
-                  const reader = new FileReader();
-                  reader.onload = () => send({filename: a.download || 'download', base64: reader.result.split(',')[1]});
-                  reader.onerror = () => send({error: 'Cannot read page download.'});
-                  reader.readAsDataURL(blob);
-                } catch (e) { send({error: String(e.message || e)}); }
-              }, true);
+                  const reader=response.body.getReader(); let size=0;
+                  for (;;) {
+                    const {done,value}=await reader.read(); if(done)break;
+                    size+=value.length; if(size>256*1024*1024) {await reader.cancel();throw new Error('Page export exceeds 256 MB.');}
+                    for(let i=0;i<value.length;i+=32768) {
+                      const chunk=value.subarray(i,i+32768); let binary='';
+                      for(let j=0;j<chunk.length;j++)binary+=String.fromCharCode(chunk[j]);
+                      await send({chunk:btoa(binary)});
+                    }
+                  }
+                  await send({end:true});
+                } catch(e) { await send({abort:true}).catch(()=>{}); throw e; }
+              };
+              // The response keeps the page's POST/bearer context. No native identity or request replay.
+              window.ambulandoDownload = exportResponse;
+              const handle = async a => {
+                const url = new URL(a.href, location.href);
+                try {
+                  if(url.protocol==='https:') {await send({url:url.href,filename:a.download||url.pathname.split('/').pop()});return;}
+                  await exportResponse(await fetch(url.href),a.download||'download');
+                } catch(e) {send({error:String(e.message||e)}).catch(()=>{});}
+              };
+              const eligible = a => a && (a.hasAttribute('download') || /^(blob:|data:)/.test(a.href)) && /^(https:|blob:|data:)/.test(a.href);
+              let directoryInput=null, pickingDirectory=false;
+              document.addEventListener('change',event=>{
+                if(event.target!==directoryInput)return;
+                const paths=window.__ambulandoDirectoryPaths||[];
+                Array.from(directoryInput.files||[]).forEach((file,index)=>{
+                  const path=paths[index];if(path && path.split('/').pop()===file.name)Object.defineProperty(file,'webkitRelativePath',{value:path});
+                });
+                window.__ambulandoDirectoryPaths=[];
+              },true);
+              document.addEventListener('click', event => {
+                const input=event.target;
+                if(input?.tagName==='INPUT' && input.type==='file' && input.webkitdirectory){
+                  if(pickingDirectory){pickingDirectory=false;return;}
+                  event.preventDefault();directoryInput=input;
+                  send({directory:true}).then(()=>{pickingDirectory=true;input.click();}).catch(()=>{});return;
+                }
+                const a=event.target.closest && event.target.closest('a[href]');
+                if(!eligible(a))return; event.preventDefault(); handle(a);
+              },true);
+              const click=HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click=function(){if(eligible(this))handle(this);else click.call(this);};
             })();
         """.trimIndent()
 
@@ -182,13 +237,26 @@ class BrowserModel(private val context: Context) {
         """.trimIndent()
     }
 
+    init {
+        if (cleanedStaleFiles.compareAndSet(false, true)) {
+            context.cacheDir.listFiles()?.filter { it.name.startsWith("browser-export-") }?.forEach { it.delete() }
+            java.io.File(context.cacheDir, "AmbulandoFiles").listFiles()?.filter { it.name.startsWith("browser-capture-") }?.forEach { it.delete() }
+        }
+    }
     val tabs = mutableStateListOf<BrowserTab>()
     var fileSelection by mutableStateOf<BrowserFileSelection?>(null)
     var download by mutableStateOf<BrowserDownload?>(null)
     var fileTransfer by mutableStateOf<BrowserFileTransfer?>(null)
+    private var fileEpoch = 0L
+    private val fileMutex = kotlinx.coroutines.sync.Mutex()
+    private var generated: BrowserGenerated? = null
+    private val uploads = mutableListOf<BrowserFileSelection>()
     fun cancelFileRequests(tab: BrowserTab? = null) {
+        fileEpoch += 1
+        uploads.filter { tab == null || it.tab === tab }.toList().forEach { it.finish(null); it.cleanup(); uploads.remove(it) }
+        if (tab == null || generated?.tab === tab) { generated?.cancel(); generated = null }
         if (tab == null || fileSelection?.tab === tab) { fileSelection?.finish(null); fileSelection = null }
-        if (tab == null || download?.tab === tab) download = null
+        if (tab == null || download?.tab === tab) { download?.invalidate(); download?.file?.delete(); download = null }
         if (tab == null || fileTransfer?.request?.tab === tab) fileTransfer?.cancel()
     }
     var selectedId by mutableStateOf<UUID?>(null)
@@ -196,8 +264,41 @@ class BrowserModel(private val context: Context) {
         private set
     var showingTabs by mutableStateOf(false)
     /** An address for another app (mail, phone, wallet...) waiting for the user to confirm the hand-off. */
-    var pendingExternal by mutableStateOf<String?>(null)
+    var pendingExternal by mutableStateOf<BrowserExternalRequest?>(null)
     var dialog by mutableStateOf<BrowserDialog?>(null)
+    var fullscreen by mutableStateOf<BrowserFullscreen?>(null)
+        private set
+    var permission by mutableStateOf<BrowserPermission?>(null)
+    fun exitFullscreen() { val old = fullscreen; fullscreen = null; old?.finish() }
+    private val grantedPageTabs = mutableSetOf<BrowserTab>()
+    fun revokePagePermissions(tab: BrowserTab) {
+        if (grantedPageTabs.remove(tab)) {
+            tab.webView.evaluateJavascript("window.__ambulandoStopMedia?.()", null)
+            tab.url?.takeIf(BrowserFilePolicy::https)?.let { tab.webView.loadUrl(it) }
+        }
+    }
+    private fun cancelPageUI(tab: BrowserTab? = null, navigating: Boolean = false) {
+        if (tab == null || dialog?.tab === tab) { dialog?.reply(false); dialog = null }
+        if (tab == null || permission?.tab === tab) { permission?.finish(false); permission = null }
+        if (tab == null || fullscreen?.tab === tab) exitFullscreen()
+        tabs.filter { tab == null || it === tab }.forEach {
+            it.webView.evaluateJavascript("window.__ambulandoStopMedia?.()", null)
+        }
+        grantedPageTabs.filter { tab == null || it === tab }.toList().forEach {
+            if (navigating) grantedPageTabs.remove(it) else revokePagePermissions(it)
+        }
+        pendingExternal = null
+    }
+    private fun showDialog(tab: BrowserTab, url: String?, message: String?, result: JsResult, confirm: Boolean, value: String? = null): Boolean {
+        val origin = BrowserURLPolicy.origin(url?.let { BrowserURLPolicy.navigationAddress(it) })
+        if (tab !== selected || !presented || origin == null || origin != tab.origin || dialog != null) {
+            result.cancel(); return true
+        }
+        dialog = BrowserDialog(tab, origin, message.orEmpty(), confirm, value) { accepted, text ->
+            if (!accepted) result.cancel() else if (result is JsPromptResult) result.confirm(text) else result.confirm()
+        }
+        return true
+    }
     /** The broker's current question, mirrored for Compose. */
     var prompt by mutableStateOf<NIP07Prompt?>(null)
         private set
@@ -219,6 +320,30 @@ class BrowserModel(private val context: Context) {
 
     /** Sample-data mode and tests only: this HTML answers for the URL's host instead of the network. */
     var samplePage: Pair<String, String>? = null
+
+    private val sessionPrefs = context.getSharedPreferences("browser-tabs-v1", Context.MODE_PRIVATE)
+    private var restoredSession = false
+    private fun persistTabs() {
+        if (!restoredSession) return
+        val safe = tabs.filter { it.restorable && it.url?.let(BrowserFilePolicy::https) == true }
+        val urls = org.json.JSONArray(safe.map { it.url })
+        sessionPrefs.edit().putString("urls", urls.toString()).putInt("selected", safe.indexOf(selected).coerceAtLeast(0)).apply()
+    }
+    private fun restoreTabs() {
+        if (restoredSession) return
+        restoredSession = true
+        if (tabs.isNotEmpty()) return
+        val urls = runCatching { org.json.JSONArray(sessionPrefs.getString("urls", "[]")) }.getOrNull() ?: return
+        val selection = sessionPrefs.getInt("selected", 0)
+        repeat(minOf(urls.length(), MAX_TABS)) { i ->
+            val url = urls.optString(i)
+            val uri = BrowserURLPolicy.navigationAddress(url)
+            if (uri != null && uri.scheme == "https" && BrowserURLPolicy.decide(uri, true) == BrowserURLPolicy.Decision.Load) {
+                addTab()?.let { load(url, it) }
+            }
+        }
+        tabs.getOrNull(selection)?.let { selectedId = it.id }
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var broker: NIP07Broker? = null
@@ -313,6 +438,9 @@ class BrowserModel(private val context: Context) {
 
     /** Opens [url] (or an empty tab for the address field) as a new tab and shows the browser. */
     fun open(url: String?) {
+        restoreTabs()
+        cancelPageUI()
+        cancelFileRequests()
         val tab = addTab() ?: run { presented = true; return }
         url?.let { load(it, tab) }
         presented = true
@@ -336,7 +464,7 @@ class BrowserModel(private val context: Context) {
     }
 
     /** The globe button: back to the open tabs, or a new tab when there are none. */
-    fun show() { if (tabs.isEmpty()) open(null) else presented = true }
+    fun show() { restoreTabs(); if (tabs.isEmpty()) open(null) else presented = true }
 
     /** Back to Ambulando, exactly where the user was. Waiting `window.nostr` requests are cancelled. */
     fun hide() {
@@ -344,16 +472,18 @@ class BrowserModel(private val context: Context) {
         presented = false
         cancelFileRequests()
         tabs.forEach { broker?.tabClosed(it.id) }
-        dialog?.reply?.invoke(false)
-        dialog = null
+        cancelPageUI()
     }
 
-    fun select(tab: BrowserTab) { if (selectedId != tab.id) cancelFileRequests(); selectedId = tab.id; showingTabs = false }
+    fun select(tab: BrowserTab) { if (selectedId != tab.id) { cancelFileRequests(); cancelPageUI() }; selectedId = tab.id; showingTabs = false; persistTabs() }
 
     fun close(tab: BrowserTab) {
         val index = tabs.indexOfFirst { it.id == tab.id }.takeIf { it >= 0 } ?: return
         broker?.tabClosed(tab.id)
+        cancelPageUI(tab, navigating = true)
         cancelFileRequests(tab)
+        tab.documentId += 1
+        tab.origin = null
         tab.webView.stopLoading()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) WebViewCompat.removeWebMessageListener(tab.webView, BRIDGE)
         WebViewCompat.removeWebMessageListener(tab.webView, "ambulandoFiles")
@@ -361,6 +491,7 @@ class BrowserModel(private val context: Context) {
         tabs.removeAt(index)
         if (selectedId == tab.id) selectedId = tabs.firstOrNull { it.id == tab.openerId }?.id ?: tabs.getOrNull(index)?.id ?: tabs.lastOrNull()?.id
         if (tabs.isEmpty()) { presented = false; showingTabs = false }
+        persistTabs()
     }
 
     fun closeAll() { tabs.toList().forEach { close(it) } }
@@ -399,7 +530,7 @@ class BrowserModel(private val context: Context) {
             domStorageEnabled = true
             allowFileAccess = false
             allowContentAccess = false
-            setGeolocationEnabled(false)
+            setGeolocationEnabled(true)
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(true)
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
@@ -415,23 +546,62 @@ class BrowserModel(private val context: Context) {
         webView.setDownloadListener { url, _, disposition, mime, _ ->
             requestDownload(tab, url, android.webkit.URLUtil.guessFileName(url, disposition, mime), mime)
         }
+        WebViewCompat.addDocumentStartJavaScript(webView, """
+            (()=>{
+              if(window.top!==window || location.protocol!=='https:')return;
+              const streams=new Set(), watches=new Set();
+              const devices=navigator.mediaDevices;
+              if(devices?.getUserMedia){const original=devices.getUserMedia.bind(devices);devices.getUserMedia=async c=>{const s=await original(c);streams.add(s);return s;};}
+              const geo=navigator.geolocation;
+              if(geo){const watch=geo.watchPosition.bind(geo);geo.watchPosition=(...args)=>{const id=watch(...args);watches.add(id);return id;};}
+              window.__ambulandoStopMedia=()=>{for(const s of streams)s.getTracks().forEach(t=>t.stop());streams.clear();for(const id of watches)geo.clearWatch(id);watches.clear();};
+            })();
+        """.trimIndent(), setOf("*"))
         WebViewCompat.addDocumentStartJavaScript(webView, FILE_SCRIPT, setOf("*"))
-        WebViewCompat.addWebMessageListener(webView, "ambulandoFiles", setOf("*")) { _, message, origin, main, _ ->
-            if (main && tab.origin != null && tab.origin == BrowserURLPolicy.origin(runCatching { URI(origin.toString()) }.getOrNull()) && message.data.orEmpty().length <= BrowserFilePolicy.MAX_BYTES * 4 / 3 + 4096) {
-                runCatching {
-                    val request = WireJson.parseToJsonElement(message.data!!).jsonObject
-                    val error = request["error"]?.jsonPrimitive?.content
-                    if (error != null) tab.refusal = error.take(200) else {
-                        val url = request["url"]?.jsonPrimitive?.content
-                        val name = request["filename"]?.jsonPrimitive?.content
-                        val encoded = request["base64"]?.jsonPrimitive?.content
-                        if (encoded != null) {
-                            val bytes = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
-                            require(bytes.size <= BrowserFilePolicy.MAX_BYTES)
-                            if (download == null && fileTransfer == null) download = BrowserDownload(tab, tab.documentId, null, bytes, BrowserFilePolicy.filename(name), "application/octet-stream")
-                        } else if (url != null) requestDownload(tab, url, name, "application/octet-stream")
+        WebViewCompat.addWebMessageListener(webView, "ambulandoFiles", setOf("*")) { _, message, origin, main, reply ->
+            val raw = message.data.orEmpty()
+            if (main && presented && tab === selected && tab.origin != null && tab.origin == BrowserURLPolicy.origin(runCatching { URI(origin.toString()) }.getOrNull()) && raw.length <= 64 * 1024) {
+                val document = tab.documentId
+                val source = tab.origin
+                val epoch = fileEpoch
+                fun current() = fileEpoch == epoch && tab.documentId == document && tab.origin == source && tab === selected && presented
+                scope.launch {
+                    fileMutex.withLock {
+                        if (!current()) return@withLock
+                        var id = 0
+                        var exportTouched = false
+                        val outcome = runCatching {
+                            val request = WireJson.parseToJsonElement(raw).jsonObject
+                            id = request["id"]?.jsonPrimitive?.int ?: 0
+                            when {
+                                request["directory"] != null -> { tab.directoryRequested = true }
+                                request["error"] != null -> { tab.refusal = request["error"]!!.jsonPrimitive.content.take(200) }
+                                request["start"] != null -> {
+                                    check(download == null && fileTransfer == null && generated == null) { "Finish or cancel the current download first." }
+                                    val created = kotlinx.coroutines.withContext(Dispatchers.IO) { BrowserGenerated(context, tab, BrowserFilePolicy.filename(request["filename"]?.jsonPrimitive?.content), request["mime"]?.jsonPrimitive?.content ?: "application/octet-stream") }
+                                    if (current()) { generated = created; exportTouched = true } else { created.cancel(); error("Page changed during export.") }
+                                }
+                                request["chunk"] != null -> {
+                                    val active = generated ?: error("No page export is active.")
+                                    check(active.tab === tab && active.document == tab.documentId)
+                                    exportTouched = true
+                                    kotlinx.coroutines.withContext(Dispatchers.IO) { active.append(android.util.Base64.decode(request["chunk"]!!.jsonPrimitive.content, android.util.Base64.DEFAULT)) }
+                                }
+                                request["end"] != null -> {
+                                    val active = generated ?: error("No page export is active.")
+                                    check(active.tab === tab && active.document == tab.documentId)
+                                    generated = null
+                                    val ready = kotlinx.coroutines.withContext(Dispatchers.IO) { active.finish() }
+                                    if (current()) download = ready else ready.file?.delete()
+                                }
+                                request["abort"] != null -> { if (generated?.tab === tab) { generated?.cancel(); generated = null } }
+                                request["url"] != null -> requestDownload(tab, request["url"]!!.jsonPrimitive.content, request["filename"]?.jsonPrimitive?.content, "application/octet-stream")
+                            }
+                        }
+                        outcome.exceptionOrNull()?.let { if (current()) tab.refusal = it.message?.take(200) ?: "Page export failed."; if (exportTouched && generated?.tab === tab) { generated?.cancel(); generated = null } }
+                        if (current()) runCatching { reply.postMessage(buildJsonObject { put("id", id); outcome.exceptionOrNull()?.let { put("error", it.message ?: "Page export failed.") } }.toString()) }
                     }
-                }.onFailure { tab.refusal = "This download could not be read (maximum 16 MB)." }
+                }
             }
         }
         WebViewCompat.addDocumentStartJavaScript(webView, NOSTR_SCRIPT, setOf("*"))
@@ -458,6 +628,7 @@ class BrowserModel(private val context: Context) {
         when (val decision = BrowserURLPolicy.decide(uri, mainFrame = true)) {
             BrowserURLPolicy.Decision.Load -> {
                 tab.refusal = null
+                tab.restorable = true
                 tab.pendingNavigationURL = uri.toString()
                 val sample = samplePage
                 if (sample != null && runCatching { URI(sample.first).host }.getOrNull() == uri.host) {
@@ -466,7 +637,7 @@ class BrowserModel(private val context: Context) {
                     tab.webView.loadUrl(uri.toString())
                 }
             }
-            is BrowserURLPolicy.Decision.External -> pendingExternal = decision.url.toString()
+            is BrowserURLPolicy.Decision.External -> pendingExternal = BrowserExternalRequest(tab, decision.url.toString())
             is BrowserURLPolicy.Decision.Refuse -> tab.refusal = decision.reason
         }
     }
@@ -486,7 +657,7 @@ class BrowserModel(private val context: Context) {
 
 
     private fun requestDownload(tab: BrowserTab, url: String, name: String?, mime: String?) {
-        if (tab.origin == null || !BrowserFilePolicy.https(url)) {
+        if (!presented || tab !== selected || tab.origin == null || !BrowserFilePolicy.https(url)) {
             tab.refusal = "Only HTTPS files or page-created downloads can be saved."; return
         }
         if (download != null || fileTransfer != null) { tab.refusal = "Finish or cancel the open save picker first."; return }
@@ -500,14 +671,16 @@ class BrowserModel(private val context: Context) {
     fun updateLocked(value: Boolean) {
         locked = value
         broker?.setLocked(value)
-        if (value) { cancelFileRequests(); dialog?.reply?.invoke(false); dialog = null }
+        if (value) { cancelFileRequests(); cancelPageUI() }
     }
 
     fun forget(origin: String) { broker?.forget(origin) }
 
     /** The identity was removed or the Tower disconnected: tabs close and no site keeps a permission. */
     fun reset() {
+        restoredSession = true
         closeAll()
+        sessionPrefs.edit().clear().apply()
         broker?.reset()
     }
 
@@ -515,6 +688,8 @@ class BrowserModel(private val context: Context) {
     fun clearBrowsingData() {
         if (!WebProfiles.supported) return
         val profile = ProfileStore.getInstance().getProfile(WebProfiles.BROWSER) ?: return
+        closeAll()
+        sessionPrefs.edit().clear().apply()
         profile.cookieManager.removeAllCookies(null)
         profile.webStorage.deleteAllData()
         tabs.forEach { it.webView.clearCache(true) }
@@ -527,7 +702,9 @@ class BrowserModel(private val context: Context) {
     // WebView plumbing
 
     private fun committed(tab: BrowserTab, url: String?) {
+        tab.directoryRequested = false
         cancelFileRequests(tab)
+        cancelPageUI(tab, navigating = true)
         tab.documentId += 1
         tab.origin = BrowserURLPolicy.origin(url?.let { BrowserURLPolicy.navigationAddress(it) })
         // HTTP errors may arrive before onPageStarted; clearing here hides the failure immediately.
@@ -542,7 +719,7 @@ class BrowserModel(private val context: Context) {
         val id = runCatching { request["id"]!!.jsonPrimitive.int }.getOrNull() ?: return
         val origin = BrowserURLPolicy.origin(runCatching { URI(sourceOrigin.toString()) }.getOrNull())
         // Only the top frame of the tab's committed HTTPS origin is answered.
-        if (!isMainFrame || origin == null || origin != tab.origin) {
+        if (!presented || !isMainFrame || origin == null || origin != tab.origin) {
             reply.postMessage(answer(id, false, "This frame cannot use Nostr in Ambulando."))
             return
         }
@@ -551,7 +728,7 @@ class BrowserModel(private val context: Context) {
         val requestContext = NIP07Context(tab.id, documentId, origin)
         scope.launch {
             val result = broker.handle(method, request["params"], requestContext) {
-                tab.documentId == documentId && tab.origin == origin && tabs.any { it.id == tab.id }
+                presented && tab.documentId == documentId && tab.origin == origin && tabs.any { it.id == tab.id }
             }
             if (tab.documentId != documentId || tabs.none { it.id == tab.id }) return@launch
             val text = when (result) {
@@ -571,6 +748,10 @@ class BrowserModel(private val context: Context) {
         }.toString()
 
     private inner class TabClient(private val tab: BrowserTab) : WebViewClient() {
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): android.webkit.WebResourceResponse? {
+            if (request.isForMainFrame) tab.restorable = request.method.equals("GET", ignoreCase = true)
+            return null
+        }
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
             (view.parent as? android.view.ViewGroup)?.removeView(view)
             close(tab)
@@ -581,6 +762,7 @@ class BrowserModel(private val context: Context) {
             if (!request.isForMainFrame) return
             tab.loading = false
             tab.origin = null
+            cancelPageUI(tab)
             broker?.tabClosed(tab.id)
             tab.refusal = "Could not load ${hostOf(request.url.toString())}: ${error.description}. Check the address or connection and retry."
         }
@@ -618,7 +800,7 @@ class BrowserModel(private val context: Context) {
                 }
                 is BrowserURLPolicy.Decision.External -> {
                     // Other apps open only from a navigation the user started, and only after a confirmation.
-                    if (request.isForMainFrame && request.hasGesture()) pendingExternal = decision.url.toString()
+                    if (request.isForMainFrame && request.hasGesture() && tab === selected && tab.origin != null) pendingExternal = BrowserExternalRequest(tab, decision.url.toString())
                     true
                 }
                 is BrowserURLPolicy.Decision.Refuse -> { if (request.isForMainFrame) tab.refusal = decision.reason; true }
@@ -637,6 +819,7 @@ class BrowserModel(private val context: Context) {
             tab.loading = false
             tab.url = url
             update(view)
+            persistTabs()
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
@@ -669,26 +852,38 @@ class BrowserModel(private val context: Context) {
         }
 
         override fun onShowFileChooser(view: WebView, callback: android.webkit.ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
-            if (tab.origin == null || fileSelection != null) { callback.onReceiveValue(null); return true }
-            fileSelection = BrowserFileSelection(tab, params, callback)
+            if (!presented || tab !== selected || tab.origin == null || fileSelection != null) { callback.onReceiveValue(null); return true }
+            fileSelection = BrowserFileSelection(tab, params, callback, tab.directoryRequested).also { uploads += it; tab.directoryRequested = false }
             return true
         }
 
         override fun onCloseWindow(window: WebView) { tabs.firstOrNull { it.webView === window }?.let { close(it) } }
 
-        override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            dialog = BrowserDialog(hostOf(url), message.orEmpty(), confirm = false) { result.confirm() }
-            return true
+        override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult) = showDialog(tab, url, message, result, false)
+        override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult) = showDialog(tab, url, message, result, true)
+        override fun onJsPrompt(view: WebView, url: String?, message: String?, defaultValue: String?, result: JsPromptResult) = showDialog(tab, url, message, result, true, defaultValue.orEmpty())
+        override fun onJsBeforeUnload(view: WebView, url: String?, message: String?, result: JsResult) = showDialog(tab, url, "Leave this page? Unsaved changes may be lost.", result, true)
+        override fun onShowCustomView(view: android.view.View, callback: CustomViewCallback) {
+            if (tab !== selected || !presented || fullscreen != null) { callback.onCustomViewHidden(); return }
+            fullscreen = BrowserFullscreen(tab, view, callback)
         }
-
-        override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
-            dialog = BrowserDialog(hostOf(url), message.orEmpty(), confirm = true) { if (it) result.confirm() else result.cancel() }
-            return true
+        override fun onHideCustomView() { if (fullscreen?.tab === tab) exitFullscreen() }
+        override fun onPermissionRequest(request: PermissionRequest) {
+            val origin = BrowserURLPolicy.origin(BrowserURLPolicy.navigationAddress(request.origin.toString()))
+            val supported = request.resources.filter { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE || it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
+            if (tab !== selected || !presented || origin == null || origin != tab.origin || permission != null || supported.isEmpty()) { request.deny(); return }
+            permission = BrowserPermission(tab, origin, supported.map { if (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE) android.Manifest.permission.CAMERA else android.Manifest.permission.RECORD_AUDIO }, token = request) { allow ->
+                if (allow) { grantedPageTabs += tab; request.grant(supported.toTypedArray()) } else request.deny()
+            }
         }
+        override fun onPermissionRequestCanceled(request: PermissionRequest) { if (permission?.token === request) { permission?.finish(false); permission = null } }
+        override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback) {
+            val normalized = origin?.let { BrowserURLPolicy.origin(BrowserURLPolicy.navigationAddress(it)) }
+            if (tab !== selected || !presented || normalized == null || normalized != tab.origin || permission != null) { callback.invoke(origin, false, false); return }
+            permission = BrowserPermission(tab, normalized, listOf(android.Manifest.permission.ACCESS_COARSE_LOCATION, android.Manifest.permission.ACCESS_FINE_LOCATION)) { allowed -> if (allowed) grantedPageTabs += tab; callback.invoke(origin, allowed, false) }
+        }
+        override fun onGeolocationPermissionsHidePrompt() { if (permission?.tab === tab) { permission?.finish(false); permission = null } }
 
-        // Camera, microphone and location are never granted to pages.
-        override fun onPermissionRequest(request: PermissionRequest) = request.deny()
-        override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback) = callback.invoke(origin, false, false)
     }
 
     private fun hostOf(url: String?): String = url?.let { BrowserURLPolicy.navigationAddress(it)?.host } ?: "This page"

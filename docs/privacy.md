@@ -51,7 +51,14 @@ use separate profiles; unsupported WebViews fail closed with an update message.
 
 Bundled editors cannot fetch the network and have no Nostr bridge. Workspace HTML is labelled, has no signing bridge,
 and cannot fetch network resources. Editor output is validated and encoded through the original document representation.
-Photo uploads are orientation-corrected, resized and re-encoded; camera, time and location metadata are discarded.
+Native message photo uploads are orientation-corrected, resized and re-encoded; camera, time and location metadata are discarded.
+Browser file/capture uploads deliver the selected original files to the website and can include their metadata.
+
+Browser tab URLs and selection are saved locally for fresh HTTPS GET restoration; POST bodies and ephemeral signing/media
+grants are never saved. Camera, microphone and location need per-page consent plus Android permission. Leaving or revoking
+a granted page reloads it to end active capture/location work. Browser download requests use only destination-specific
+website cookies, never Tower credentials. Temporary exports/captures are removed on cancellation, context changes and
+next-process cleanup. See [browser capabilities and limits](browser-files.md).
 
 ## Background work
 

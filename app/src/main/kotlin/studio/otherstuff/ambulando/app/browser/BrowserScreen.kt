@@ -138,7 +138,8 @@ fun BrowserScreen(browser: BrowserModel) {
     }
     if (browser.showingTabs) TabsSheet(browser)
     browser.prompt?.let { prompt -> NostrApprovalSheet(prompt) { browser.answer(prompt, it) } }
-    browser.pendingExternal?.let { url ->
+    browser.pendingExternal?.let { request ->
+        val url = request.url
         val scheme = url.substringBefore(':')
         AlertDialog(
             onDismissRequest = { browser.pendingExternal = null },
@@ -146,19 +147,23 @@ fun BrowserScreen(browser: BrowserModel) {
             text = { Text(url, maxLines = 3, overflow = TextOverflow.Ellipsis) },
             confirmButton = {
                 TextButton(onClick = {
+                    val current = browser.pendingExternal === request && request.current && browser.selected === request.tab && browser.presented
                     browser.pendingExternal = null
-                    try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: ActivityNotFoundException) { browser.selected?.refusal = "No app on this device opens $scheme: links." }
+                    if (current) try { context.startActivity(BrowserExternal.intent(url)) } catch (_: ActivityNotFoundException) { browser.selected?.refusal = "No app on this device opens $scheme: links." } catch (_: Exception) { browser.selected?.refusal = "This external signer link is not supported safely." }
                 }) { Text("Open $scheme:") }
             },
             dismissButton = { TextButton(onClick = { browser.pendingExternal = null }) { Text("Cancel") } },
         )
     }
+    BrowserPermissionFlow(browser)
+    BrowserFullscreenFlow(browser)
     browser.dialog?.let { d ->
+        var value by remember(d) { mutableStateOf(d.defaultValue.orEmpty()) }
         AlertDialog(
             onDismissRequest = { d.reply(false); browser.dialog = null },
             title = { Text(d.origin) },
-            text = { Text(d.message) },
-            confirmButton = { TextButton(onClick = { d.reply(true); browser.dialog = null }) { Text("OK") } },
+            text = { Column { Text(d.message); if (d.defaultValue != null) TextField(value = value, onValueChange = { value = it }, modifier = Modifier.testTag("browser.dialog.input")) } },
+            confirmButton = { TextButton(onClick = { d.reply(true, value); browser.dialog = null }) { Text("OK") } },
             dismissButton = if (d.confirm) ({ TextButton(onClick = { d.reply(false); browser.dialog = null }) { Text("Cancel") } }) else null,
         )
     }
@@ -240,6 +245,7 @@ private fun BottomBar(browser: BrowserModel, tab: BrowserTab?) {
                             HorizontalDivider()
                             DropdownMenuItem(text = { Text("New tab") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { menu = false; browser.open(null) })
                             DropdownMenuItem(text = { Text("Close tab") }, leadingIcon = { Icon(Icons.Outlined.Close, null) }, onClick = { menu = false; browser.close(tab) })
+                            DropdownMenuItem(text = { Text("Revoke page camera, microphone and location") }, onClick = { menu = false; browser.revokePagePermissions(tab) })
                             val origin = tab.origin
                             if (origin != null && browser.sites[origin] != null) {
                                 HorizontalDivider()

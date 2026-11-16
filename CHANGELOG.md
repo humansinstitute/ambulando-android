@@ -1,3 +1,11 @@
+## 0.9.16 (44)
+
+- Support confirmed Nostr signer handoffs, explicit JavaScript prompts and leave-page dialogs, and fullscreen content with Back cleanup.
+- Stream HTTPS downloads up to 1 GiB and page-created exports up to 256 MiB, including programmatic blobs and an explicit POST/bearer response export API.
+- Add per-page Android-backed camera, microphone and location consent, capture inputs and bounded folder uploads with relative paths.
+- Restore allowed GET tabs and selection after a cold browser launch without replaying POSTs or restoring signing grants.
+- Release cancelled sync slots even when cancellation happens before their IO work starts.
+
 ## 0.9.15 (43)
 
 - Open channels selected from either Android sidebar in Deck view while retaining explicit links to conversations and records.

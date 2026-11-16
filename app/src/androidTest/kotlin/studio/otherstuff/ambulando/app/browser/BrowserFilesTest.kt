@@ -41,6 +41,17 @@ class BrowserFilesTest {
         compose.waitUntil(20_000) { browser.selected?.title == "READY" }
         return browser
     }
+    private fun dismissPicker(browser: BrowserModel) {
+        val selection = browser.fileSelection
+        val save = browser.download
+        repeat(8) {
+            if (selection != null && browser.fileSelection !== selection || save != null && browser.download !== save) return
+            if (instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()?.contains("documentsui") != true) return
+            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            compose.waitForIdle()
+            Thread.sleep(250)
+        }
+    }
     private fun tapPage(y: Float) {
         compose.waitUntil(10_000) { runCatching { compose.onAllNodesWithTag("browser.page").fetchSemanticsNodes().isNotEmpty() }.getOrDefault(false) }
         val density = instrumentation.targetContext.resources.displayMetrics.density
@@ -61,18 +72,17 @@ class BrowserFilesTest {
             compose.runOnIdle { assertEquals("https://sample.example", browser.selected!!.origin) }
             tapPage(120f)
             compose.waitUntil(10_000) { find(instrumentation.uiAutomation.rootInActiveWindow, "Save") != null }
-            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            dismissPicker(browser)
             compose.waitUntil(10_000) { browser.download == null }
-        } finally { compose.runOnIdle { browser.closeAll() } }
+        } finally { dismissPicker(browser); compose.runOnIdle { browser.closeAll() } }
     }
-    @Test fun oversizedPageFileFailsVisiblyWithoutOpeningNativeSavePicker() {
+    @Test fun oversizedDeclaredPageFileFailsVisiblyWithoutOpeningNativeSavePicker() {
         val browser = browser()
         try {
-            compose.runOnUiThread { browser.selected!!.webView.evaluateJavascript("blob.href=URL.createObjectURL(new Blob([new Uint8Array(16*1024*1024+1)]))", null) }
-            tapPage(120f)
-            compose.waitUntil(10_000) { browser.selected?.refusal?.contains("16 MB") == true }
+            compose.runOnUiThread { browser.selected!!.webView.evaluateJavascript("window.ambulandoDownload(new Response('x',{headers:{'Content-Length':String(256*1024*1024+1)}})).catch(e=>window.ambulandoFiles.postMessage(JSON.stringify({error:e.message})));true", null) }
+            compose.waitUntil(10_000) { browser.selected?.refusal?.contains("256 MB") == true }
             assertNull(browser.download)
-        } finally { compose.runOnIdle { browser.closeAll() } }
+        } finally { dismissPicker(browser); compose.runOnIdle { browser.closeAll() } }
     }
 
     /** Opt-in live HTTPS smoke; default offline suite does not depend on external site availability. */
@@ -97,7 +107,7 @@ class BrowserFilesTest {
             compose.onNodeWithTag("browser.download.cancel").performClick()
             compose.waitUntil(15_000) { browser.fileTransfer == null }
             assertEquals("Download cancelled.", browser.selected?.refusal)
-        } finally { compose.runOnIdle { browser.closeAll() } }
+        } finally { dismissPicker(browser); compose.runOnIdle { browser.closeAll() } }
     }
 
     @Test fun actualFileInputCanCancelThenReadOnlyExplicitlySelectedContentUri() {
@@ -105,16 +115,17 @@ class BrowserFilesTest {
         try {
             tapPage(35f)
             compose.waitUntil(10_000) { browser.fileSelection != null && instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()?.contains("documentsui") == true }
-            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            dismissPicker(browser)
             compose.waitUntil(10_000) { browser.fileSelection == null }
+            assertTrue("Cancelling DocumentsUI must leave the browser visible", browser.presented)
             tapPage(35f)
             compose.waitUntil(10_000) { browser.fileSelection != null && instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()?.contains("documentsui") == true }
             val file = java.io.File(instrumentation.targetContext.cacheDir, "AmbulandoFiles/batch-upload.txt").apply { parentFile!!.mkdirs(); writeText("selected-file") }
             val uri = androidx.core.content.FileProvider.getUriForFile(instrumentation.targetContext, "studio.otherstuff.ambulando.android.files", file)
             // Complete the native selection with one explicit granted URI; Chromium still performs the real file read.
             compose.runOnUiThread { browser.fileSelection!!.finish(arrayOf(uri)) }
-            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            dismissPicker(browser)
             compose.waitUntil(20_000) { browser.selected?.title == "UPLOAD selected-file" }
-        } finally { compose.runOnIdle { browser.closeAll() } }
+        } finally { dismissPicker(browser); compose.runOnIdle { browser.closeAll() } }
     }
 }

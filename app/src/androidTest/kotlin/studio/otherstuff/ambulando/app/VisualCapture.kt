@@ -130,10 +130,10 @@ class VisualCapture {
             compose.onNodeWithContentDescription("Settings").performClick()
             Thread.sleep(1_500)
             shoot(tag, "settings")
-            compose.onRoot().performTouchInput { swipeUp(startY = bottom * 0.9f, endY = top + 200f) }
+            compose.onAllNodes(isRoot()).onLast().performTouchInput { swipeUp(startY = bottom * 0.9f, endY = top + 200f) }
             Thread.sleep(800)
             shoot(tag, "settings-2")
-            compose.onRoot().performTouchInput { swipeUp(startY = bottom * 0.9f, endY = top + 200f) }
+            compose.onAllNodes(isRoot()).onLast().performTouchInput { swipeUp(startY = bottom * 0.9f, endY = top + 200f) }
             Thread.sleep(800)
             shoot(tag, "settings-3")
         }

@@ -31,9 +31,9 @@ object BrowserURLPolicy {
         return parseUri(escaped)
     }
 
-    val externalSchemes: Set<String> = setOf("mailto", "tel", "sms", "facetime", "facetime-audio", "lightning", "nostr")
+    val externalSchemes: Set<String> = setOf("mailto", "tel", "sms", "facetime", "facetime-audio", "lightning", "nostr", "nostrconnect", "nostrsigner")
     internal val frameSchemes: Set<String> = setOf("about", "data", "blob")
-    internal val knownSchemes: Set<String> = externalSchemes + frameSchemes + setOf("http", "file", "javascript", "ftp", "ws", "wss", "storage")
+    internal val knownSchemes: Set<String> = externalSchemes + frameSchemes + setOf("intent", "http", "file", "javascript", "ftp", "ws", "wss", "storage")
 
     fun decide(url: URI, mainFrame: Boolean): Decision {
         val scheme = url.scheme?.lowercase() ?: ""
@@ -41,6 +41,7 @@ object BrowserURLPolicy {
         // `about:blank` is where `window.open()` and empty frames start; it has no origin of its own to sign for.
         if (scheme == "about" && url.toString().drop("about:".length).lowercase() in setOf("blank", "srcdoc")) return Decision.Load
         if (!mainFrame && scheme in frameSchemes) return Decision.Load
+        if (scheme == "intent" && mainFrame) return Decision.External(url)
         if (scheme in externalSchemes) return Decision.External(url)
         if (scheme == "http") return Decision.Refuse("Only secure (HTTPS) pages open in the Ambulando browser.")
         return Decision.Refuse("Ambulando does not open ${if (scheme.isEmpty()) "this" else "$scheme:"} addresses.")

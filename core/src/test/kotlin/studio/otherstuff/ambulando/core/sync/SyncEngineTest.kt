@@ -158,6 +158,28 @@ class SyncEngineTest {
         engine.waitUntilIdle()
     }
 
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun cancelledBeforeDispatchDoesNotLeaveRunningSlotOrStartNetworkWork() = test {
+        val dispatcher = kotlinx.coroutines.test.StandardTestDispatcher()
+        val engine = SyncEngine(jobDispatcher = dispatcher)
+        val calls = AtomicInteger()
+        try {
+            engine.enqueue("before-dispatch") { calls.incrementAndGet() }
+            assertEquals(setOf("before-dispatch"), engine.snapshot().running)
+            engine.cancelAll()
+            dispatcher.scheduler.runCurrent()
+            try { withTimeout(1_000) { engine.waitUntilIdle() } }
+            catch (error: Exception) { throw AssertionError("Cancelled job retained scheduler ownership: ${engine.snapshot()}", error) }
+            assertEquals(0, calls.get())
+            assertTrue(engine.snapshot().isIdle)
+            engine.enqueue("before-dispatch") { calls.incrementAndGet() }
+            dispatcher.scheduler.runCurrent()
+            withTimeout(1_000) { engine.waitUntilIdle() }
+            assertEquals("The same key can run after cancellation", 1, calls.get())
+        } finally { engine.close() }
+    }
+
     @Test fun statusFlowReportsRunningAndIdle() = test {
         val engine = SyncEngine(maxConcurrent = 1)
         val gate = CompletableDeferred<Unit>()

@@ -77,6 +77,26 @@ class BrowserNostrTest {
         instrumentation.runOnMainSync { browser.closeAll() }
     }
 
+    @Test fun hiddenBrowserCannotCreateNewSigningConsentAfterPageReload() {
+        lateinit var browser: BrowserModel
+        instrumentation.runOnMainSync {
+            browser = BrowserModel(instrumentation.targetContext)
+            browser.configure(false, emptyMap(), { NostrKeys.publicKeyHex(secret) }, { NostrKeys.sign(it, secret) }, NIP07SitePersistence { })
+            browser.samplePage = "https://sample.example/" to "<title>READY</title>"
+            browser.open("https://sample.example/")
+        }
+        try {
+            waitFor { browser.selected?.title == "READY" && !browser.selected!!.loading }
+            instrumentation.runOnMainSync {
+                browser.hide()
+                browser.selected!!.webView.evaluateJavascript("window.nostr.getPublicKey().then(()=>document.title='UNSAFE').catch(()=>document.title='REFUSED');true", null)
+            }
+            waitFor { browser.selected?.title in setOf("REFUSED", "UNSAFE") }
+            assertEquals("REFUSED", browser.selected!!.title)
+            assertEquals(null, browser.prompt)
+        } finally { instrumentation.runOnMainSync { browser.closeAll() } }
+    }
+
     @Test fun lockedBrowserRefusesEveryRequest() {
         lateinit var browser: BrowserModel
         instrumentation.runOnMainSync {

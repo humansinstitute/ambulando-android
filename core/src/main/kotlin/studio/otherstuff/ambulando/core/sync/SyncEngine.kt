@@ -4,6 +4,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -329,6 +331,7 @@ class SyncEngine(
         scheduleWake(now)
     }
 
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     private fun start(job: QueuedJob) {
         val key = job.key
         val started = generation
@@ -336,9 +339,12 @@ class SyncEngine(
         job.group?.let { runningGroup[key] = it }
         job.owner?.let { ownerServed[it] = ++served }
         delayedUntil.remove(key)
-        running[key] = scope.launch(jobDispatcher) {
+        // Enter the cleanup path even if cancellation wins before IO dispatch. The first check
+        // still prevents cancelled work from reaching the transport.
+        running[key] = scope.launch(jobDispatcher, start = CoroutineStart.ATOMIC) {
             var failure: Throwable? = null
             try {
+                ensureActive()
                 job.work.run()
             } catch (t: Throwable) {
                 failure = t
