@@ -75,9 +75,13 @@ import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import studio.otherstuff.ambulando.core.profiles.PersonDisplay
 
+/** Chat opened from Deck belongs to Deck; external/other-section entry uses Chat's safe root fallback. */
+fun chatEntrySection(origin: AppSection, overlay: Boolean = false): AppSection =
+    if (origin == AppSection.DECK && !overlay) AppSection.DECK else AppSection.CHAT
+
 /**
- * Per-section navigation stacks, kept while the app runs so switching sections returns to the same screen. Chat keeps
- * its own conversations; conversations never join a stack (they open in the focused thread view).
+ * Per-section navigation stacks, kept while the app runs so switching sections returns to the same screen.
+ * Deck-opened chat routes stay above Deck; Chat-list entry keeps its independent conversation stack.
  */
 @Stable
 class SectionStacks {
@@ -269,6 +273,7 @@ private fun SectionStackView(
     routeScreen: @Composable (AppSection, WorkRoute) -> Unit,
     pinControl: @Composable (WorkRoute?) -> Unit,
 ) {
+    val rootState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val stack = stacks.of(section)
     val top = stack.lastOrNull()
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -283,7 +288,7 @@ private fun SectionStackView(
         }
         Banners(chrome, actions)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (top == null) sectionRoot(section) else androidx.compose.runtime.key(stack.size, top) {
+            if (top == null) rootState.SaveableStateProvider(section.key) { sectionRoot(section) } else androidx.compose.runtime.key(stack.size, top) {
                 CompositionLocalProvider(LocalRouteExit provides { stacks.pop(section) }) { routeScreen(section, top) }
             }
         }

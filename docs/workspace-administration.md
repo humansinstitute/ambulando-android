@@ -2,6 +2,10 @@
 
 Manage Workspace is native Compose, reached from **Manage workspace** at the foot of the sidebar (also from a scope's *New channel*
 and a channel's settings). It mirrors the iPhone/Mac client's administration workflows (that client's contract is the reference) over the same typed Tower routes and adds none. Tower is the authority; a visible or cached record is never a grant.
+A channel's Deck Inbox three-dot menu also offers **Channel options**, opening that same Scopes & Channels surface for
+exactly the Inbox's active channel. Workspace-wide, all-channel and unavailable contexts omit the entry. The dropdown
+closes before settings opens; the settings Back button and Android Back return to Deck. The existing four mark-as-read
+actions and channel-management/grant authority rules are unchanged.
 All administration requests are confirmed online writes: nothing is queued while offline, nothing is retried automatically, and every
 screen says which workspace it is for.
 

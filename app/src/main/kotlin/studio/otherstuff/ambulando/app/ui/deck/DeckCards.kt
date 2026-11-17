@@ -87,7 +87,7 @@ import studio.otherstuff.ambulando.core.store.LocalStore
     }
 }
 
-@Composable internal fun DeckInboxCard(store: LocalStore, screen: ScreenScope, navigation: WorkNavigation, pins: PinsSnapshot, intents: DeckIntents, status: SurfaceStatusLookup, visible: Boolean, onNewThread: (() -> Unit)? = null) {
+@Composable internal fun DeckInboxCard(store: LocalStore, screen: ScreenScope, navigation: WorkNavigation, pins: PinsSnapshot, intents: DeckIntents, status: SurfaceStatusLookup, visible: Boolean, onNewThread: (() -> Unit)? = null, onChannelOptions: (() -> Unit)? = null) {
     val services = LocalAppServices.current
     val query by rememberPausableQuery(DeckInboxSnapshot(), store, visible, "inbox:$screen", DeckInbox.matches(screen.workspaceId), { intents.refreshInbox(navigation.context) }) {
         DeckInbox.load(store, screen.workspaceId, screen.signerNpub, navigation.context, navigation.context.scopeId?.let { navigation.channels().map { it.id } })
@@ -96,9 +96,14 @@ import studio.otherstuff.ambulando.core.store.LocalStore
         store.reader.attentionPreference(screen.connectionId, screen.workspaceId).types
     } }.collectAsState(studio.otherstuff.ambulando.core.preferences.AttentionTypes())
     // Every record type shows until its toggle is turned off (iOS `kinds`).
-    var kinds by remember { mutableStateOf(DeckActivity.Kind.entries.toSet()) }
-    var search by remember { mutableStateOf("") }
-    var readMenu by remember { mutableStateOf(false) }
+    var kinds by androidx.compose.runtime.saveable.rememberSaveable(
+        stateSaver = androidx.compose.runtime.saveable.listSaver(
+            save = { kinds: Set<DeckActivity.Kind> -> kinds.map { it.name } },
+            restore = { names -> DeckActivity.Kind.entries.filter { it.name in names }.toSet() },
+        ),
+    ) { mutableStateOf(DeckActivity.Kind.entries.toSet()) }
+    var search by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var readMenu by remember(screen, navigation.context) { mutableStateOf(false) }
     val channel = navigation.channel(navigation.context.channelId)
     val snapshot = query.value
     fun markAll(label: String, of: Set<DeckActivity.Kind>) {
@@ -115,6 +120,12 @@ import studio.otherstuff.ambulando.core.store.LocalStore
         androidx.compose.foundation.layout.Box {
             androidx.compose.material3.IconButton(onClick = { readMenu = true }, modifier = Modifier.testTag("deck.inbox.readMenu")) { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Outlined.MoreHoriz, "Inbox options") }
             androidx.compose.material3.DropdownMenu(readMenu, { readMenu = false }) {
+                if (channel != null && onChannelOptions != null) {
+                    androidx.compose.material3.DropdownMenuItem({ Text("Channel options") }, onClick = {
+                        readMenu = false
+                        onChannelOptions()
+                    }, modifier = Modifier.testTag("deck.inbox.channelOptions"))
+                }
                 listOf("Mark all tasks as read" to setOf(DeckActivity.Kind.TASK), "Mark all docs as read" to setOf(DeckActivity.Kind.DOCUMENT), "Mark all chats as read" to setOf(DeckActivity.Kind.CHAT),
                     "Mark everything as read" to setOf(DeckActivity.Kind.CHAT, DeckActivity.Kind.TASK, DeckActivity.Kind.DOCUMENT)).forEach { (label, of) ->
                     androidx.compose.material3.DropdownMenuItem({ Text(label) }, onClick = { readMenu = false; markAll(label, of) })

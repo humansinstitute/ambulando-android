@@ -12,7 +12,7 @@ import studio.otherstuff.ambulando.core.surfaces.*
 import studio.otherstuff.ambulando.core.sync.*
 import studio.otherstuff.ambulando.core.transport.ViewStateRecord
 
-@Composable internal fun ConnectedDeck(model: AppModel) {
+@Composable internal fun ConnectedDeck(model: AppModel, onChannelOptions: (String) -> Unit) {
     val w = model.workspace ?: return; val c = model.connection ?: return
     val services = LocalAppServices.current
     val scope = rememberCoroutineScope()
@@ -43,9 +43,8 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
         }
         override fun markDone(taskId: String) { model.submit(WriteIntent(WriteKind.TASK_STATE, taskId, buildJsonObject { put("state", "done") })) }
         override fun openInChat(channelId: String, threadId: String?) {
-            model.channels.firstOrNull { it.id == channelId }?.let { model.selectContext(it.scopeId, it.id) }
-            model.section = AppSection.CHAT
-            threadId?.let { services.open(WorkRoute.Thread(w.id, channelId, it)) }
+            services.open(threadId?.let { WorkRoute.Thread(w.id, channelId, it) }
+                ?: WorkRoute.Channel(w.id, channelId))
         }
         override fun refreshCanvases(force: Boolean) { model.act { model.sync.refreshCanvases(c, w, force = force) } }
         override suspend fun createCanvas(title: String): Result<String> = runCatching {
@@ -69,7 +68,12 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
         override fun discardPinWrite(writeId: String) { model.act { model.store.writer.discardWrite(writeId) } }
     } }
     LaunchedEffect(c.id, w.id) { model.sync.refreshPins(c, w) }
+    // The Inbox channel must still belong to the active context and be available; cached history is not access.
+    val inboxChannel = model.channels.firstOrNull {
+        it.id == model.context.channelId && it.scopeId == model.context.scopeId && !it.accessRemoved
+    }?.takeIf { channel -> !w.accessRemoved && model.scopes.any { it.id == channel.scopeId && !it.accessRemoved } }
     DeckScreen(model.store, screen, navigation, pins.value, intents, active = model.section == AppSection.DECK,
+        onChannelOptions = inboxChannel?.let { channel -> { onChannelOptions(channel.id) } },
         newThread = { opened, current, close ->
             DeckNewThread(model.store, opened, current, navigation, close, onRetry = { id -> model.act { model.outbox.retry(id, c) } }, onCreated = { channelId, threadId -> intents.openInChat(channelId, threadId) },
                 composer = { channelId, onEnqueued -> ConnectedChat(model, null, ComposeOnly(channelId, onEnqueued)) })

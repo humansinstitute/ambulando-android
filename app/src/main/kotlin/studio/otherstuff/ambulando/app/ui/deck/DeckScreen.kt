@@ -93,6 +93,8 @@ fun DeckScreen(
     status: SurfaceStatusLookup = SurfaceStatusLookup.NONE,
     active: Boolean = true,
     inboxRequests: Int = 0,
+    /** Opens the active Inbox channel's existing management page when available. */
+    onChannelOptions: (() -> Unit)? = null,
     /** Draws the New thread composer over Deck (null: the host cannot start threads, so no button is shown). */
     newThread: (@Composable (opened: Pair<String, String>, current: ScreenScope, onClose: () -> Unit) -> Unit)? = null,
 ) {
@@ -137,7 +139,7 @@ fun DeckScreen(
                     val visible = active && shown == card
                     when (card) {
                         DeckCard.HELLO -> DeckHelloCard(store, screen, navigation, intents, status, visible)
-                        DeckCard.INBOX -> DeckInboxCard(store, screen, navigation, pins, intents, status, visible, onNewThread = newThread?.let { { composing = true } })
+                        DeckCard.INBOX -> DeckInboxCard(store, screen, navigation, pins, intents, status, visible, onNewThread = newThread?.let { { composing = true } }, onChannelOptions = onChannelOptions)
                         DeckCard.PINNED -> DeckPinnedCard(screen, pins, intents)
                         DeckCard.CANVAS -> DeckCanvasCard(store, screen, intents, status, visible)
                         DeckCard.FEED -> DeckFeedCard()

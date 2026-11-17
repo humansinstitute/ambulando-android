@@ -27,8 +27,8 @@ interface DeckIntents : PinIntents {
     fun markDone(taskId: String)
 
     /**
-     * Opens a channel in Chat as the context, optionally at a conversation (iOS `openInChat`). Used by New thread (the
-     * composer opens there), Recent channels and pinned channels.
+     * Opens a channel or conversation above Deck, retaining its context and Back destination. Used by New thread,
+     * Recent channels and pinned channels.
      */
     fun openInChat(channelId: String, threadId: String? = null)
 

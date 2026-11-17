@@ -159,14 +159,14 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 is WorkRoute.Task -> AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
                 is WorkRoute.File -> AppSection.FILES
-                is WorkRoute.Thread, is WorkRoute.Channel -> AppSection.CHAT
+                is WorkRoute.Thread, is WorkRoute.Channel -> chatEntrySection(model.section, overlay = notifications || search || settings || management != null)
                 else -> model.section
             }
             model.section = target
-            if (route is WorkRoute.Channel) model.channels.firstOrNull { it.id == route.channelId }?.let { model.selectContext(it.scopeId, it.id) }
+            if (route is WorkRoute.Channel && target != AppSection.DECK) model.channels.firstOrNull { it.id == route.channelId }?.let { model.selectContext(it.scopeId, it.id) }
             else {
                 stacks.push(target, route)
-                if (route is WorkRoute.Thread) model.act {
+                if (route is WorkRoute.Thread && target != AppSection.DECK) model.act {
                     val id = route.channelId ?: model.store.reader.thread(w.id, route.threadId)?.channelId
                     model.channels.firstOrNull { it.id == id }?.let { model.selectContext(it.scopeId, it.id) }
                 }
@@ -303,7 +303,13 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 AppSection.CHAT -> ConnectedChat(model, null)
                 AppSection.DOCS -> ConnectedDocuments(model, null)
                 AppSection.FILES -> NativeFiles(model)
-                AppSection.DECK -> ConnectedDeck(model)
+                AppSection.DECK -> ConnectedDeck(model) { channelId ->
+                    // Recheck the exact context at invocation, including a delayed menu click after access/context changed.
+                    val channel = model.channels.firstOrNull { it.id == channelId && it.id == model.context.channelId && it.scopeId == model.context.scopeId && !it.accessRemoved }
+                    if (channel != null && !w.accessRemoved && model.scopes.any { it.id == channel.scopeId && !it.accessRemoved }) {
+                        management = ManagementTarget(AdminRoute.Section(AdminSection.SCOPES), model.activeBoundaryId)
+                    }
+                }
                 AppSection.TOOLBOX -> ConnectedToolbox(model)
                 AppSection.AGENTS -> ConnectedAgents(model)
                 AppSection.CONTEXT -> ConnectedContext(model)
@@ -314,6 +320,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)
                 is WorkRoute.Thread -> ConnectedChat(model, route.threadId)
+                is WorkRoute.Channel -> ConnectedChat(model, null, channelOverride = route.channelId)
                 is WorkRoute.Canvas -> ConnectedCanvas(model, route.canvasId)
                 is WorkRoute.HtmlArtefact -> ConnectedHtml(model, route)
                 else -> Text("This record has no native detail view")

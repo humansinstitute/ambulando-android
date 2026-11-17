@@ -93,7 +93,7 @@ internal fun AdministrationHost(
     var stack by remember { mutableStateOf(listOf(initial)) }
     val route = stack.last()
     fun push(next: AdminRoute) { session.clearPhase(); stack = stack + next }
-    fun pop() { session.clearPhase(); stack = if (stack.size > 1) stack.dropLast(1) else stack }
+    fun pop() { session.clearPhase(); if (stack.size > 1) stack = stack.dropLast(1) else done() }
     val lists = listsFor(route)
     LaunchedEffect(session, route, lists) {
         session.checkAuthority()

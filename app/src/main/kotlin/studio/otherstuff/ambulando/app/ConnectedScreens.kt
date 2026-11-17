@@ -47,13 +47,13 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
 internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Unit)
 
 /** Only local database reads occur in these native surfaces. */
-@Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null, family: Boolean = false, writeAllowed: Boolean = true) {
+@Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null, family: Boolean = false, writeAllowed: Boolean = true, channelOverride: String? = null) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
     val labels = channelLabels(model)
     val threadChannel by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.thread(w.id, it)?.channelId } } }.collectAsState(null)
     LaunchedEffect(w.id, threadId) { if (threadId != null) model.sync.ensureThread(c, w, threadId) }
-    val channel = if (threadId != null) threadChannel else composeOnly?.channelId ?: model.context.channelId
+    val channel = if (threadId != null) threadChannel else composeOnly?.channelId ?: channelOverride ?: model.context.channelId
     if (channel == null) {
         if (threadId != null) { Text("Opening conversation…"); return }
         LazyColumn { items(model.channels.filter { model.context.scopeId == null || it.scopeId == model.context.scopeId }, key = { it.id }) { row ->
@@ -249,7 +249,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                 Column {
                 dayStarts[post.id]?.let { DaySeparator(it.label) }
                 ConversationCard(Modifier.testTag("chat.message.${message.id}").clickable(enabled = threadId == null && message.threadId != null, onClickLabel = "Open conversation") {
-                    message.threadId?.let { services.open(WorkRoute.Thread(w.id, channel, it)); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.CHAT }
+                    message.threadId?.let { services.open(WorkRoute.Thread(w.id, channel, it)) }
                 }) {
                     Column {
                         MessageRowLayout(sender, studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(message.createdAt), avatar = { PersonAvatar(sender) }) {

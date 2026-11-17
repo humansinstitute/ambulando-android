@@ -1,3 +1,9 @@
+## 0.9.27 (55)
+
+- Channel Inbox menus now offer Channel options for the current available channel, alongside the existing mark-as-read actions.
+- Android Back returns to Deck after opening a chat there, preserving its card, filters and scroll position.
+- Chat-list navigation retains its existing Back behavior.
+
 ## 0.9.25 (53)
 
 - After a successful explicit QR verification of the already active workspace, retry only its failed pins, attention preference and notification reads. Keep each warning until its read succeeds.

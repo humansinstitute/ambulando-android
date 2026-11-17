@@ -134,13 +134,17 @@ class ChatDeckInteractionTest {
         compose.onNodeWithTag("deck.fab.new").assertDoesNotExist()
         val text = "New thread ${System.nanoTime()}"
         compose.onNodeWithTag("chat.composer").performTextReplacement(text)
-        compose.onNodeWithTag("chat.send").performClick()
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("chat.send").assertIsDisplayed().performClick()
         compose.waitUntil(30_000) { bodies(model, text).any { it.message.threadId != null } }
         // Tower's thread for exactly that send opens (a reply composer and the thread menu), and the send exists once.
         compose.waitUntil(30_000) { compose.onAllNodesWithTag("thread.actions").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("deck.compose").assertDoesNotExist()
         assertEquals(1, bodies(model, text).size)
-        assertEquals(AppSection.CHAT, model.section)
+        assertEquals(AppSection.DECK, model.section)
+        compose.onNodeWithTag("nav.back").performClick()
+        compose.onNodeWithTag("deck.page.inbox").assertExists()
+        compose.onNodeWithTag("nav.back").assertDoesNotExist()
     }
 
     @Test fun theInboxPlusAsksForAChannelKeepsTheDraftOnCancelAndSendsNothing() = launch { model ->
