@@ -9,6 +9,17 @@ class FileNappletTest {
     private val b = "10000000-0000-4000-8000-000000000002"
     private fun model(date: String = "2024-02-29", answers: String = "\"$a\":false,\"$b\":0") = Json.parseToJsonElement("""{"format":"daily-tracker-v1","metrics":[{"id":"$a","label":"Ate well","type":"boolean","unit":"","archived":false},{"id":"$b","label":"Number","type":"number","unit":"kg","archived":false}],"days":{"$date":{$answers}}}""").jsonObject
     private fun rejected(block: () -> Unit) { assertTrue(runCatching(block).isFailure) }
+    @Test fun approvalUsesExactVerifiedUtf8BytesAndRejectsDigestOrRenderingMismatch() {
+        val html = "<h1>Verified code é</h1>"
+        val bytes = html.toByteArray(Charsets.UTF_8)
+        val digest = studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes)
+        assertEquals(html, FileNapplet.verifiedHTML(bytes, html, bytes.size.toLong(), digest))
+        rejected { FileNapplet.verifiedHTML(bytes, html + "changed", bytes.size.toLong(), digest) }
+        rejected { FileNapplet.verifiedHTML(bytes, html, bytes.size.toLong(), "0".repeat(64)) }
+        rejected { FileNapplet.verifiedHTML(bytes, html, bytes.size.toLong() + 1, digest) }
+        val malformed = byteArrayOf(0xc3.toByte(), 0x28)
+        rejected { FileNapplet.verifiedHTML(malformed, malformed.toString(Charsets.UTF_8), malformed.size.toLong(), studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(malformed)) }
+    }
     @Test fun falseZeroAndUnansweredSurviveSerializationAndReload() {
         val value = FileNapplet.model(model())
         assertEquals(value, FileNapplet.model(Json.parseToJsonElement(value.toString()).jsonObject))

@@ -151,7 +151,10 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                         gate.withLock {
                             val host = page
                             try {
+                                // A read-only approval cannot gain save capability between periodic checks.
+                                require(operation != "save" || lastWritable == true)
                                 val value = if (operation == "read") transport.read() else transport.save(request.string("baseVersionId")!!, request.getValue("value").jsonObject)
+                                require(value.canWrite == lastWritable)
                                 ensureActive()
                                 if (host != null && page === host) {
                                     val result = buildJsonObject {

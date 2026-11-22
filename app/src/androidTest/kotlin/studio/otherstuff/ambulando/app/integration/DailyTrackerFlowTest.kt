@@ -199,10 +199,13 @@ class DailyTrackerFlowTest {
             compose.onNodeWithTag("napplet.trust").performClick()
             compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
             // Broadening permissions also stops an active host; read-only approval cannot silently become write approval.
-            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
-            assertTrue(model.sampleTower!!.work.externalFilePolicy(originalDataId, canWrite = true))
-            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            val beforeEscalation = kotlinx.coroutines.runBlocking { api.fileVersions(w.id, w.appNpub, originalDataId) }
+            val unchangedValue = kotlinx.coroutines.runBlocking { api.fileVersionBytes(w.id, w.appNpub, originalDataId, beforeEscalation.versions.first { it.id == beforeEscalation.currentVersionId }) }.toString(Charsets.UTF_8)
+            assertTrue(model.sampleTower!!.work.externalFilePolicy(originalDataId, canWrite = true, notify = false))
+            // Craft a valid bridge save immediately: host consent, not template controls, must prevent escalation.
+            page(web!!, "parent.postMessage({type:'wingman-napplet-data',version:1,session:window.nappletSession,requestId:'escalation',operation:'save',binding:'tracker',baseVersionId:'${beforeEscalation.currentVersionId}',value:$unchangedValue},'*')")
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.host")).fetchSemanticsNodes().isEmpty() }
+            assertEquals(beforeEscalation.currentVersionId, kotlinx.coroutines.runBlocking { api.fileVersions(w.id, w.appNpub, originalDataId).currentVersionId })
             compose.onNodeWithTag("napplet.close").performClick()
             compose.onNodeWithTag("apps.dailyMetrics").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.chooseTracker")).fetchSemanticsNodes().size == 2 }

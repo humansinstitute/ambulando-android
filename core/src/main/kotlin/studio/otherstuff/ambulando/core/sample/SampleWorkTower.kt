@@ -271,13 +271,13 @@ class SampleWorkTower(
     }
 
     /** Synthetic server-side policy change for authorization/consent tests; never a member API. */
-    fun externalFilePolicy(fileId: String, metadata: JsonObject? = null, canWrite: Boolean? = null): Boolean = mutate {
+    fun externalFilePolicy(fileId: String, metadata: JsonObject? = null, canWrite: Boolean? = null, notify: Boolean = true): Boolean = mutate {
         val file = state.row("files", fileId) ?: return@mutate false
         metadata?.let { file["metadata"] = SampleJson.value(it) }
         canWrite?.let { file["can_write"] = it }
         file["row_version"] = ((file["row_version"].asInt() ?: 1) + 1).toLong()
         state.put("files", fileId, file)
-        emit(SampleChange("file", fileId, "updated", file["channel_id"].asString(), null, file["row_version"].asInt()?.toLong()))
+        if (notify) emit(SampleChange("file", fileId, "updated", file["channel_id"].asString(), null, file["row_version"].asInt()?.toLong()))
         true
     }
 

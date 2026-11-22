@@ -9,7 +9,8 @@ The v1 policy binds the normalized Tower origin, connection and available Tower
 identity, application namespace, workspace and app identity, current viewer,
 code File ID, SHA-256 of verified HTML bytes, validated manifest version/app ID,
 exact bound data File IDs, formats, privacy and permitted operations, and current
-effective write access. Changed code, binding or access requires new consent or
+effective write access. Code must have exact verified UTF-8 bytes; malformed
+encoding, digest or size mismatches fail closed. Changed code, binding or access requires new consent or
 fails validation. The immutable code version is checked during authorization,
 but does not enter the receipt: a new version with identical bytes can reuse
 approval. Data contents and data version IDs never enter the receipt.
@@ -32,7 +33,9 @@ app asks for consent again.
 Approval is consent, not authorization. Fresh signed File/self-DM checks run on
 every open and existing read/save, foreground, focus, periodic and invalidation
 paths remain enforced. Sandbox, signer separation, conflict checking and
-background pending-save behavior are unchanged.
+background pending-save behavior are unchanged. Each bridge operation also
+enforces the approved write capability: a read-only grant cannot save if server
+permissions broaden before a sync notification or periodic check arrives.
 
 Validation uses synthetic records: core tests exercise isolation and malformed
 storage; native instrumentation exercises the actual Compose host, WebView,

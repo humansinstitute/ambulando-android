@@ -7,6 +7,13 @@ import java.time.LocalDate
 /** Deliberately small, versioned File capability. No caller-selected paths or signing operations. */
 object FileNapplet {
     const val MAX_BYTES = 1024 * 1024
+    /** Bind consent to the actual fetched bytes; reject malformed UTF-8 instead of hashing replacement characters. */
+    fun verifiedHTML(bytes: ByteArray, rendered: String, size: Long, sha256: String): String {
+        require(size in 1..MAX_BYTES.toLong() && bytes.size.toLong() == size)
+        require(sha256.matches(Regex("[0-9a-f]{64}")) && studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes) == sha256)
+        require(bytes.contentEquals(rendered.toByteArray(Charsets.UTF_8)))
+        return rendered
+    }
     private fun exact(o: JsonObject, vararg keys: String) { require(o.keys == keys.toSet()) }
     private fun string(o: JsonObject, key: String): String = (o[key] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: error("Invalid string")
     private fun uuid(s: String) = require(isUUID(s))

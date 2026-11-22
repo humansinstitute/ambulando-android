@@ -116,8 +116,7 @@ import java.util.UUID
                 val version = versions!!.versions.first { it.id == versions!!.currentVersionId }
                 require(version.contentType?.substringBefore(';') == "text/html" && version.sizeBytes in 1..FileNapplet.MAX_BYTES.toLong() && version.sha256 != null)
                 val bytes = api.fileVersionBytes(w.id, w.appNpub, file.id, version)
-                require(bytes.size.toLong() == version.sizeBytes && bytes.toString(Charsets.UTF_8) == rendered)
-                bytes.toString(Charsets.UTF_8)
+                FileNapplet.verifiedHTML(bytes, rendered, requireNotNull(version.sizeBytes), requireNotNull(version.sha256))
             } else rendered
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { error = e.message }
