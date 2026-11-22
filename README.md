@@ -25,6 +25,7 @@ See [Garmin recorder setup, protocol and build instructions](docs/garmin-recorde
 - Notification inbox shared with other Ambulando apps: unread badge, filters, read/dismiss/archive, tap-through, offline reading.
 - Local search; Deck activity, personal pins, recent channels, canvases and WApp/agent launchers.
 - Native canvas viewport and naplets, task relationships, native Excalidraw previews and bundled board editing.
+- Daily Metrics in Apps, with private NStack File data and [device-local approval controls](docs/napplet-approval.md) for verified napplet code and bound access.
 - Context references, agents/activity, Toolbox, scope/channel management and an HTTPS browser with explicit NIP-07 consent and [NIP-44 v2 encryption/decryption](docs/browser-nip44.md).
 
 Android OS push uses Firebase Cloud Messaging on Google-services phones, with no second app. It requires actual

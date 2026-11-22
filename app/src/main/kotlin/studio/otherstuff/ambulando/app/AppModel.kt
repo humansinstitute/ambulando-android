@@ -621,6 +621,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             File(environment.storeFile.parentFile!!, "Workspaces").deleteRecursively()
             // Unsaved drawings of this identity (the flat folder of earlier builds and every boundary's own folder).
             File(environment.baseDir, "board-drafts").deleteRecursively()
+            File(environment.baseDir, "napplet-approvals").deleteRecursively()
         }
         catalog.writer.setState(WorkspacePreferences.STATE_KEY, null); catalog.writer.setState(WorkspaceCatalog.SELECTED_KEY, null)
         if (!environment.isSample) androidPush?.removeIdentity()

@@ -1,3 +1,9 @@
+## 0.9.34 (62)
+
+- Remember explicit napplet approval on this device for unchanged verified code and bound access.
+- Check current permissions on every open; ask again for changed code or access while ordinary tracker edits preserve approval.
+- Add Forget approval with unsaved-edit confirmation, leaving saved tracker data intact.
+
 ## 0.9.33 (61)
 
 - Find Daily Metrics in Apps before setting up a tracker, then open it directly without visiting Artefacts.
