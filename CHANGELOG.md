@@ -1,3 +1,9 @@
+## 0.9.35 (63)
+
+- Improve Daily Metrics phone layout with larger answer buttons, clearer dates and save status, and suitable number keyboards.
+- Offer an explicit Update app action for the recognized original tracker code, preserving saved answers, history and File bindings.
+- Ask for approval before running updated code; protect pending saves and unsaved edits, and leave customized trackers unchanged.
+
 ## 0.9.34 (62)
 
 - Remember explicit napplet approval on this device for unchanged verified code and bound access.

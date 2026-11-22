@@ -35,7 +35,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
 }.getOrNull()
 
 /** Mounted only for a direct current File open; never for source/history or a canvas thumbnail. */
-@Composable internal fun FileNappletScreen(model: AppModel, file: FileRecord, html: String, manifest: JsonObject, dataId: String, codeVersion: String) {
+@Composable internal fun FileNappletScreen(model: AppModel, file: FileRecord, html: String, manifest: JsonObject, dataId: String, codeVersion: String, onUpdated: () -> Unit) {
     val c = model.connection ?: return; val w = model.workspace ?: return
     OwnEditorNavigation()
     val context = LocalContext.current
@@ -49,6 +49,13 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     var remembering by remember { mutableStateOf(false) }
     var approvalNotice by remember { mutableStateOf<String?>(null) }
     var forgetting by remember { mutableStateOf(false) }
+    var updateConfirmation by remember { mutableStateOf(false) }
+    var updating by remember { mutableStateOf(false) }
+    var updateAvailable by remember { mutableStateOf(false) }
+    val replacement = remember { context.assets.open("napplets/daily-tracker-v1.html").bufferedReader().use { it.readText() } }
+    val boundary = model.activeBoundaryId
+    fun updater(writable: Boolean) = FileNappletUpdate(model.fileNappletAPI(c), w.id, w.appNpub,
+        c.signerNpub, file.id, codeVersion, file.raw.getValue("metadata").jsonObject, manifest, dataId, writable) { model.activeBoundaryId == boundary && model.connection?.id == c.id && model.workspace?.id == w.id }
     var page by remember { mutableStateOf<FileNappletWebHost?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(true) }
@@ -72,10 +79,11 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         trusted = false; dirty = false; failure = null; lastWritable = null; forgetting = false
         approvalNotice = if (removed) "Approval forgotten on this device. Your saved data is unchanged." else "Could not remove the saved approval. Close the app and retry before relying on revocation."
     }
-    fun close() { if (!busy) { if (dirty) discard = true else exit?.invoke() } }
+    fun close() { if (!busy && !updating) { if (dirty) discard = true else exit?.invoke() } }
     BackHandler(enabled = LocalEditorActive.current) { close() }
     suspend fun authorize() = withContext(Dispatchers.Main.immediate) {
         gate.withLock {
+            if (updating) return@withLock
             checking = true
             try {
                 val writable = transport.authorize()
@@ -96,6 +104,11 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
             approval = current
             trusted = withContext(Dispatchers.IO) { approvals.approved(current) }
             consentReady = true
+            if (FileNappletUpdate.recognized(html) && !FileNappletUpdate.recognized(replacement) && nappletManifest(replacement) == manifest) {
+                updateAvailable = try { updater(lastWritable == true).authorize(); true }
+                catch (e: CancellationException) { throw e }
+                catch (_: Exception) { false }
+            }
         }
     }
     DisposableEffect(lifecycle, transport) {
@@ -142,7 +155,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         authorize()
         if (failure != null) return@LaunchedEffect
         withContext(Dispatchers.Main.immediate) { FileNappletWebHost.create(context, html, onMessage = { request ->
-            if (foreground && !busy && failure == null) {
+            if (foreground && !busy && !updating && failure == null) {
                 val operation = request.string("operation")
                 if (operation == "dirty") dirty = request.bool("dirty") == true
                 else {
@@ -183,13 +196,15 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(enabled = !busy, onClick = { close() }, modifier = Modifier.testTag("napplet.close")) { Text("Close") }
+            TextButton(enabled = !busy && !updating, onClick = { close() }, modifier = Modifier.testTag("napplet.close")) { Text("Close") }
             RecordPin(model, PinRecord.ResourceType.FILE, file.id)
             Text(file.displayName, Modifier.weight(1f).padding(12.dp))
-            Text(if (busy) "Saving…" else if (dirty) "Unsaved" else "NStack", Modifier.padding(12.dp))
+            Text(if (updating) "Updating…" else if (busy) "Saving…" else if (dirty) "Unsaved" else "NStack", Modifier.padding(12.dp))
         }
         if (trusted) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(enabled = !busy && !remembering, onClick = { if (dirty) forgetting = true else forget() }, modifier = Modifier.testTag("napplet.forget")) { Text("Forget approval") }
+            if (updateAvailable) TextButton(enabled = !busy && !remembering && !updating && !checking && failure == null,
+                onClick = { updateConfirmation = true }, modifier = Modifier.testTag("napplet.update")) { Text("Update app") }
+            TextButton(enabled = !busy && !remembering && !updating, onClick = { if (dirty) forgetting = true else forget() }, modifier = Modifier.testTag("napplet.forget")) { Text("Forget approval") }
         }
         approvalNotice?.let { Text(it, Modifier.padding(12.dp).testTag("napplet.approvalNotice")) }
         if (failure != null) Text(failure!!, Modifier.padding(16.dp))
@@ -214,9 +229,33 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         } else {
             if (checking) LinearProgressIndicator(Modifier.fillMaxWidth())
             // Keep DOM and memory drafts during periodic checks, but stop interaction until reauthorized.
-            page?.let { host -> AndroidView(factory = { host.view }, update = { it.visibility = if (checking || !foreground) android.view.View.INVISIBLE else android.view.View.VISIBLE }, modifier = Modifier.weight(1f).fillMaxWidth().testTag("napplet.host")) }
+            page?.let { host -> AndroidView(factory = { host.view }, update = { it.visibility = if (checking || !foreground || updating) android.view.View.INVISIBLE else android.view.View.VISIBLE }, modifier = Modifier.weight(1f).fillMaxWidth().testTag("napplet.host")) }
         }
     }
+    if (updateConfirmation) AlertDialog(onDismissRequest = { if (!updating) updateConfirmation = false },
+        title = { Text(if (dirty) "Discard changes and update app?" else "Update app?") },
+        text = { Text("Install the updated built-in Daily Metrics code. Saved answers and history stay in the same NStack File. You will be asked to trust the changed code before it runs." + if (dirty) " Unsaved changes will be discarded." else "") },
+        confirmButton = { TextButton(enabled = !busy && !updating, onClick = {
+            updating = true; updateConfirmation = false
+            scope.launch {
+                gate.withLock {
+                    try {
+                        check(foreground && model.connection?.id == c.id && model.workspace?.id == w.id)
+                        val update = updater(lastWritable == true)
+                        withTimeout(45_000) {
+                            update.authorize()
+                            page?.destroy(); page = null; transport.clear(); deferredResult = null; dirty = false
+                            update.update(replacement)
+                        }
+                        trusted = false; onUpdated()
+                    } catch (_: TimeoutCancellationException) { stop(); failure = "The update timed out. Close and reopen to check the current app. Saved data was not changed." }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { stop(); failure = "The update could not be confirmed. Close and reopen to check the current app. Saved data was not changed." }
+                    finally { updating = false }
+                }
+            }
+        }, modifier = Modifier.testTag("napplet.confirmUpdate")) { Text("Update app") } },
+        dismissButton = { TextButton(enabled = !updating, onClick = { updateConfirmation = false }) { Text("Keep current app") } })
     if (forgetting) AlertDialog(onDismissRequest = { forgetting = false }, title = { Text("Discard changes and forget approval?") }, text = { Text("Unsaved changes will be discarded. Saved tracker data will remain in NStack.") }, confirmButton = { TextButton(enabled = !busy, onClick = { forget() }) { Text("Discard and forget") } }, dismissButton = { TextButton(onClick = { forgetting = false }) { Text("Keep editing") } })
     if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("Discard unsaved changes?") }, text = { Text("These changes have not been saved to NStack.") }, confirmButton = { TextButton(onClick = { page?.destroy(); page = null; exit?.invoke() }) { Text("Discard and close") } }, dismissButton = { TextButton(onClick = { discard = false }) { Text("Keep editing") } })
 }

@@ -21,8 +21,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 62
-        versionName = "0.9.34"
+        versionCode = 63
+        versionName = "0.9.35"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
@@ -63,6 +63,7 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("test").kotlin.directories.add("src/testFamily/kotlin")
+    sourceSets.getByName("androidTest").assets.directories.add("../core/src/test/resources")
     testOptions { unitTests.isIncludeAndroidResources = true }
     packaging { resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/versions/**") }
     dependenciesInfo {

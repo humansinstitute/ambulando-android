@@ -9,6 +9,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,6 +24,15 @@ import studio.otherstuff.ambulando.core.transport.*
 class DailyTrackerFlowTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    @Before fun freshSyntheticFixture() {
+        val context = instrumentation.targetContext
+        check(BuildConfig.DEBUG)
+        // The application intentionally keeps its model across Activity recreation. Never delete a live fixture.
+        if ((context.applicationContext as AmbulandoApplication).activeModel != null) return
+        val sample = AppEnvironment.Sample(context).baseDir
+        check(sample.parentFile == context.cacheDir)
+        check(!sample.exists() || sample.deleteRecursively())
+    }
     @Test fun appsSetupSaveAdoptAndReopenFromFiles() {
         val context = instrumentation.targetContext
         val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -241,6 +251,108 @@ class DailyTrackerFlowTest {
                 instrumentation.runOnMainSync { assertNull("Denied return removes the WebView", find(window.decorView)) }
             } finally { model.sampleTower!!.revokedWorkspaces = emptySet() }
 
+        }
+    }
+    @Test fun explicitOriginalCodeUpdatePreservesSavedDataAndRequiresNewTrust() {
+        val context = instrumentation.targetContext
+        val original = instrumentation.context.assets.open("napplets/daily-tracker-original.html").bufferedReader().use { it.readText() }
+        assertTrue(FileNappletUpdate.recognized(original))
+        val replacement = context.assets.open("napplets/daily-tracker-v1.html").bufferedReader().use { it.readText() }
+        assertFalse("Frozen replacement must be installed before this test", FileNappletUpdate.recognized(replacement))
+        val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+            lateinit var window: android.view.Window
+            scenario.onActivity { window = it.window }
+            val app = context.applicationContext as AmbulandoApplication
+            compose.waitUntil(20_000) { app.activeModel?.workspaces?.any { it.id == SampleIds.STUDIO } == true }
+            val model = app.activeModel!!
+            compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
+            compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
+            compose.waitUntil(20_000) { model.activeEntry?.runtime?.writeActivity?.isOpen == true }
+            val c = model.connection!!; val w = model.workspace!!; val api = model.fileNappletAPI(c)
+            val created = kotlinx.coroutines.runBlocking { api.createDailyTracker(w.id, w.appNpub, c.signerNpub, original) }
+            compose.runOnIdle { model.section = AppSection.TOOLBOX }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.dailyMetrics")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("apps.dailyMetrics").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.chooseTracker") or hasTestTag("napplet.trust") or hasTestTag("napplet.host")).fetchSemanticsNodes().isNotEmpty() }
+            if (compose.onAllNodes(hasTestTag("apps.chooseTracker")).fetchSemanticsNodes().isNotEmpty()) {
+                compose.onNode(hasTestTag("apps.chooseTracker") and hasText(created.code.id.take(8), substring = true)).performClick()
+            }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.trust")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("napplet.trust").performClick()
+            var web: WebView? = null
+            compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.update")).fetchSemanticsNodes().isNotEmpty() }
+            val saveReached = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val releaseSave = kotlinx.coroutines.CompletableDeferred<Unit>()
+            model.sampleTower!!.requestGate = { request ->
+                if (request.method == "POST" && java.net.URI(request.url).path.endsWith("/files/${created.data.id}/versions")) {
+                    saveReached.complete(Unit); releaseSave.await()
+                }
+            }
+            try {
+                page(web!!, "document.getElementById('manage').click();document.querySelector('input[placeholder]').value='Synthetic update test';Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Add metric').click();document.getElementById('checkin').click();Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='No').click();document.getElementById('save').click()")
+                compose.waitUntil(10_000) { saveReached.isCompleted }
+                compose.onNodeWithTag("napplet.update").assertIsNotEnabled()
+                compose.onNodeWithTag("napplet.close").assertIsNotEnabled()
+            } finally { releaseSave.complete(Unit); model.sampleTower!!.requestGate = null }
+            compose.waitUntil(20_000) { page(web!!, "document.getElementById('status').textContent")?.startsWith("Saved in NStack") == true }
+            capture("daily-metrics-before-update.png", web!!, context)
+            val dataBefore = kotlinx.coroutines.runBlocking { api.fileVersions(w.id, w.appNpub, created.data.id) }
+            val bytesBefore = kotlinx.coroutines.runBlocking { api.fileVersionBytes(w.id, w.appNpub, created.data.id, dataBefore.versions.last()) }
+            page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Yes').click()")
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Unsaved")).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("napplet.update") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("napplet.update").performClick()
+            compose.onNodeWithText("Discard changes and update app?").assertIsDisplayed()
+            compose.onNodeWithText("Keep current app").performClick()
+            assertEquals("true", page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Yes').getAttribute('aria-pressed')"))
+            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("napplet.update") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("napplet.update").performClick()
+            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("napplet.confirmUpdate")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("napplet.confirmUpdate").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.trust")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodesWithTag("napplet.host").assertCountEquals(0)
+            assertEquals(dataBefore, kotlinx.coroutines.runBlocking { api.fileVersions(w.id, w.appNpub, created.data.id) })
+            assertArrayEquals(bytesBefore, kotlinx.coroutines.runBlocking { api.fileVersionBytes(w.id, w.appNpub, created.data.id, dataBefore.versions.last()) })
+            val updated = kotlinx.coroutines.runBlocking { api.artefactFile(w.id, w.appNpub, created.code.id) }
+            assertEquals(created.code.raw["metadata"], updated.raw["metadata"])
+            val codeVersions = kotlinx.coroutines.runBlocking { api.fileVersions(w.id, w.appNpub, created.code.id) }
+            assertEquals(2, codeVersions.versions.size)
+            assertEquals(replacement, kotlinx.coroutines.runBlocking { api.fileVersionBytes(w.id, w.appNpub, created.code.id, codeVersions.versions.last()) }.toString(Charsets.UTF_8))
+            compose.onNodeWithTag("napplet.trust").performClick()
+            compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
+            assertEquals("true", page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='No').getAttribute('aria-pressed')"))
+            compose.onAllNodesWithTag("napplet.update").assertCountEquals(0)
+            assertEquals("false", page(web!!, "document.documentElement.scrollWidth>innerWidth"))
+            capture("daily-metrics-updated.png", web!!, context)
+            page(web!!, "document.getElementById('manage').click();document.querySelector('input[placeholder]').value='Synthetic number';document.querySelector('select').value='number';Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Add metric').click();document.getElementById('checkin').click()")
+            val typing = page(web!!, "(()=>{const n=document.querySelector('input[type=number]');n.focus();const times=[];for(const v of ['1','12','123','1234','12345','123456','1234567','12345678','123456789','1234567890','1234567890.2','1234567890.25']){const t=performance.now();n.value=v;n.dispatchEvent(new Event('input'));times.push(performance.now()-t)}return JSON.stringify({maxMs:Math.max(...times),sameNode:n===document.querySelector('input[type=number]'),focus:document.activeElement===n,inputmode:n.inputMode,value:n.value,width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth})})()")!!
+            android.util.Log.i("FileNappletPerf", "updated native typing " + typing)
+            val typed = Json.parseToJsonElement(typing).jsonObject
+            assertEquals(JsonPrimitive(true), typed["sameNode"]); assertEquals(JsonPrimitive(true), typed["focus"])
+            assertEquals(JsonPrimitive("decimal"), typed["inputmode"]); assertEquals(JsonPrimitive(false), typed["overflow"])
+            page(web!!, "document.querySelector('input[type=number]').blur();document.querySelector('input[type=number]').value='0';document.querySelector('input[type=number]').dispatchEvent(new Event('input'));document.getElementById('save').click()")
+            compose.waitUntil(20_000) { page(web!!, "document.getElementById('status').textContent")?.startsWith("Saved in NStack") == true }
+            compose.onNodeWithTag("napplet.close").performClick()
+            compose.onNodeWithTag("apps.dailyMetrics").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.chooseTracker") or hasTestTag("napplet.trust") or hasTestTag("napplet.host")).fetchSemanticsNodes().isNotEmpty() }
+            if (compose.onAllNodes(hasTestTag("apps.chooseTracker")).fetchSemanticsNodes().isNotEmpty()) {
+                compose.onNode(hasTestTag("apps.chooseTracker") and hasText(created.code.id.take(8), substring = true)).performClick()
+            }
+            compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
+            compose.onAllNodesWithTag("napplet.trust").assertCountEquals(0)
+        }
+    }
+    private fun capture(name: String, web: WebView, context: android.content.Context) {
+        val drawn = java.util.concurrent.CountDownLatch(1)
+        instrumentation.runOnMainSync { web.postVisualStateCallback(1, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) { drawn.countDown() }
+        }) }
+        assertTrue(drawn.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        compose.waitForIdle()
+        instrumentation.uiAutomation.takeScreenshot().let { bitmap ->
+            java.io.File(context.getExternalFilesDir(null), name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         }
     }
     private fun find(view: android.view.View): WebView? {

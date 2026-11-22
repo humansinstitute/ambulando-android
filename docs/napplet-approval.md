@@ -41,3 +41,22 @@ Validation uses synthetic records: core tests exercise isolation and malformed
 storage; native instrumentation exercises the actual Compose host, WebView,
 reopen/recreation, data preservation, code changes, revoke and storage failure.
 This does not establish behavior on a member's physical device or personal data.
+
+## Explicit built-in code updates
+
+For the exact original built-in Daily Metrics HTML (14,824 bytes, SHA-256
+`192779e50335a83d90076fb17954059e466ccfecea25c5eb5b14d68e8dfa91cd`),
+**Update app** offers the packaged replacement as an explicit host action.
+Customized, unknown and already updated code is never overwritten. Existing
+instances continue to run without updating. Pending saves block updating;
+unsaved edits require explicit discard confirmation. The confirmation describes
+that changed code will require fresh approval before running.
+
+The host rechecks current code-write authority, exact immutable original bytes,
+unchanged metadata and binding, and bound data self-DM access before uploading
+and again before publishing. Only a new version of the original code File is
+written, using its original base version. No data File, binding or metadata write
+occurs. Success requires an acknowledged new version and exact object/byte
+readback. Conflict, failed checks and uncertain acknowledgements require closing
+and reopening; there is no blind retry. The old bridge is destroyed and the
+updated code opens behind the existing changed-code approval prompt.

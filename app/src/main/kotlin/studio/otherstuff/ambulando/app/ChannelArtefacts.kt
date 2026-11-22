@@ -87,6 +87,7 @@ import java.util.UUID
 
 @Composable internal fun HtmlFileArtefact(model: AppModel, file: FileRecord, appMode: Boolean = false) {
     val c = model.connection ?: return; val w = model.workspace ?: return
+    var reload by remember(file.id) { mutableStateOf(0) }
     var html by remember(file.id) { mutableStateOf<String?>(null) }
     var versions by remember(file.id) { mutableStateOf<FileVersionList?>(null) }
     var selected by remember(file.id) { mutableStateOf<String?>(null) }
@@ -104,7 +105,7 @@ import java.util.UUID
             check(temporary.renameTo(draftFile)) { "Could not preserve the HTML draft" }
         }
     }
-    LaunchedEffect(file.id, selected) {
+    LaunchedEffect(file.id, selected, reload) {
         try {
             html = null; error = null
             versions = model.towerAPI(c).fileVersions(w.id, w.appNpub, file.id)
@@ -126,7 +127,7 @@ import java.util.UUID
     val currentVersion = versions?.currentVersionId
     if (selected == null && source == null && declaration != null && binding != null && currentVersion != null) {
         key(model.activeBoundaryId, file.id, currentVersion, binding) {
-            FileNappletScreen(model, file, html!!, declaration, binding, currentVersion)
+            FileNappletScreen(model, file, html!!, declaration, binding, currentVersion) { reload++ }
         }
         return
     }
