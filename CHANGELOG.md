@@ -1,3 +1,9 @@
+## 0.9.32 (60)
+
+- Create an empty daily tracker in Note to self, with its HTML code and JSON records saved as separate NStack Files.
+- Run the same daily yes/no and number tracker bundle as the browser, with explicit code trust, private File binding and conflict-checked saves.
+- Keep ordinary HTML isolated; the tracker receives no signing key, arbitrary request API or direct network access.
+
 ## 0.9.31 (59)
 
 - Focus whiteboards opened from Files or Artefacts on one native Back/title/status/options toolbar, with more space for drawing.

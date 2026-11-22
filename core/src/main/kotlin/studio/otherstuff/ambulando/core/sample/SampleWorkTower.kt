@@ -628,7 +628,7 @@ class SampleWorkTower(
                 val id = newUUID()
                 val scope = (state.rows("files") + state.rows("docs") + state.rows("tasks")).firstOrNull { it["channel_id"] == p[1] && it["scope_id"] != null }?.get("scope_id").asString()
                 val row = fileRow(id, p[1], scope, objectId, o["display_name"].asString() ?: "file", o["folder_id"].asString(), now())
-                if (lineage != null || o["metadata"].asMap()?.get("artefact") != null) {
+                run { // All NStack Files start with an immutable initial version, including JSON data.
                     row["metadata"] = o["metadata"] ?: emptyMap<String, Any>()
                     val version = versionRow(id, 1, objectId, null)
                     state.put("file_versions", version["id"] as String, version)
@@ -653,7 +653,7 @@ class SampleWorkTower(
                 200 to mapOf("workspace_id" to workspaceId, "title" to row["display_name"], "source" to mapOf("type" to "html", "id" to p[1]), "content" to mapOf("html" to html, "assets" to emptyList<Any>()), "versions" to versions)
             }
             method == "GET" && n == 3 && head == "files" && p[2] == "versions" && state.row("files", p[1]) != null -> {
-                val rows = fileVersionRows(p[1])
+                val rows = fileVersionRows(p[1]).asReversed().take(url.query("limit")?.toIntOrNull()?.coerceIn(1, 200) ?: 50)
                 200 to linkedMapOf("file_id" to p[1], "current_version_id" to state.row("files", p[1])?.get("current_version_id"), "versions" to rows, "next_cursor" to null)
             }
             method == "GET" && n == 5 && head == "files" && p[2] == "versions" && p[4] == "object" && state.row("files", p[1]) != null -> {

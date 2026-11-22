@@ -62,7 +62,7 @@ object HtmlArtefactDocument {
  * navigate or open windows, and it has no storage, file access or script bridge.
  */
 @SuppressLint("SetJavaScriptEnabled")
-fun createSandboxedHtmlView(context: Context, html: String, onStopped: () -> Unit = {}): Result<WebView> = runCatching {
+fun createSandboxedHtmlView(context: Context, html: String, beforeLoad: (WebView) -> Unit = {}, onNavigation: () -> Unit = {}, onStopped: () -> Unit = {}): Result<WebView> = runCatching {
     if (!WebProfiles.supported) throw WebSurfaceUnavailable(WebProfiles.UNSUPPORTED_MESSAGE)
     val view = WebView(context)
     try {
@@ -97,10 +97,10 @@ fun createSandboxedHtmlView(context: Context, html: String, onStopped: () -> Uni
             return WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))
         }
 
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean { onNavigation(); return true }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-            if (loaded) view.stopLoading()
+            if (loaded) { view.stopLoading(); onNavigation() }
         }
 
         override fun onPageFinished(view: WebView, url: String?) { loaded = true }
@@ -110,6 +110,7 @@ fun createSandboxedHtmlView(context: Context, html: String, onStopped: () -> Uni
         override fun onPermissionRequest(request: PermissionRequest) = request.deny()
     }
     view.setDownloadListener { _, _, _, _, _ -> }
+    beforeLoad(view)
     view.loadDataWithBaseURL(null, HtmlArtefactDocument.build(html), "text/html", "utf-8", null)
     view
 }

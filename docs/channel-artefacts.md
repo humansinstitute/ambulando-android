@@ -27,3 +27,17 @@ For synthetic device tests, build with `-PisolatedArtefactTest=true`. This chang
 `studio.otherstuff.ambulando.android.artefacttest` and omits Firebase configuration for that disposable package, so an
 installed signed release can remain in place for upgrade validation. Production package and Firebase configuration
 are unchanged. `ChannelArtefactsFlowTest` exercises direct whiteboard navigation and HTML create/edit/version browsing.
+
+Daily tracker Files can run the shared inline HTML bundle through a deliberately narrow File data host. The
+Create daily tracker action explicitly creates an empty JSON File and a separate HTML File in the signed-in viewer's
+self-conversation. Runtime code always comes from the NStack HTML File; the packaged template is only for creation.
+A direct current File open requires the exact v1 tracker declaration and host-owned File binding, then asks the user
+to trust the code and its data access. Ordinary HTML, canvas HTML and historical/source views receive no bridge.
+
+The host exposes only fixed read/save/dirty messages with a per-document nonce, main-frame checks, a 1 MiB model
+limit and schema validation. All network/navigation restrictions remain active. Native signed requests recheck the
+code File, bound JSON File and self-DM participants, verify private storage and exact-version hashes, and save with
+base-version CAS followed by readback. A conflict retains the in-memory draft until an explicit reload; errors or
+revocation destroy the page. Access is checked every 30 seconds, on foreground and relevant store invalidation.
+Leaving the activity clears the in-memory page; unsaved edits are not a durable offline queue. Close/Back confirms
+unsaved discard and is disabled during a pending save. NStack's normal administrator authority still applies.

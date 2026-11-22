@@ -334,6 +334,10 @@ class SampleTower(
         return when {
             method == "GET" && n == 1 && head == "scopes" && failScopes -> 500 to linkedMapOf("error" to "Internal error", "code" to "internal_error", "status" to 500)
             method == "GET" && n == 1 && head == "scopes" -> synchronized(lock) { 200 to linkedMapOf("scopes" to scopeRows(w), "next_cursor" to null) }
+            method == "GET" && n == 2 && head == "channels" -> synchronized(lock) {
+                val row = scopeRows(w).flatMap { channelRows(w, it["id"] as String) }.firstOrNull { it["id"] == rest[1] }
+                if (row == null) errorReply(404, "channel_not_found") else 200 to mapOf("channel" to row)
+            }
             method == "GET" && n == 3 && head == "scopes" && rest[2] == "channels" ->
                 synchronized(lock) { 200 to linkedMapOf("channels" to channelRows(w, rest[1]), "next_cursor" to null) }
             method == "GET" && n == 1 && head == "me" -> 200 to linkedMapOf(
