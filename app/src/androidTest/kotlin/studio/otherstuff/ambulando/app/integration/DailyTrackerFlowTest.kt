@@ -49,10 +49,19 @@ class DailyTrackerFlowTest {
             compose.waitUntil(20_000) { page(web!!, "document.getElementById('status').textContent")?.startsWith("Saved in NStack") == true }
             // Native Back cannot silently discard an unsaved edit.
             page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Yes').click()")
+            val session = page(web!!, "window.nappletSession")
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            compose.waitUntil(20_000) { page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Yes').getAttribute('aria-pressed')") == "true" }
+            assertEquals("Ordinary app switching keeps the same document", session, page(web!!, "window.nappletSession"))
             compose.onNodeWithTag("napplet.close").performClick()
             compose.onNodeWithText("Discard unsaved changes?").assertIsDisplayed()
             compose.onNodeWithText("Keep editing").performClick()
             page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='No').click();document.getElementById('save').click()")
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            Thread.sleep(150) // The explicit pending save may complete; it must not acquire a newer base or disappear.
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            assertEquals(session, page(web!!, "window.nappletSession"))
             compose.waitUntil(20_000) { page(web!!, "document.getElementById('status').textContent")?.startsWith("Saved in NStack") == true }
             // Save is durable in synthetic File storage; use the actual File route again after destroying the page.
             compose.onNodeWithTag("napplet.close").performClick()
@@ -77,6 +86,13 @@ class DailyTrackerFlowTest {
                 drawn > 200
             }
             java.io.File(context.getExternalFilesDir(null), "daily-tracker-synthetic.png").outputStream().use { image!!.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            model.sampleTower!!.revokedWorkspaces = setOf(SampleIds.STUDIO)
+            try {
+                scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+                compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.host")).fetchSemanticsNodes().isEmpty() }
+                instrumentation.runOnMainSync { assertNull("Denied return removes the WebView", find(window.decorView)) }
+            } finally { model.sampleTower!!.revokedWorkspaces = emptySet() }
         }
     }
     private fun find(view: android.view.View): WebView? {

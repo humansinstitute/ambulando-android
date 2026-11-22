@@ -56,5 +56,7 @@ class FileNappletFlowTest {
         foreign = false; deny = true
         assertTrue(runCatching { one.read() }.isFailure)
         assertTrue(runCatching { one.save(saved.version, value) }.isFailure)
+        one.clear(); deny = false
+        assertTrue("A cleared host requires a new authorized read", runCatching { one.save(saved.version, value) }.isFailure)
     }
 }

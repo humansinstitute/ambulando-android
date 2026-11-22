@@ -17,6 +17,8 @@ class FileNappletTransport(
     class Conflict : Exception("A newer version exists. Reload explicitly before saving.")
     private var delivered: Snapshot? = null
     private var uncertain = false
+    /** Release private in-memory snapshots when the host loses authority or is disposed. */
+    fun clear() { delivered = null; uncertain = true }
 
     suspend fun authorize(): Boolean {
         val code = api.artefactFile(workspace, app, codeId)

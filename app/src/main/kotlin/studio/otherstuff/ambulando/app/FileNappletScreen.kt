@@ -46,6 +46,9 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     var page by remember { mutableStateOf<FileNappletWebHost?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(true) }
+    var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+    var deferredResult by remember { mutableStateOf<JsonObject?>(null) }
+    var lastWritable by remember { mutableStateOf<Boolean?>(null) }
     var busy by remember { mutableStateOf(false) }
     var dirty by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
@@ -54,13 +57,16 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     val transport = remember(model.activeBoundaryId, file.id, codeVersion, dataId) {
         FileNappletTransport(model.fileNappletAPI(c), w.id, w.appNpub, c.signerNpub, file.id, codeVersion, manifest, dataId)
     }
-    fun stop() { operationJob?.cancel(); page?.destroy(); page = null; failure = "This napplet is unavailable. Close and reopen it to check access." }
+    fun stop() { operationJob?.cancel(); transport.clear(); deferredResult = null; page?.destroy(); page = null; failure = "This napplet is unavailable. Close and reopen it to check access." }
     fun close() { if (!busy) { if (dirty) discard = true else exit?.invoke() } }
     BackHandler(enabled = LocalEditorActive.current) { close() }
     suspend fun authorize() = withContext(Dispatchers.Main.immediate) {
         gate.withLock {
             checking = true
-            try { transport.authorize() }
+            try {
+                val writable = transport.authorize()
+                if (lastWritable == true && !writable) stop() else lastWritable = writable
+            }
             catch (e: CancellationException) { throw e }
             catch (_: Exception) { stop() }
             finally { checking = false }
@@ -68,11 +74,25 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     }
     DisposableEffect(lifecycle, transport) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && trusted) scope.launch { authorize() }
-            if (event == Lifecycle.Event.ON_STOP && trusted) { checking = true; stop() }
+            if (event == Lifecycle.Event.ON_RESUME) {
+                foreground = true
+                if (trusted) scope.launch {
+                    authorize()
+                    if (failure == null && foreground) {
+                        page?.view?.onResume()
+                        deferredResult?.let { page?.deliver(it) }
+                        deferredResult = null
+                    }
+                }
+            }
+            if (event == Lifecycle.Event.ON_STOP) {
+                foreground = false; checking = true
+                // Keep memory drafts and let an already requested save resolve against its original base.
+                page?.view?.onPause()
+            }
         }
         lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); page?.destroy(); page = null }
+        onDispose { lifecycle.removeObserver(observer); transport.clear(); deferredResult = null; page?.destroy(); page = null }
     }
     DisposableEffect(page) {
         val host = page
@@ -96,7 +116,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         authorize()
         if (failure != null) return@LaunchedEffect
         withContext(Dispatchers.Main.immediate) { FileNappletWebHost.create(context, html, onMessage = { request ->
-            if (!busy && failure == null) {
+            if (foreground && !busy && failure == null) {
                 val operation = request.string("operation")
                 if (operation == "dirty") dirty = request.bool("dirty") == true
                 else {
@@ -108,17 +128,21 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                                 val value = if (operation == "read") transport.read() else transport.save(request.string("baseVersionId")!!, request.getValue("value").jsonObject)
                                 ensureActive()
                                 if (host != null && page === host) {
-                                    host.deliver(buildJsonObject {
+                                    val result = buildJsonObject {
                                         put("type", "wingman-napplet-result"); put("version", 1); put("session", host.session); put("requestId", request.getValue("requestId"))
                                         put("status", "ready"); put("baseVersionId", value.version); put("value", value.value); put("canWrite", value.canWrite); put("privacy", "self-channel")
-                                    })
+                                    }
+                                    if (foreground && !checking) host.deliver(result) else deferredResult = result
                                     if (operation == "save") dirty = false
                                 }
                             } catch (e: CancellationException) { throw e }
                             catch (e: FileNappletTransport.Conflict) {
-                                host?.deliver(buildJsonObject {
-                                    put("type", "wingman-napplet-result"); put("version", 1); put("session", host.session); put("requestId", request.getValue("requestId")); put("status", "error"); put("code", "conflict"); put("message", "A newer save exists. Reload explicitly before saving.")
-                                })
+                                if (host != null && page === host) {
+                                    val result = buildJsonObject {
+                                        put("type", "wingman-napplet-result"); put("version", 1); put("session", host.session); put("requestId", request.getValue("requestId")); put("status", "error"); put("code", "conflict"); put("message", "A newer save exists. Reload explicitly before saving.")
+                                    }
+                                    if (foreground && !checking) host.deliver(result) else deferredResult = result
+                                }
                             } catch (_: Exception) { stop() }
                             finally { busy = false }
                         }
@@ -142,7 +166,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         else {
             if (checking) LinearProgressIndicator(Modifier.fillMaxWidth())
             // Keep DOM and memory drafts during periodic checks, but stop interaction until reauthorized.
-            page?.let { host -> AndroidView(factory = { host.view }, update = { it.visibility = if (checking) android.view.View.INVISIBLE else android.view.View.VISIBLE }, modifier = Modifier.weight(1f).fillMaxWidth().testTag("napplet.host")) }
+            page?.let { host -> AndroidView(factory = { host.view }, update = { it.visibility = if (checking || !foreground) android.view.View.INVISIBLE else android.view.View.VISIBLE }, modifier = Modifier.weight(1f).fillMaxWidth().testTag("napplet.host")) }
         }
     }
     if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("Discard unsaved changes?") }, text = { Text("These changes have not been saved to NStack.") }, confirmButton = { TextButton(onClick = { page?.destroy(); page = null; exit?.invoke() }) { Text("Discard and close") } }, dismissButton = { TextButton(onClick = { discard = false }) { Text("Keep editing") } })

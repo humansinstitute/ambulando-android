@@ -39,5 +39,5 @@ limit and schema validation. All network/navigation restrictions remain active. 
 code File, bound JSON File and self-DM participants, verify private storage and exact-version hashes, and save with
 base-version CAS followed by readback. A conflict retains the in-memory draft until an explicit reload; errors or
 revocation destroy the page. Access is checked every 30 seconds, on foreground and relevant store invalidation.
-Leaving the activity clears the in-memory page; unsaved edits are not a durable offline queue. Close/Back confirms
+Ordinary backgrounding hides/pauses the same in-memory page and blocks new commands; foreground reauthorization is required before resuming it. A pending explicit save resolves against its original base and its result waits for reauthorization. Unsaved edits are not a durable offline queue. Close/Back confirms
 unsaved discard and is disabled during a pending save. NStack's normal administrator authority still applies.
