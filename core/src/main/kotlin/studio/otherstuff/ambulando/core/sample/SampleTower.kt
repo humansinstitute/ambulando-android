@@ -693,6 +693,7 @@ class SampleTower(
                     if (name.isEmpty()) return@synchronized validationError("name must be a non-empty string")
                     if (scopeRows(w).any { it["name"] == name }) return@synchronized errorReply(409, "duplicate_scope")
                     val row = scope(newUUID(), w, name)
+                    row["kind"] = body["kind"]
                     row["description"] = body["description"]
                     row["updated_at"] = now
                     managed["scopes"] = manageList("scopes") + row

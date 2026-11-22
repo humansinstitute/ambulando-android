@@ -14,13 +14,14 @@ import org.junit.runner.RunWith
 import studio.otherstuff.ambulando.app.*
 import studio.otherstuff.ambulando.app.ui.shell.AppSection
 import studio.otherstuff.ambulando.core.sample.SampleIds
+import studio.otherstuff.ambulando.core.surfaces.*
 
 /** Full native UI with signed in-process synthetic NStack. No member storage. */
 @RunWith(AndroidJUnit4::class)
 class DailyTrackerFlowTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
-    @Test fun createTrustDefineSaveCloseAndReopenFromFiles() {
+    @Test fun appsSetupSaveAdoptAndReopenFromFiles() {
         val context = instrumentation.targetContext
         val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<MainActivity>(intent).use { scenario ->
@@ -31,16 +32,24 @@ class DailyTrackerFlowTest {
             val model = app.activeModel!!
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
-            compose.runOnIdle { model.section = AppSection.DOCS }
-            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("artefacts.createTracker")).fetchSemanticsNodes().isNotEmpty() }
+            compose.runOnIdle { model.section = AppSection.TOOLBOX }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.dailyMetrics")).fetchSemanticsNodes().isNotEmpty() }
+            instrumentation.uiAutomation.takeScreenshot().let { bitmap ->
+                java.io.File(context.getExternalFilesDir(null), "daily-metrics-apps.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            }
             val started = android.os.SystemClock.elapsedRealtime()
-            compose.onNodeWithTag("artefacts.createTracker").performClick()
-            compose.onNodeWithText("Create", useUnmergedTree = true).performClick()
+            compose.onNodeWithTag("apps.dailyMetrics").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.setupTracker")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("apps.setupTracker").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.trust")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("napplet.trust").performClick()
             var web: WebView? = null
             compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
             android.util.Log.i("FileNappletPerf", "native empty create/trust/open ms=" + (android.os.SystemClock.elapsedRealtime() - started))
+            val c = model.connection!!; val w = model.workspace!!
+            val api = model.fileNappletAPI(c)
+            val initialIds = kotlinx.coroutines.runBlocking { api.dailyMetricsInstances(w.id, w.appNpub, c.signerNpub).map { it.id } }
+            assertEquals(1, initialIds.size)
             assertTrue(web!!.height > 300)
             assertEquals("false", page(web!!, "document.documentElement.scrollWidth>innerWidth"))
             page(web!!, "document.getElementById('manage').click();document.querySelector('input[placeholder]').value='Boolean test';Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Add metric').click()")
@@ -65,6 +74,15 @@ class DailyTrackerFlowTest {
             compose.waitUntil(20_000) { page(web!!, "document.getElementById('status').textContent")?.startsWith("Saved in NStack") == true }
             // Save is durable in synthetic File storage; use the actual File route again after destroying the page.
             compose.onNodeWithTag("napplet.close").performClick()
+            // Apps must adopt the same code/data and saved answer without a second setup.
+            compose.onNodeWithTag("apps.dailyMetrics").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.trust")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodesWithTag("apps.setupTracker").assertCountEquals(0)
+            compose.onAllNodesWithTag("artefacts.editSource").assertCountEquals(0)
+            compose.onNodeWithTag("napplet.trust").performClick()
+            compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
+            assertEquals("true", page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='No').getAttribute('aria-pressed')"))
+            compose.onNodeWithTag("napplet.close").performClick()
             compose.runOnIdle { model.selectContext(null, null); model.section = AppSection.FILES }
             compose.waitUntil(20_000) { compose.onAllNodes(hasText("Daily tracker.html")).fetchSemanticsNodes().isNotEmpty() }
             compose.onAllNodesWithText("Daily tracker.html").onFirst().performClick()
@@ -73,6 +91,7 @@ class DailyTrackerFlowTest {
             compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
             assertEquals("true", page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='No').getAttribute('aria-pressed')"))
             compose.onNodeWithTag("napplet.close").assertIsDisplayed()
+            assertEquals(initialIds, kotlinx.coroutines.runBlocking { api.dailyMetricsInstances(w.id, w.appNpub, c.signerNpub).map { it.id } })
             // DOM readiness may precede Chromium/Compose presentation; require actual drawn content.
             var image: android.graphics.Bitmap? = null
             compose.waitUntil(10_000) {
@@ -86,6 +105,38 @@ class DailyTrackerFlowTest {
                 drawn > 200
             }
             java.io.File(context.getExternalFilesDir(null), "daily-tracker-synthetic.png").outputStream().use { image!!.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            // Multiple existing trackers require a chooser; selecting the original preserves its answers.
+            val html = context.assets.open("napplets/daily-tracker-v1.html").bufferedReader().use { it.readText() }
+            val second = kotlinx.coroutines.runBlocking { api.createDailyTracker(w.id, w.appNpub, c.signerNpub, html) }
+            compose.onNodeWithTag("napplet.close").performClick()
+            compose.runOnIdle { model.section = AppSection.TOOLBOX }
+            compose.onNodeWithTag("apps.dailyMetrics").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.chooseTracker")).fetchSemanticsNodes().size == 2 }
+            compose.onAllNodesWithTag("apps.setupTracker").assertCountEquals(0)
+            compose.onNode(hasTestTag("apps.chooseTracker") and hasText(initialIds.single().take(8), substring = true)).performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.trust")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("napplet.trust").performClick()
+            compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
+            assertEquals("true", page(web!!, "Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='No').getAttribute('aria-pressed')"))
+            assertEquals(setOf(initialIds.single(), second.code.id), kotlinx.coroutines.runBlocking { api.dailyMetricsInstances(w.id, w.appNpub, c.signerNpub).map { it.id }.toSet() })
+            compose.onNodeWithTag("napplet.close").performClick()
+            val invalid = kotlinx.coroutines.runBlocking { api.createDailyTracker(w.id, w.appNpub, c.signerNpub, "<h1>No valid manifest</h1>") }
+            compose.onNodeWithTag("apps.dailyMetrics").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.chooseTracker")).fetchSemanticsNodes().size == 3 }
+            compose.onNode(hasTestTag("apps.chooseTracker") and hasText(invalid.code.id.take(8), substring = true)).performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasText("This tracker is invalid or unavailable. No replacement was created.")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodesWithTag("apps.setupTracker").assertCountEquals(0)
+            compose.onAllNodesWithTag("artefacts.editSource").assertCountEquals(0)
+            compose.onAllNodesWithTag("napplet.host").assertCountEquals(0)
+            assertEquals(3, kotlinx.coroutines.runBlocking { api.dailyMetricsInstances(w.id, w.appNpub, c.signerNpub).size })
+            // Leave the invalid app using the normal route Back, then re-open the original for revocation testing.
+            scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            compose.onNodeWithTag("apps.dailyMetrics").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("apps.chooseTracker")).fetchSemanticsNodes().size == 3 }
+            compose.onNode(hasTestTag("apps.chooseTracker") and hasText(initialIds.single().take(8), substring = true)).performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.trust")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("napplet.trust").performClick()
+            compose.waitUntil(20_000) { instrumentation.runOnMainSync { web = find(window.decorView) }; web != null && page(web!!, "document.getElementById('controls')?.hidden") == "false" }
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             model.sampleTower!!.revokedWorkspaces = setOf(SampleIds.STUDIO)
             try {
@@ -93,6 +144,7 @@ class DailyTrackerFlowTest {
                 compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("napplet.host")).fetchSemanticsNodes().isEmpty() }
                 instrumentation.runOnMainSync { assertNull("Denied return removes the WebView", find(window.decorView)) }
             } finally { model.sampleTower!!.revokedWorkspaces = emptySet() }
+
         }
     }
     private fun find(view: android.view.View): WebView? {

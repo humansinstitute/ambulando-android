@@ -10,7 +10,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -28,7 +27,6 @@ import java.util.UUID
     var title by remember { mutableStateOf("") }
     var channel by remember(model.context) { mutableStateOf(model.context.channelId) }
     val services = LocalAppServices.current
-    CreateDailyTracker(model)
     TextButton(onClick = { showing = true }, enabled = services.unlocked && !w.accessRemoved, modifier = Modifier.testTag("artefacts.new")) { Text("New artefact") }
     if (showing) AlertDialog(onDismissRequest = { showing = false }, title = { Text("New artefact") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -87,7 +85,7 @@ import java.util.UUID
 }
 
 
-@Composable private fun HtmlFileArtefact(model: AppModel, file: FileRecord) {
+@Composable internal fun HtmlFileArtefact(model: AppModel, file: FileRecord, appMode: Boolean = false) {
     val c = model.connection ?: return; val w = model.workspace ?: return
     var html by remember(file.id) { mutableStateOf<String?>(null) }
     var versions by remember(file.id) { mutableStateOf<FileVersionList?>(null) }
@@ -131,6 +129,10 @@ import java.util.UUID
         key(model.activeBoundaryId, file.id, currentVersion, binding) {
             FileNappletScreen(model, file, html!!, declaration, binding, currentVersion)
         }
+        return
+    }
+    if (appMode) {
+        Text(error ?: if (html == null) "Opening Daily Metrics…" else "This tracker is invalid or unavailable. No replacement was created.", Modifier.padding(16.dp))
         return
     }
     Column(Modifier.fillMaxSize()) {
@@ -186,39 +188,4 @@ import java.util.UUID
             finally { saving = false }
         }
     }, modifier = Modifier.testTag("artefacts.saveSource")) { Text(if (saving) "Saving…" else "Save version") } }, dismissButton = { TextButton(enabled = !saving, onClick = { source = null }) { Text("Close (keep draft)") } }) }
-}
-
-@Composable private fun CreateDailyTracker(model: AppModel) {
-    val c = model.connection ?: return; val w = model.workspace ?: return
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val services = LocalAppServices.current
-    val scope = rememberCoroutineScope { Dispatchers.Main.immediate }
-    var confirming by remember { mutableStateOf(false) }
-    var creating by remember { mutableStateOf(false) }
-    var failure by remember { mutableStateOf<String?>(null) }
-    val boundary = model.activeBoundaryId
-    TextButton(enabled = services.unlocked && !w.accessRemoved && !creating, modifier = Modifier.testTag("artefacts.createTracker"), onClick = { confirming = true }) {
-        Text(if (creating) "Creating tracker…" else "Create daily tracker")
-    }
-    failure?.let { Text(it, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error) }
-    if (confirming) AlertDialog(onDismissRequest = { confirming = false }, title = { Text("Create daily tracker?") }, text = {
-        Text("Create an empty tracker and data File in your private Note to self conversation. Normal NStack administration rules apply.")
-    }, confirmButton = { TextButton(onClick = {
-        confirming = false; creating = true; failure = null
-        scope.launch {
-            try {
-                val html = withContext(Dispatchers.IO) { context.assets.open("napplets/daily-tracker-v1.html").bufferedReader().use { it.readText() } }
-                model.identity.requireSigner(c.signerNpub)
-                val created = model.fileNappletAPI(c).createDailyTracker(w.id, w.appNpub, c.signerNpub, html)
-                if (boundary == model.activeBoundaryId) {
-                    model.store.writer.upsertScopes(w.id, listOf(created.scope), complete = false)
-                    model.store.writer.upsertChannels(w.id, created.scope.id, listOf(created.channel), complete = false)
-                    model.store.writer.upsertFiles(w.id, listOf(created.code, created.data))
-                    services.open(WorkRoute.File(w.id, created.code.id))
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { android.util.Log.w("FileNappletHost", "Empty tracker creation failed", e); failure = "Tracker creation could not be confirmed. Check Note to self for saved empty Files before retrying." }
-            finally { creating = false }
-        }
-    }) { Text("Create") } }, dismissButton = { TextButton(onClick = { confirming = false }) { Text("Cancel") } })
 }

@@ -14,6 +14,7 @@ class RouteStateTest {
             "docs" to listOf(WorkRoute.Doc(w, "d1")),
             "files" to listOf(WorkRoute.File(w, "f1")),
             "deck" to listOf(WorkRoute.Canvas(w, "c1"), WorkRoute.Board(w, "c1", "n1")),
+            "toolbox" to listOf(WorkRoute.DailyMetrics(w)),
             "context" to listOf(WorkRoute.ContextComponent(w, "s", "k")),
         )
         val restored = RouteState.decode(RouteState.encode("tasks", stacks), w)!!

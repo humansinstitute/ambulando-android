@@ -31,6 +31,7 @@ import studio.otherstuff.ambulando.core.profiles.PersonDisplay
 sealed interface WorkRoute {
     val workspaceId: String
 
+    data class DailyMetrics(override val workspaceId: String) : WorkRoute
     data class Task(override val workspaceId: String, val taskId: String) : WorkRoute
     data class Doc(override val workspaceId: String, val docId: String) : WorkRoute
     data class File(override val workspaceId: String, val fileId: String) : WorkRoute

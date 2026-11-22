@@ -29,7 +29,7 @@ installed signed release can remain in place for upgrade validation. Production 
 are unchanged. `ChannelArtefactsFlowTest` exercises direct whiteboard navigation and HTML create/edit/version browsing.
 
 Daily tracker Files can run the shared inline HTML bundle through a deliberately narrow File data host. The
-Create daily tracker action explicitly creates an empty JSON File and a separate HTML File in the signed-in viewer's
+Apps → Daily Metrics → Set up Daily Metrics action explicitly creates an empty JSON File and a separate HTML File in the signed-in viewer's
 self-conversation. Runtime code always comes from the NStack HTML File; the packaged template is only for creation.
 A direct current File open requires the exact v1 tracker declaration and host-owned File binding, then asks the user
 to trust the code and its data access. Ordinary HTML, canvas HTML and historical/source views receive no bridge.
@@ -41,3 +41,16 @@ base-version CAS followed by readback. A conflict retains the in-memory draft un
 revocation destroy the page. Access is checked every 30 seconds, on foreground and relevant store invalidation.
 Ordinary backgrounding hides/pauses the same in-memory page and blocks new commands; foreground reauthorization is required before resuming it. A pending explicit save resolves against its original base and its result waits for reauthorization. Unsaved edits are not a durable offline queue. Close/Back confirms
 unsaved discard and is disabled during a pending save. NStack's normal administrator authority still applies.
+
+
+Daily Metrics is visible in Apps before setup. Opening it lists the signed-in viewer’s self-DM Files by
+`metadata.napplet.app_id == daily-tracker`; one instance is reused, several require a chooser, and only a complete
+successful empty discovery offers setup. The bounded Files endpoint cannot prove completeness at 200 rows, so that
+case stops discovery and offers no setup. Failed or invalid discovery never creates a replacement. Setup checks again
+before creating empty Files. App mode opens the existing trusted File host directly without source/history chrome.
+Legacy File links, pins and inspection remain available. The template, storage format and bridge are unchanged.
+
+The logical app route is `/flight-deck?workspaceid=<workspace UUID>&napplet=daily-tracker`, with launcher identity
+`napplet:daily-tracker`. Native in-app links support relative routes and HTTPS routes on the selected Tower origin;
+other frontend origins continue to open in the existing browser. Android has no new OS domain association or shared
+web placement preferences. Apps retains existing WApp placement behavior (configured in the web app).

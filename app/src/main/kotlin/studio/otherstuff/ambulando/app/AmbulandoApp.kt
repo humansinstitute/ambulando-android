@@ -142,6 +142,12 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         }
     }
     fun openUrl(url: String) {
+        val appRoute = if (w != null && c != null && !w.accessRemoved) dailyMetricsLink(url, c.origin, w.id) else null
+        if (appRoute != null) {
+            model.section = AppSection.TOOLBOX
+            if (stacks.of(AppSection.TOOLBOX).lastOrNull() != appRoute) stacks.push(AppSection.TOOLBOX, appRoute)
+            return
+        }
         val objectId = studio.otherstuff.ambulando.app.ui.rich.RichLinks.storageObjectId(url)
         if (objectId != null && w != null && !w.accessRemoved) model.act {
             // A stored image opens in the image overlay (as on the web), not as a file; other files go to the share sheet.
@@ -156,6 +162,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     val services = AppServices(avatars, ::openUrl, { route ->
         if (route.workspaceId == w?.id) {
             val target = when (route) {
+                is WorkRoute.DailyMetrics -> AppSection.TOOLBOX
                 is WorkRoute.Task -> AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
                 is WorkRoute.File -> if (model.section == AppSection.DOCS) AppSection.DOCS else AppSection.FILES
@@ -318,6 +325,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         }, routeScreen = { _, route ->
             if (screen != null) when (route) {
                 is WorkRoute.Task -> Column { Box(Modifier.weight(1f)) { TaskDetailScreen(remember(screen, route.taskId) { TaskDetailState(model.store, screen, route.taskId, coroutineScope) }, screen, intents) } }
+                is WorkRoute.DailyMetrics -> DailyMetricsScreen(model)
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)
                 is WorkRoute.Thread -> ConnectedChat(model, route.threadId)

@@ -33,6 +33,7 @@ object RouteState {
     private fun encode(route: WorkRoute): JsonObject = buildJsonObject {
         put("w", route.workspaceId)
         when (route) {
+            is WorkRoute.DailyMetrics -> { put("t", "daily-tracker") }
             is WorkRoute.Task -> { put("t", "task"); put("a", route.taskId) }
             is WorkRoute.Doc -> { put("t", "doc"); put("a", route.docId) }
             is WorkRoute.File -> { put("t", "file"); put("a", route.fileId) }
@@ -51,6 +52,7 @@ object RouteState {
         val w = s("w") ?: return null
         val a = s("a"); val b = s("b")
         return when (s("t")) {
+            "daily-tracker" -> WorkRoute.DailyMetrics(w)
             "task" -> a?.let { WorkRoute.Task(w, it) }
             "doc" -> a?.let { WorkRoute.Doc(w, it) }
             "file" -> a?.let { WorkRoute.File(w, it) }

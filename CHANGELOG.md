@@ -1,3 +1,9 @@
+## 0.9.33 (61)
+
+- Find Daily Metrics in Apps before setting up a tracker, then open it directly without visiting Artefacts.
+- Reuse existing private tracker Files and answers, including trackers created from Artefacts; choose when several exist.
+- Offer explicit empty setup only after a complete successful search finds no tracker; keep existing data and lifecycle safeguards.
+
 ## 0.9.32 (60)
 
 - Create an empty daily tracker in Note to self, with its HTML code and JSON records saved as separate NStack Files.

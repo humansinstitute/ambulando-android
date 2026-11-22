@@ -62,7 +62,7 @@ enum class AppSection(val title: String, val icon: ImageVector, val contextBound
     FILES("Files", Icons.Outlined.Folder, contextBound = true, lockable = true),
     AGENTS("Agents", Icons.Outlined.AutoAwesome, contextBound = true, lockable = false),
     CONTEXT("Context", Icons.Outlined.AccountTree, contextBound = true, lockable = false),
-    TOOLBOX("Toolbox", Icons.Outlined.Handyman, contextBound = false, lockable = false);
+    TOOLBOX("Apps", Icons.Outlined.Handyman, contextBound = false, lockable = false);
 
     val key: String get() = name.lowercase()
 

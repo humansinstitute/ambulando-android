@@ -141,6 +141,16 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
         "Adding, editing and placing WApps is done in the web app."
     GroupedSurface(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+            item(key = "napplet:daily-tracker") {
+                GroupedRow(true, true, onClick = { services.open(WorkRoute.DailyMetrics(w.id)) }, enabled = services.unlocked && !w.accessRemoved, tag = "apps.dailyMetrics") {
+                    Icon(Icons.Outlined.Widgets, null, Modifier.size(22.dp), tint = Amb.colors.primary)
+                    Column {
+                        Text("Daily Metrics", fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = Amb.colors.foreground)
+                        Text("Napplet · Your private daily tracker", fontSize = AmbType.caption, color = Amb.colors.mutedForeground)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
             groupedSection(null, rows ?: emptyList(), key = { it.id }, footer = footer) { app, first, last ->
                 val url = app.safeLaunchURL
                 GroupedRow(first, last, onClick = url?.let { u -> { services.openUrl(u.toString()) } }, enabled = url != null, alpha = if (url != null) 1f else 0.6f, tag = "toolbox.app") {
