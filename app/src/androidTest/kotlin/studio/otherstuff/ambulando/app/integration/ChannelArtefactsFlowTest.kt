@@ -38,10 +38,21 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("artefacts.row").performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.title")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("board.title").assertTextContains("Architecture", substring = true)
+            assertFocusedEditor()
             assertBoardVisible(itActivity)
             compose.onNodeWithTag("board.menu").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("board.version")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("board.reload").assertIsDisplayed()
+            androidx.test.espresso.Espresso.pressBack() // dismiss options first
+            compose.onNodeWithTag("board.back").performClick()
+            compose.onNodeWithTag("docs.filter").assertTextEquals("Architecture")
+            compose.onNodeWithTag("section.bar").assertIsDisplayed()
+            compose.onNodeWithTag("artefacts.row").performClick()
+            compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.title")).fetchSemanticsNodes().isNotEmpty() }
+            assertFocusedEditor()
+            androidx.test.espresso.Espresso.pressBack()
+            compose.onNodeWithTag("docs.filter").assertTextEquals("Architecture")
+            compose.onNodeWithTag("section.bar").assertIsDisplayed()
         }
     }
     @Test fun filesListOpensAVisiblyRenderedWhiteboard() {
@@ -59,8 +70,21 @@ class ChannelArtefactsFlowTest {
             compose.waitUntil(30_000) { compose.onAllNodes(hasText("Architecture sketch.excalidraw")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Architecture sketch.excalidraw").performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.title")).fetchSemanticsNodes().isNotEmpty() }
+            assertFocusedEditor()
             assertBoardVisible(window)
+            androidx.test.espresso.Espresso.pressBack()
+            compose.onNodeWithText("Architecture sketch.excalidraw").assertIsDisplayed()
+            compose.onNodeWithTag("section.bar").assertIsDisplayed()
         }
+    }
+
+    private fun assertFocusedEditor() {
+        compose.onNodeWithTag("board.back").assertIsDisplayed()
+        compose.onNodeWithTag("board.menu").assertIsDisplayed()
+        compose.onNodeWithTag("nav.back").assertDoesNotExist()
+        compose.onNodeWithTag("search").assertDoesNotExist()
+        compose.onNodeWithTag("section.bar").assertDoesNotExist()
+        compose.onNodeWithTag("tablet.sidebar").assertDoesNotExist()
     }
 
     @Test fun drawingOnAnEmptyBoardSavesReopensAndKeepsHistoryReadOnly() {

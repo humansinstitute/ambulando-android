@@ -45,7 +45,7 @@ import java.util.UUID
     var uploadChannel by remember { mutableStateOf<String?>(null) }
     var choosingChannel by remember { mutableStateOf(false) }
     val pending by remember(c.id, w.id) { model.store.liveQuery({ it.table == StoreTable.WRITES }) { model.store.reader.workspaceWrites(c.id, w.id).filter { it.kind == WriteKind.FILE_UPLOAD } } }.collectAsState(emptyList())
-    var folder by remember(w.id, model.context) { mutableStateOf<String?>(null) }
+    var folder by androidx.compose.runtime.saveable.rememberSaveable(w.id, model.context) { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<Pair<File, String>?>(null) }
     val folders by remember(w.id, model.context.channelId) { model.store.liveQuery({ it.workspaceId == w.id }) { model.context.channelId?.let { model.store.reader.folders(w.id, it) } ?: emptyList() } }.collectAsState(emptyList())
     val rows by remember(w.id, model.context, fileId) { model.store.liveQuery({ it.workspaceId == w.id }) { if (fileId == null) model.store.reader.files(w.id, model.context) else listOfNotNull(model.store.reader.file(w.id, fileId)) } }.collectAsState(emptyList())

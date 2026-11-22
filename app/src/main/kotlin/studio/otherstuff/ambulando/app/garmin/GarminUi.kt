@@ -59,7 +59,8 @@ fun GarminSetup(model: AppModel) {
                 Text(if (remote.enabled && remote.listening) "Watch control on" else if (binding == null) "Set up your watch" else "Watch control off", style = MaterialTheme.typography.titleMedium)
                 Text(binding?.destination?.label ?: "Choose where your voice messages go.", Modifier.testTag("watch.saved"))
                 binding?.let { Text(remote.devices.firstOrNull { device -> device.deviceIdentifier == it.device }?.friendlyName ?: "Saved watch", style = MaterialTheme.typography.bodySmall) }
-                remote.sessions.lastOrNull()?.let { Text("${it.status.replaceFirstChar(Char::uppercase)} · ${it.detail}", style = MaterialTheme.typography.bodySmall) }
+                Text(remote.readiness, Modifier.testTag("watch.currentReadiness"), style = MaterialTheme.typography.bodySmall)
+                remote.sessions.lastOrNull()?.let { Text("Last request: ${it.status} · ${it.detail}", Modifier.testTag("watch.lastRequest"), style = MaterialTheme.typography.bodySmall) }
             }
         }
         OutlinedTextField(prompt, { if (it.length <= 4000) prompt = it }, label = { Text("Default prompt") },

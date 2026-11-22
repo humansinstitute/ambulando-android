@@ -28,6 +28,7 @@ import java.util.UUID
 
 @Composable internal fun BoardEditor(model: AppModel, board: BoardReference, title: String, done: () -> Unit) {
     val c = model.connection ?: return; val w = model.workspace ?: return
+    studio.otherstuff.ambulando.app.ui.shell.OwnEditorNavigation()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var state by remember(board.fileId) { mutableStateOf(BoardState()) }
@@ -48,7 +49,7 @@ import java.util.UUID
     fun stateNow(): BoardState? = latest[0]
     val controller = remember(board.fileId) { BoardController(board.fileId, title, c.signerNpub, transport, model.boardDrafts(), { value -> scope.launch { state = value } }) }
     fun close() { scope.launch { controller.suspendBoard(); controller.detach(session); done() } }
-    BackHandler { close() }
+    BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current) { close() }
     DisposableEffect(controller) {
         EditorWebHost.create(context, "index.html", setOf("board"), 32 * 1024 * 1024) { _, raw ->
             // The page's own Save button (sol `action`) saves only while the controller's state still allows it.

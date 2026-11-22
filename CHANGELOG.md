@@ -1,3 +1,14 @@
+## 0.9.31 (59)
+
+- Focus whiteboards opened from Files or Artefacts on one native Back/title/status/options toolbar, with more space for drawing.
+- Restore app navigation on exit and retain the existing local draft and list navigation behavior.
+
+## 0.9.30 (58)
+
+- Recover the consented Garmin watch listener when returning to Ambulando after the listener stops, without restarting audio or replaying a Start.
+- End interrupted watch requests cleanly so a lost wrist receipt cannot block future recordings; keep interrupted audio for review.
+- Show current watch readiness separately from the last request and distinguish listener and consent failures in diagnostics.
+
 ## 0.9.29 (57)
 
 - Show the Excalidraw drawing and toolbar when opening a whiteboard from Files or Artefacts.

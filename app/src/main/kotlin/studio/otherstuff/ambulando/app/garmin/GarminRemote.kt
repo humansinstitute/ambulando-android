@@ -119,6 +119,20 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         binding = journal.data.binding
         link.bind(device.deviceIdentifier)
     }
+    /** Restore only the consented connected-device listener from a visible Activity; never capture audio. */
+    fun recoverListener(activity: androidx.activity.ComponentActivity) {
+        if (!activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) || listening || !restoreAllowed()) return
+        try { startListener() }
+        catch (_: Exception) {
+            diagnostic("A3 listener recovery failed", true)
+            readiness = "Watch listener could not restart. Enable watch control again in Settings."
+        }
+    }
+    private fun startListener() {
+        diagnostic("listener requested")
+        androidx.core.content.ContextCompat.startForegroundService(context, Intent(context, WatchControlService::class.java)
+            .putExtra(AppEnvironment.SAMPLE_EXTRA, model.environment.isSample))
+    }
     /** Settings calls this only after the explicit consent dialog, while its Activity is resumed. */
     fun enable(activity: androidx.activity.ComponentActivity) {
         check(activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) { "Keep Settings visible while enabling watch control." }
@@ -130,8 +144,7 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         enabled = true
         authorityProblem = null
         try {
-            androidx.core.content.ContextCompat.startForegroundService(context, Intent(context, WatchControlService::class.java)
-                .putExtra(AppEnvironment.SAMPLE_EXTRA, model.environment.isSample))
+            startListener()
         } catch (e: Exception) { disable(); throw e }
     }
     fun disable(reason: String = "Watch control stopped. Saved destination and drafts kept.") {
@@ -164,8 +177,18 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
         }
     }
     internal fun restoreAllowed(): Boolean = enabled && journal.data.consent?.binding == binding && permissionProblem() == null
-    internal fun listenerStarted() { listening = true; binding?.let { link.bind(it.device) }; link.connect() }
-    internal fun listenerStopped() { listening = false; launchable.clear(); awaitingReceipt.clear(); replies.reset(); link.stop() }
+    internal fun listenerStarted() { diagnostic("listener started"); listening = true; binding?.let { link.bind(it.device) }; link.connect() }
+    internal fun listenerStopped() {
+        diagnostic("listener stopped")
+        listening = false
+        launchable.clear(); awaitingReceipt.clear()
+        // Clearing the receipt map alone strands waiting sessions: their timeout no longer owns them.
+        sessions.filter { it.status in setOf("waiting", "recording") }.forEach { s ->
+            if (model.voice.state.value?.id == s.recording) model.voice.stop()
+            update(s.session, "error", "Watch listener stopped. Review retained audio on phone, then choose New recording.")
+        }
+        replies.reset(); link.stop()
+    }
     fun permissionProblem(): String? {
         val required = buildList {
             add(android.Manifest.permission.RECORD_AUDIO)
@@ -228,7 +251,14 @@ class GarminRemote(private val context: Context, private val model: AppModel) {
                     runCatching { notifyConfirmation() }
                     return
                 }
-                check(listening && journal.data.consent?.binding == binding) { "Enable watch control in phone Settings, then choose New recording on watch." }
+                if (!listening) {
+                    diagnostic("A1 listener stopped", true)
+                    error("Watch listener stopped. Open Ambulando to reconnect, then choose New recording on watch.")
+                }
+                if (journal.data.consent?.binding != binding) {
+                    diagnostic("A2 consent mismatch", true)
+                    error("Saved watch consent changed. Enable watch control in Settings, then choose New recording.")
+                }
                 check(permissionProblem() == null) { permissionProblem().orEmpty() }
                 check(freshWatchStart(id, maxOf(processStartedSeconds, journal.data.consent!!.enabledAtSeconds), System.currentTimeMillis() / 1000)) {
                     "Old Start or watch clock mismatch. Check watch time, then choose New recording."

@@ -22,6 +22,9 @@ class MainActivity : ComponentActivity() {
         model.restoreNavigation = environment.restoresNavigation(intent)
         lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
             override fun onStart(owner: androidx.lifecycle.LifecycleOwner) { model.foreground(true) }
+            override fun onResume(owner: androidx.lifecycle.LifecycleOwner) {
+                if (!BuildConfig.GRANDPARENT_CHAT) model.garmin.recoverListener(this@MainActivity)
+            }
             override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
                 model.foreground(false)
                 if (!environment.isSample) studio.otherstuff.ambulando.app.background.BackgroundScheduler.requestFinishSending(applicationContext)

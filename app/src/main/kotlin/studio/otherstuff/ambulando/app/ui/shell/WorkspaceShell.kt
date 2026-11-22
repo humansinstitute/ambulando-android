@@ -116,6 +116,24 @@ class SectionStacks {
  */
 val LocalRouteExit = staticCompositionLocalOf<(() -> Unit)?> { null }
 
+/** A mounted editor owns both its chrome and Back handling; scoped to its section host. */
+@Stable
+internal class EditorNavigationState {
+    var owner by mutableStateOf<Any?>(null)
+}
+internal val LocalEditorActive = staticCompositionLocalOf { true }
+internal val LocalEditorNavigation = staticCompositionLocalOf<EditorNavigationState?> { null }
+
+@Composable
+internal fun OwnEditorNavigation() {
+    val navigation = LocalEditorNavigation.current
+    androidx.compose.runtime.DisposableEffect(navigation) {
+        val owner = Any()
+        navigation?.owner = owner
+        onDispose { if (navigation?.owner === owner) navigation.owner = null }
+    }
+}
+
 /** What the shell's chrome shows, read by the app model. */
 data class ShellChromeState(
     val section: AppSection,
@@ -171,6 +189,8 @@ fun WorkspaceShell(
 ) {
     val amb = Amb.colors
     val opened = remember { mutableStateListOf<AppSection>() }
+    val editors = remember { AppSection.entries.associateWith { EditorNavigationState() } }
+    val focusedEditor = editors.getValue(chrome.section).owner != null
     if (chrome.section !in opened) opened.add(chrome.section)
     Box(Modifier.fillMaxSize().background(amb.background)) {
         // As on the iPad (`TabletNavigation`): a window this wide keeps the navigation beside the content; the menu button
@@ -179,7 +199,7 @@ fun WorkspaceShell(
         // Read from the window's configuration, not measured: no subcomposition, so the section hosts compose in the ordinary pass.
         val tablet = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp >= TabletMinWidth
         var folded by rememberSaveable { mutableStateOf(false) }
-        val sidebarShown = tablet && !folded
+        val sidebarShown = tablet && !folded && !focusedEditor
         val shellActions = remember(actions, tablet) {
             if (!tablet) actions else object : ShellActions by actions { override fun openSidebar() { folded = !folded } }
         }
@@ -194,7 +214,7 @@ fun WorkspaceShell(
                     content = {
                         opened.forEach { section ->
                             Box(Modifier.fillMaxSize().then(if (section != chrome.section) Modifier.clearAndSetSemantics { } else Modifier)) {
-                                SectionStackView(section, chrome, shellActions, stacks, sectionRoot, routeScreen, pinControl)
+                                SectionStackView(section, chrome, shellActions, stacks, sectionRoot, routeScreen, pinControl, editors.getValue(section))
                             }
                         }
                     },
@@ -210,23 +230,23 @@ fun WorkspaceShell(
                 // permanent sidebar takes the bar's place on a wide window.
                 val chatKeyboardOpen = chrome.section == AppSection.CHAT &&
                     androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
-                if (!sidebarShown && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
+                if (!focusedEditor && !sidebarShown && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
                     SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect)
                 }
             }
         }
         overlay()
-        AnimatedVisibility(chrome.sidebarOpen && !tablet, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(chrome.sidebarOpen && !tablet && !focusedEditor, enter = fadeIn(), exit = fadeOut()) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)).clickable(onClick = actions::closeSidebar)
                 .semantics { contentDescription = "Close navigation" }.testTag("sidebar.backdrop"))
         }
-        AnimatedVisibility(chrome.sidebarOpen && !tablet, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
+        AnimatedVisibility(chrome.sidebarOpen && !tablet && !focusedEditor, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
             Box(Modifier.fillMaxHeight().statusBarsPadding()
                 .pointerInput(Unit) { detectHorizontalDragGestures { _, drag -> if (drag < -24) actions.closeSidebar() } }) {
                 sidebar()
             }
         }
-        BackHandler(enabled = chrome.sidebarOpen && !tablet) { actions.closeSidebar() }
+        BackHandler(enabled = chrome.sidebarOpen && !tablet && !focusedEditor) { actions.closeSidebar() }
     }
 }
 
@@ -272,13 +292,15 @@ private fun SectionStackView(
     sectionRoot: @Composable (AppSection) -> Unit,
     routeScreen: @Composable (AppSection, WorkRoute) -> Unit,
     pinControl: @Composable (WorkRoute?) -> Unit,
+    editor: EditorNavigationState,
 ) {
     val rootState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val stack = stacks.of(section)
     val top = stack.lastOrNull()
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        if (top?.fullScreen != true) TopBar(section, chrome, actions, canGoBack = top != null, route = top, pinControl = pinControl, onBack = { stacks.pop(section) })
-        if (top == null && section != AppSection.TOOLBOX) {
+    val focusedEditor = editor.owner != null
+    Column(Modifier.fillMaxSize().then(if (focusedEditor) Modifier else Modifier.statusBarsPadding())) {
+        if (!focusedEditor && top?.fullScreen != true) TopBar(section, chrome, actions, canGoBack = top != null, route = top, pinControl = pinControl, onBack = { stacks.pop(section) })
+        if (!focusedEditor && top == null && section != AppSection.TOOLBOX) {
             ContextBar(
                 workspaceLabel = chrome.workspaceLabel, scopeName = chrome.scopeName, channelLabel = chrome.channelLabel, isHome = chrome.isHome,
                 lockable = section.lockable, locked = chrome.viewLocked && chrome.section == section, sectionTitle = section.title,
@@ -286,15 +308,17 @@ private fun SectionStackView(
                 tint = chrome.workspaceTint,
             )
         }
-        Banners(chrome, actions)
+        if (!focusedEditor) Banners(chrome, actions)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (top == null) rootState.SaveableStateProvider(section.key) { sectionRoot(section) } else androidx.compose.runtime.key(stack.size, top) {
-                CompositionLocalProvider(LocalRouteExit provides { stacks.pop(section) }) { routeScreen(section, top) }
+            CompositionLocalProvider(LocalEditorNavigation provides editor, LocalEditorActive provides (chrome.section == section)) {
+                if (top == null) rootState.SaveableStateProvider(section.key) { sectionRoot(section) } else androidx.compose.runtime.key(stack.size, top) {
+                    CompositionLocalProvider(LocalRouteExit provides { stacks.pop(section) }) { routeScreen(section, top) }
+                }
             }
         }
     }
     // Back pops this section's stack while it is the active one.
-    BackHandler(enabled = top != null && chrome.section == section && !chrome.sidebarOpen) { stacks.pop(section) }
+    BackHandler(enabled = !focusedEditor && top != null && chrome.section == section && !chrome.sidebarOpen) { stacks.pop(section) }
 }
 
 @Composable
