@@ -20,37 +20,90 @@ import studio.otherstuff.ambulando.core.transport.*
 import java.io.File
 import java.util.UUID
 
-@Composable internal fun CreateRichArtefact(model: AppModel) {
+/** The primary Artefacts + owns every type; rich types still use the normal staged File write queue. */
+@Composable internal fun CreateArtefact(model: AppModel, trigger: @Composable (open: () -> Unit, enabled: Boolean) -> Unit) {
     val c = model.connection ?: return; val w = model.workspace ?: return
-    var showing by remember { mutableStateOf(false) }
-    var type by remember { mutableStateOf(ArtefactType.WHITEBOARD) }
-    var title by remember { mutableStateOf("") }
-    var channel by remember(model.context) { mutableStateOf(model.context.channelId) }
     val services = LocalAppServices.current
-    TextButton(onClick = { showing = true }, enabled = services.unlocked && !w.accessRemoved, modifier = Modifier.testTag("artefacts.new")) { Text("New artefact") }
-    if (showing) AlertDialog(onDismissRequest = { showing = false }, title = { Text("New artefact") }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
-            OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.testTag("artefacts.title"))
-            Row { ArtefactType.entries.forEach { option -> FilterChip(type == option, { type = option }, label = { Text(option.label) }) } }
-            model.channels.filter { !it.accessRemoved && (model.context.scopeId == null || it.scopeId == model.context.scopeId) }.forEach { row ->
-                TextButton(onClick = { channel = row.id }) { Text((if (channel == row.id) "✓ " else "") + row.name) }
+    val boundary = listOf(c.id, w.id, model.context.scopeId, model.context.channelId)
+    var showing by remember(boundary) { mutableStateOf(false) }
+    // null is an ordinary Document, which retains its existing DOC_CREATE storage and editor.
+    var type by remember(boundary) { mutableStateOf<ArtefactType?>(null) }
+    var title by remember(boundary) { mutableStateOf("") }
+    var channel by remember(boundary) { mutableStateOf(model.context.channelId) }
+    var submitting by remember(boundary) { mutableStateOf(false) }
+    var error by remember(boundary) { mutableStateOf<String?>(null) }
+    val destinations = model.channels.filter {
+        it.workspaceId == w.id && !it.accessRemoved &&
+            (model.context.scopeId == null || it.scopeId == model.context.scopeId) &&
+            (model.context.channelId == null || it.id == model.context.channelId)
+    }
+    val enabled = services.unlocked && !w.accessRemoved && destinations.isNotEmpty()
+    val canCreate = enabled && !submitting && title.isNotBlank() && destinations.any { it.id == channel }
+    trigger({ if (enabled) { error = null; showing = true } }, enabled)
+    if (showing) AlertDialog(
+        onDismissRequest = { if (!submitting) showing = false },
+        title = { Text("New artefact") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Type")
+                // Vertical choices stay legible at phone widths and large font sizes.
+                (listOf<ArtefactType?>(null) + ArtefactType.entries).forEach { option ->
+                    val wire = option?.wire ?: "document"
+                    val label = option?.label ?: "Document"
+                    FilterChip(type == option, { type = option }, enabled = !submitting,
+                        label = { Text(label) }, modifier = Modifier.fillMaxWidth().testTag("artefacts.type.$wire"))
+                }
+                OutlinedTextField(title, { title = it }, enabled = !submitting, singleLine = true,
+                    label = { Text("Title") }, modifier = Modifier.fillMaxWidth().testTag("artefacts.title"))
+                Text("Channel")
+                destinations.forEach { row ->
+                    TextButton(onClick = { channel = row.id }, enabled = !submitting,
+                        modifier = Modifier.fillMaxWidth().testTag("artefacts.destination.${row.id}")) {
+                        Text((if (channel == row.id) "✓ " else "") + row.name)
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("artefacts.createError")) }
             }
-        }
-    }, confirmButton = {
-        TextButton(enabled = title.isNotBlank() && model.channels.any { it.id == channel && !it.accessRemoved }, modifier = Modifier.testTag("artefacts.create"), onClick = {
-            val destination = channel ?: return@TextButton
-            val kind = type; val name = title.trim()
-            model.act {
-                val staged = "artefact-${UUID.randomUUID()}"
-                withContext(Dispatchers.IO) { model.writes.staging.mkdirs(); File(model.writes.staging, staged).writeText(kind.initialContent()) }
-                model.writes.submit(WriteIntent(WriteKind.FILE_UPLOAD, null, buildJsonObject {
-                    put("channel_id", destination); put("display_name", "$name.${kind.extension}"); put("file_name", "artefact.${kind.extension}")
-                    put("content_type", kind.mime); put("staged", staged); put("metadata", kind.metadata())
-                }), c, w)
-            }
-            showing = false
-        }) { Text("Create") }
-    }, dismissButton = { TextButton(onClick = { showing = false }) { Text("Cancel") } })
+        },
+        confirmButton = {
+            TextButton(enabled = canCreate, modifier = Modifier.testTag("artefacts.create"), onClick = {
+                if (submitting || !canCreate) return@TextButton
+                val destination = channel ?: return@TextButton
+                val kind = type; val name = title.trim()
+                val writes = model.writes // Keep staging and queue ownership on the workspace where + was pressed.
+                // Disable synchronously: a second tap must not enqueue a second creation.
+                submitting = true; error = null
+                model.act {
+                    val staged = "artefact-${UUID.randomUUID()}"
+                    var queued = false
+                    try {
+                        withContext(Dispatchers.IO) {
+                            writes.staging.mkdirs()
+                            File(writes.staging, staged).writeText(kind?.initialContent() ?: "# $name\n")
+                        }
+                        writes.submit(WriteIntent(if (kind == null) WriteKind.DOC_CREATE else WriteKind.FILE_UPLOAD, null, buildJsonObject {
+                            put("channel_id", destination); put("staged", staged)
+                            if (kind == null) {
+                                put("title", name); put("file_name", "document.md"); put("content_type", "text/markdown")
+                            } else {
+                                put("display_name", "$name.${kind.extension}"); put("file_name", "artefact.${kind.extension}")
+                                put("content_type", kind.mime); put("metadata", kind.metadata())
+                            }
+                        }), c, w)
+                        queued = true
+                        // This means queued, never an unconfirmed created-success message.
+                        showing = false; title = ""
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (_: Exception) { error = "Could not queue this artefact. Your title is kept; try again." }
+                    finally {
+                        if (!queued) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { File(writes.staging, staged).delete() }
+                        submitting = false
+                    }
+                }
+            }) { Text(if (submitting) "Queuing…" else "Create") }
+        },
+        dismissButton = { TextButton(enabled = !submitting, onClick = { showing = false }, modifier = Modifier.testTag("artefacts.cancel")) { Text("Cancel") } },
+    )
 }
 
 /** Direct File route, shared by Docs, chat mentions and pins; never needs a canvas. */

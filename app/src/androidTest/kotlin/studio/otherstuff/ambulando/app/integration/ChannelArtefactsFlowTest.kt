@@ -6,6 +6,11 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
+import studio.otherstuff.ambulando.core.store.*
+import studio.otherstuff.ambulando.core.surfaces.*
+import studio.otherstuff.ambulando.core.transport.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -99,11 +104,32 @@ class ChannelArtefactsFlowTest {
             val model = app.activeModel!!
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
-            val boards = model.sampleTower!!.boards
-            boards.externalSave(SampleIds.BOARD_FILE, """{"type":"excalidraw","version":2,"elements":[],"appState":{},"files":{}}""".toByteArray(), SampleIds.ANA)
-            val before = boards.versionCount(SampleIds.BOARD_FILE)
-            fun open() { compose.runOnIdle { model.editorBoard = studio.otherstuff.ambulando.core.surfaces.BoardReference(SampleIds.BOARD_FILE, SampleIds.BOARD_VERSION, before, "", 0, null, true) to "Drawing test" } }
+            compose.runOnIdle { model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.DOCS }
+            compose.onNodeWithTag("docs.filter").performTextReplacement("")
+            compose.onNodeWithTag("artefacts.filter.all").performClick()
+            val name = "Primary whiteboard " + System.currentTimeMillis()
+            compose.onNodeWithTag("artefacts.new").assertContentDescriptionEquals("New artefact").performClick()
+            compose.onNodeWithTag("docs.new").assertDoesNotExist()
+            compose.onNodeWithTag("artefacts.type.document").assertIsDisplayed()
+            compose.onNodeWithTag("artefacts.type.excalidraw").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("artefacts.type.html").assertIsDisplayed()
+            compose.onNodeWithTag("artefacts.title").performTextInput(name)
+            compose.onNodeWithTag("artefacts.create").performClick()
+            compose.onNodeWithTag("docs.filter").performTextReplacement(name)
+            compose.waitUntil(30_000) { compose.onAllNodes(hasText("$name.excalidraw")).fetchSemanticsNodes().isNotEmpty() }
+            val api = model.towerAPI(model.connection!!)
+            val file = runBlocking { api.channelFiles(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.single { it.displayName == "$name.excalidraw" } }
+            assertEquals(ArtefactType.WHITEBOARD, ArtefactType.of(file))
+            assertEquals(SampleIds.GENERAL, file.channelId)
+            fun versions() = runBlocking { api.fileVersions(SampleIds.STUDIO, model.workspace!!.appNpub, file.id) }
+            val before = versions().versions.size
+            assertEquals(1, before)
+            fun open() {
+                compose.onNode(hasTestTag("artefacts.row") and hasAnyDescendant(hasText("$name.excalidraw")), useUnmergedTree = true).performClick()
+                compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.title")).fetchSemanticsNodes().isNotEmpty() }
+            }
             open()
+            assertFocusedEditor()
             val web = awaitBoardPage(window)
             page(web, "document.querySelector('[data-testid=toolbar-rectangle]').click(); true")
             val position = IntArray(2)
@@ -121,10 +147,12 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("board.saveNote").performClick()
             compose.onNodeWithTag("board.note.field").performTextReplacement("Rectangle from touch")
             compose.onNodeWithTag("board.note.confirm").performClick()
-            compose.waitUntil(20_000) { boards.versionCount(SampleIds.BOARD_FILE) == before + 1 }
-            org.junit.Assert.assertEquals(1, org.json.JSONObject(String(boards.currentBytes(SampleIds.BOARD_FILE)!!)).getJSONArray("elements").length())
+            compose.waitUntil(20_000) { versions().versions.size == before + 1 }
+            val saved = versions().let { list -> list.versions.single { it.id == list.currentVersionId } }
+            val bytes = runBlocking { api.fileVersionBytes(SampleIds.STUDIO, model.workspace!!.appNpub, file.id, saved) }
+            assertEquals(1, org.json.JSONObject(String(bytes)).getJSONArray("elements").length())
             compose.onNodeWithTag("board.back").performClick()
-            compose.waitUntil(20_000) { model.editorBoard == null }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("artefacts.new")).fetchSemanticsNodes().isNotEmpty() }
             open()
             assertBoardVisible(window)
             compose.onNodeWithTag("board.menu").performClick()
@@ -153,7 +181,7 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("artefacts.new").performClick()
             val name = "HTML runtime " + System.currentTimeMillis()
             compose.onNodeWithTag("artefacts.title").performTextInput(name)
-            compose.onNode(hasText("HTML") and hasAnyAncestor(isDialog())).performClick()
+            compose.onNodeWithTag("artefacts.type.html").performClick()
             compose.onNode(hasText("general", substring = true) and hasAnyAncestor(isDialog())).performClick()
             compose.onNodeWithTag("artefacts.create").assertIsEnabled().performClick()
             compose.onNodeWithTag("docs.filter").performTextReplacement("")
@@ -170,6 +198,63 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithText("v2").assertIsDisplayed()
             compose.onNodeWithText("v1").performClick()
             compose.onNodeWithTag("artefacts.editSource").assertTextContains("Restore source")
+        }
+    }
+
+    @Test fun primaryDocumentCancellationAndOfflineWhiteboardRetryKeepOneRecord() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<MainActivity>(intent).use {
+            val app = context.applicationContext as AmbulandoApplication
+            compose.waitUntil(20_000) { app.activeModel?.workspaces?.any { it.id == SampleIds.STUDIO } == true }
+            val model = app.activeModel!!
+            compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
+            compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
+            compose.runOnIdle { model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.DOCS }
+            compose.onNodeWithTag("docs.filter").performTextReplacement("")
+            compose.onNodeWithTag("artefacts.filter.all").performClick()
+            val suffix = System.currentTimeMillis().toString()
+            val docName = "Primary document $suffix"
+            compose.onNodeWithTag("artefacts.new").performClick()
+            compose.onNodeWithTag("artefacts.type.document").performClick()
+            compose.onNodeWithTag("artefacts.create").assertIsNotEnabled()
+            compose.onNodeWithTag("artefacts.title").performTextInput("   ")
+            compose.onNodeWithTag("artefacts.create").assertIsNotEnabled()
+            compose.onNodeWithTag("artefacts.title").performTextReplacement(docName)
+            // Current channel bounds the destination, rather than offering another channel in the same scope.
+            compose.onNodeWithTag("artefacts.destination.${SampleIds.GENERAL}").assertIsDisplayed()
+            assertEquals(1, compose.onAllNodes(hasTestTag("artefacts.destination.${SampleIds.GENERAL}")).fetchSemanticsNodes().size)
+            compose.onNodeWithTag("artefacts.cancel").performClick()
+            assertTrue(runBlocking { model.store.reader.workspaceWrites(model.connection!!.id, SampleIds.STUDIO).none { it.string("title") == docName } })
+            compose.onNodeWithTag("artefacts.new").performClick()
+            compose.onNodeWithTag("artefacts.title").assertTextContains(docName)
+            // Invoke the same displayed button callback twice before recomposition: only one write may be queued.
+            compose.onNodeWithTag("artefacts.create").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { click -> click(); click() }
+            compose.onNodeWithTag("docs.filter").performTextReplacement(docName)
+            compose.waitUntil(30_000) { compose.onAllNodes(hasText(docName)).fetchSemanticsNodes().isNotEmpty() }
+            val api = model.towerAPI(model.connection!!)
+            val doc = runBlocking { api.channelDocs(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.single { it.title == docName } }
+            assertEquals(SampleIds.GENERAL, doc.channelId)
+            assertEquals(SampleIds.SCOPE_AMBULANDO, doc.scopeId)
+            assertTrue(runBlocking { api.channelFiles(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.none { it.displayName.startsWith(docName) } })
+            compose.onNodeWithTag("docs.filter").performTextReplacement("")
+            val boardName = "Retry whiteboard $suffix"
+            compose.onNodeWithTag("artefacts.new").performClick()
+            compose.onNodeWithTag("artefacts.type.excalidraw").performClick()
+            compose.onNodeWithTag("artefacts.title").performTextReplacement(boardName)
+            compose.runOnIdle { model.sampleTower!!.offline = true }
+            compose.onNodeWithTag("artefacts.create").performClick()
+            compose.onNodeWithTag("docs.filter").performTextReplacement(boardName)
+            compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("write.retry")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("write.status").assertIsDisplayed()
+            assertTrue(runBlocking { model.store.reader.files(SampleIds.STUDIO).none { it.displayName == "$boardName.excalidraw" } })
+            val pending = runBlocking { model.store.reader.workspaceWrites(model.connection!!.id, SampleIds.STUDIO).single { it.string("display_name") == "$boardName.excalidraw" } }
+            assertEquals(WriteState.RETRYING, pending.state)
+            compose.runOnIdle { model.sampleTower!!.offline = false }
+            compose.onNodeWithTag("write.retry").performClick()
+            compose.waitUntil(30_000) { compose.onAllNodes(hasText("$boardName.excalidraw")).fetchSemanticsNodes().isNotEmpty() && compose.onAllNodes(hasTestTag("write.retry")).fetchSemanticsNodes().isEmpty() }
+            assertEquals(1, runBlocking { api.channelFiles(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.count { it.displayName == "$boardName.excalidraw" } })
+            assertTrue(runBlocking { model.store.reader.workspaceWrites(model.connection!!.id, SampleIds.STUDIO).none { it.id == pending.id } })
         }
     }
 

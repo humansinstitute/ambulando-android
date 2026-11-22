@@ -1,3 +1,9 @@
+## 0.9.36 (64)
+
+- Make the prominent Artefacts + offer Document, Whiteboard and HTML together, with one creation action.
+- Keep creation in the selected channel or scope and show pending rich artefacts with retry status.
+- Preserve document storage, whiteboard drawing and version history, and isolated HTML source editing.
+
 ## 0.9.35 (63)
 
 - Improve Daily Metrics phone layout with larger answer buttons, clearer dates and save status, and suitable number keyboards.

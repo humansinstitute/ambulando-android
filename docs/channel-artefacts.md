@@ -1,7 +1,7 @@
 # Channel artefacts
 
 The Artefacts section includes ordinary documents and rich Files in the selected channel or scope. Filter by document,
-whiteboard or HTML, search by title, create a whiteboard or HTML File, and pin it for direct opening from Deck.
+whiteboard or HTML, search by title, use the prominent + (“New artefact”) to choose Document, Whiteboard or HTML, and pin it for direct opening from Deck.
 Documents retain their existing storage and editor. Canvases remain available and refer to the same Files.
 
 Rich Files carry `metadata.artefact` with `schema_version:1`, `format_version:1`, `type` (`html` or `excalidraw`) and
@@ -54,3 +54,12 @@ The logical app route is `/flight-deck?workspaceid=<workspace UUID>&napplet=dail
 `napplet:daily-tracker`. Native in-app links support relative routes and HTTPS routes on the selected Tower origin;
 other frontend origins continue to open in the existing browser. Android has no new OS domain association or shared
 web placement preferences. Apps retains existing WApp placement behavior (configured in the web app).
+
+The primary + has the accessibility label “New artefact” and test tag `artefacts.new`. Its single scrollable dialog
+shows all three type choices before Title and Channel. Channel destinations are limited to the current channel,
+or current scope when browsing a scope, and exclude removed access. Blank titles cannot be submitted.
+Cancel keeps the entered title without queuing anything. Create queues the existing document or staged File write;
+pending/retrying/failed rich creations stay visible in Artefacts with the normal Retry/Discard actions.
+No “created” confirmation is shown before server acknowledgement. `ChannelArtefactsFlowTest` clicks this primary +
+to create all three types, checks persistence through the fixture API, draws/saves/reopens the created whiteboard,
+and checks cancellation and an offline upload retry without a duplicate File.

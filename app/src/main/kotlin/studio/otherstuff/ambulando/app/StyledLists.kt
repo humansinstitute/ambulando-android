@@ -28,10 +28,11 @@ import studio.otherstuff.ambulando.core.sync.refreshFiles
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.surfaces.*
 import studio.otherstuff.ambulando.core.transport.DocRecord
+import studio.otherstuff.ambulando.core.transport.obj
 
 // The Docs, Toolbox, Agents and Context lists, drawn as the iPhone's inset-grouped lists (see docs/visual-parity.md).
 
-/** Documents: a filter and New document above rows of icon, title, then #channel, time and Unsaved edits (iOS `DocsView`). */
+/** Artefacts: one primary creation entry for documents, whiteboards and HTML, above the shared list. */
 @Composable internal fun DocsList(model: AppModel) {
     val w = model.workspace ?: return
     val c = model.connection
@@ -43,8 +44,12 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
     val files by remember(w.id, model.context) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.files(w.id, model.context) } }.collectAsState(emptyList())
     LaunchedEffect(c?.id, w.id, model.context) { c?.let { model.sync.refreshFiles(it, w, model.context.scopeId) } }
     val rows by remember(w.id, model.context) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.docs(w.id, model.context) } }.collectAsState(null)
-    val creating by remember(c?.id, w.id) { model.store.liveQuery({ it.table == StoreTable.WRITES }) {
-        if (c == null) emptyList() else model.store.reader.workspaceWrites(c.id, w.id).filter { it.kind == WriteKind.DOC_CREATE }
+    val creating by remember(c?.id, w.id, model.context, model.channels) { model.store.liveQuery({ it.table == StoreTable.WRITES }) {
+        if (c == null) emptyList() else model.store.reader.workspaceWrites(c.id, w.id).filter {
+            (it.kind == WriteKind.DOC_CREATE || (it.kind == WriteKind.FILE_UPLOAD && it.payloadObject.obj("metadata")?.obj("artefact") != null)) &&
+                (model.context.channelId == null || it.string("channel_id") == model.context.channelId) &&
+                (model.context.scopeId == null || model.channels.any { row -> row.id == it.string("channel_id") && row.scopeId == model.context.scopeId })
+        }
     } }.collectAsState(emptyList())
     val drafts by remember(c?.id, w.id) { model.store.liveQuery({ it.table == StoreTable.DOC_DRAFTS }) {
         if (c == null) emptySet() else model.store.reader.docDraftIds(c.id, w.id)
@@ -57,8 +62,8 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
     GroupedSurface(Modifier.fillMaxSize()) {
         ListHeaderBar {
             FilterField(filter, { filter = it }, "Filter artefacts", Modifier.weight(1f), tag = "docs.filter")
-            CreateDocument(model) { open -> IconButton(onClick = open, modifier = Modifier.testTag("docs.new")) {
-                Icon(Icons.Filled.AddCircle, "New document", Modifier.size(28.dp), tint = Amb.colors.primary)
+            CreateArtefact(model) { open, enabled -> IconButton(onClick = open, enabled = enabled, modifier = Modifier.testTag("artefacts.new")) {
+                Icon(Icons.Filled.AddCircle, "New artefact", Modifier.size(28.dp), tint = Amb.colors.primary)
             } }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -66,13 +71,12 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
                 androidx.compose.material3.FilterChip(typeFilter == value, { typeFilter = value }, label = { Text(label) }, modifier = Modifier.testTag("artefacts.filter.$value"))
             }
         }
-        CreateRichArtefact(model)
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 24.dp)) {
             groupedSection(null, creating, key = { "creating:${it.id}" }) { item, first, last ->
                 GroupedRow(first, last) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(item.string("title") ?: "Document", fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = Amb.colors.foreground)
-                        WriteStatusLine(item, "New document", actions)
+                        Text(item.string("title") ?: item.string("display_name") ?: "Artefact", fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = Amb.colors.foreground)
+                        WriteStatusLine(item, if (item.kind == WriteKind.DOC_CREATE) "New document" else "New artefact", actions)
                     }
                 }
             }
