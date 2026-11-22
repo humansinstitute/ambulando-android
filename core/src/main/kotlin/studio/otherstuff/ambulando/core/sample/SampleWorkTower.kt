@@ -240,9 +240,9 @@ class SampleWorkTower(
         state.rows("recoveries").filter { it["doc_id"] == doc }.forEach { state.put("recoveries", it["id"] as String, null) }
     }
 
-    fun seedFile(channel: String, scope: String, name: String, bytes: ByteArray, contentType: String, folder: String? = null): String = mutate {
+    fun seedFile(channel: String, scope: String, name: String, bytes: ByteArray, contentType: String, folder: String? = null, fixedId: String? = null): String = mutate {
         val objectId = storeObject(bytes, contentType, name)
-        val id = newUUID()
+        val id = fixedId ?: newUUID()
         state.put("files", id, fileRow(id, channel, scope, objectId, name, folder, now()))
         id
     }
@@ -274,7 +274,7 @@ class SampleWorkTower(
         val meta = state.row("objects", objectId) ?: LinkedHashMap()
         return linkedMapOf(
             "id" to id, "workspace_id" to workspaceId, "scope_id" to scope, "channel_id" to channel, "folder_id" to folder, "storage_object_id" to objectId,
-            "current_version_id" to null, "display_name" to name, "description" to null, "metadata" to emptyMap<String, Any>(), "row_version" to 1L,
+            "can_write" to true, "content_type" to meta["content_type"], "current_version_id" to null, "display_name" to name, "description" to null, "metadata" to emptyMap<String, Any>(), "row_version" to 1L,
             "created_at" to stamp, "updated_at" to stamp, "archived_at" to null, "record_state" to "active", "deleted_at" to null,
             "object" to mapOf(
                 "object_id" to objectId,
@@ -626,9 +626,10 @@ class SampleWorkTower(
                 }
                 if (state.rows("files").any { it["storage_object_id"] == objectId }) return errorReply(409, "file_storage_object_conflict")
                 val id = newUUID()
-                val row = fileRow(id, p[1], null, objectId, o["display_name"].asString() ?: "file", o["folder_id"].asString(), now())
-                if (lineage != null) {
-                    row["metadata"] = linkedMapOf("text_attachment_lineage" to lineage)
+                val scope = (state.rows("files") + state.rows("docs") + state.rows("tasks")).firstOrNull { it["channel_id"] == p[1] && it["scope_id"] != null }?.get("scope_id").asString()
+                val row = fileRow(id, p[1], scope, objectId, o["display_name"].asString() ?: "file", o["folder_id"].asString(), now())
+                if (lineage != null || o["metadata"].asMap()?.get("artefact") != null) {
+                    row["metadata"] = o["metadata"] ?: emptyMap<String, Any>()
                     val version = versionRow(id, 1, objectId, null)
                     state.put("file_versions", version["id"] as String, version)
                     row["current_version_id"] = version["id"]
@@ -636,6 +637,20 @@ class SampleWorkTower(
                 state.put("files", id, row)
                 emit(SampleChange("file", id, "created", p[1], null, 1))
                 201 to mapOf("file" to row)
+            }
+            method == "GET" && n == 2 && head == "files" -> {
+                val row = state.row("files", p[1]) ?: return errorReply(404, "file_not_found")
+                200 to mapOf("file" to row)
+            }
+            method == "GET" && n == 3 && head == "files" && p[2] == "html" -> {
+                val row = state.row("files", p[1]) ?: return errorReply(404, "file_not_found")
+                val versions = fileVersionRows(p[1])
+                val version = url.query("version_id")?.let { id -> versions.firstOrNull { it["id"] == id } } ?: versions.lastOrNull()
+                val objectId = version?.get("storage_object_id").asString() ?: row["storage_object_id"].asString()
+                val obj = objectId?.let { state.row("objects", it) } ?: return errorReply(404, "file_not_found")
+                if (obj["content_type"] != "text/html") return errorReply(404, "file_not_found")
+                val html = obj["bytes"].asString()?.let { String(Base64.getDecoder().decode(it), Charsets.UTF_8) } ?: ""
+                200 to mapOf("workspace_id" to workspaceId, "title" to row["display_name"], "source" to mapOf("type" to "html", "id" to p[1]), "content" to mapOf("html" to html, "assets" to emptyList<Any>()), "versions" to versions)
             }
             method == "GET" && n == 3 && head == "files" && p[2] == "versions" && state.row("files", p[1]) != null -> {
                 val rows = fileVersionRows(p[1])

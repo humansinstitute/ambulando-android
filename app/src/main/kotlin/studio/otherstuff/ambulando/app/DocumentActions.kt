@@ -36,7 +36,7 @@ import java.util.UUID
         Triple(saved, queued, queued?.payloadObject?.get("pinned")?.jsonPrimitive?.booleanOrNull ?: saved?.pinned ?: false)
     } }.collectAsState(Triple(null, null, false))
     val removed by remember(w.id, type, id) { model.store.liveQuery({ it.workspaceId == w.id }) {
-        val table = when (type.wire) { "task" -> FlaggedTable.TASKS; "document" -> FlaggedTable.DOCS; "thread" -> FlaggedTable.THREADS; else -> FlaggedTable.CHANNELS }
+        val table = when (type.wire) { "task" -> FlaggedTable.TASKS; "document" -> FlaggedTable.DOCS; "file" -> FlaggedTable.FILES; "thread" -> FlaggedTable.THREADS; else -> FlaggedTable.CHANNELS }
         model.store.reader.isAccessRemoved(w.id, table, id)
     } }.collectAsState(false)
     var showFailure by remember(type, id) { mutableStateOf(false) }

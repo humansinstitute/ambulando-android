@@ -390,6 +390,9 @@ suspend fun StoreReader.pinnedItems(connectionId: String, workspaceId: String): 
     }.filterNotNull().sortedWith(PinRecord.displayOrder)
     pins.map { pin ->
         when (pin.resourceType) {
+            PinRecord.ResourceType.FILE -> fileRow(workspaceId, pin.resourceId).let { f ->
+                PinnedItem(pin, f?.displayName, f?.channelId ?: pin.channelId, f?.scopeId ?: pin.scopeId, f?.accessRemoved == true)
+            }
             PinRecord.ResourceType.TASK -> taskRow(workspaceId, pin.resourceId).let { t ->
                 PinnedItem(pin, t?.title, t?.channelId ?: pin.channelId, t?.scopeId ?: pin.scopeId, t?.accessRemoved == true)
             }

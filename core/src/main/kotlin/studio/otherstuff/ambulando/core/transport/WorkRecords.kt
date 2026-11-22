@@ -223,7 +223,7 @@ data class FileRecord(
                 folderId = lowerUUID(raw.string("folder_id")), storageObjectId = lowerUUID(raw.string("storage_object_id")),
                 displayName = raw.string("display_name")?.takeIf { it.isNotEmpty() } ?: storage?.string("file_name") ?: "Untitled file",
                 description = raw.string("description"),
-                contentType = version?.string("content_type") ?: storage?.string("content_type"),
+                contentType = raw.string("content_type") ?: version?.string("content_type") ?: storage?.string("content_type"),
                 sizeBytes = flexibleLong(version?.get("size_bytes")) ?: flexibleLong(storage?.get("size_bytes")),
                 sha256 = (version?.string("sha256_hex") ?: storage?.string("sha256_hex"))?.lowercase(),
                 archived = raw.string("record_state") == "archived" || raw.string("archived_at") != null,

@@ -24,6 +24,7 @@ import studio.otherstuff.ambulando.app.ui.nav.WorkRoute
 import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import studio.otherstuff.ambulando.app.ui.work.*
+import studio.otherstuff.ambulando.core.sync.refreshFiles
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.surfaces.*
 import studio.otherstuff.ambulando.core.transport.DocRecord
@@ -35,7 +36,12 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
     val w = model.workspace ?: return
     val c = model.connection
     val services = LocalAppServices.current
-    var filter by remember { mutableStateOf("") }
+    val filterKey = listOf(c?.id, w.id, model.context.scopeId, model.context.channelId).joinToString(":")
+    var filter by remember(filterKey) { mutableStateOf(model.artefactFilters[filterKey]?.first ?: "") }
+    var typeFilter by remember(filterKey) { mutableStateOf(model.artefactFilters[filterKey]?.second ?: "all") }
+    SideEffect { model.artefactFilters[filterKey] = filter to typeFilter }
+    val files by remember(w.id, model.context) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.files(w.id, model.context) } }.collectAsState(emptyList())
+    LaunchedEffect(c?.id, w.id, model.context) { c?.let { model.sync.refreshFiles(it, w, model.context.scopeId) } }
     val rows by remember(w.id, model.context) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.docs(w.id, model.context) } }.collectAsState(null)
     val creating by remember(c?.id, w.id) { model.store.liveQuery({ it.table == StoreTable.WRITES }) {
         if (c == null) emptyList() else model.store.reader.workspaceWrites(c.id, w.id).filter { it.kind == WriteKind.DOC_CREATE }
@@ -46,14 +52,21 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
     val channelNames = channelLabels(model)
     val actions = rememberWriteActions(model)
     val query = filter.trim()
-    val visible = rows?.filter { query.isEmpty() || it.title.contains(query, ignoreCase = true) } ?: emptyList()
+    val visible = rows?.filter { (typeFilter == "all" || typeFilter == "document") && (query.isEmpty() || it.title.contains(query, ignoreCase = true)) } ?: emptyList()
+    val artefacts = files.filter { val type = ArtefactType.of(it); type != null && !it.archived && (typeFilter == "all" || type.wire == typeFilter) && (query.isEmpty() || it.displayName.contains(query, true)) }
     GroupedSurface(Modifier.fillMaxSize()) {
         ListHeaderBar {
-            FilterField(filter, { filter = it }, "Filter documents", Modifier.weight(1f), tag = "docs.filter")
+            FilterField(filter, { filter = it }, "Filter artefacts", Modifier.weight(1f), tag = "docs.filter")
             CreateDocument(model) { open -> IconButton(onClick = open, modifier = Modifier.testTag("docs.new")) {
                 Icon(Icons.Filled.AddCircle, "New document", Modifier.size(28.dp), tint = Amb.colors.primary)
             } }
         }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf("all" to "All", "document" to "Docs", "excalidraw" to "Whiteboards", "html" to "HTML").forEach { (value, label) ->
+                androidx.compose.material3.FilterChip(typeFilter == value, { typeFilter = value }, label = { Text(label) }, modifier = Modifier.testTag("artefacts.filter.$value"))
+            }
+        }
+        CreateRichArtefact(model)
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 24.dp)) {
             groupedSection(null, creating, key = { "creating:${it.id}" }) { item, first, last ->
                 GroupedRow(first, last) {
@@ -67,8 +80,18 @@ import studio.otherstuff.ambulando.core.transport.DocRecord
             groupedSection(null, visible, key = { it.id }) { doc, first, last ->
                 DocRow(doc, channelNames[doc.channelId], doc.id in drafts, first, last) { services.open(WorkRoute.Doc(w.id, doc.id)) }
             }
-            if (rows != null && visible.isEmpty() && creating.isEmpty()) item(key = "empty") {
-                EmptyNote(if (query.isEmpty()) "No documents" else "No matches", Icons.Outlined.Description,
+            groupedSection(null, artefacts, key = { "artefact:${it.id}" }) { file, first, last ->
+                GroupedRow(first, last, onClick = { services.open(WorkRoute.File(w.id, file.id)) }, chevron = true, tag = "artefacts.row") {
+                    Column(Modifier.weight(1f)) {
+                        Text(file.displayName, fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold)
+                        Text(listOfNotNull(ArtefactType.of(file)?.label, channelNames[file.channelId]?.let { "#$it" }).joinToString(" · "), fontSize = AmbType.caption)
+                        if (file.accessRemoved) AccessRemovedNote()
+                    }
+                    RecordPin(model, PinRecord.ResourceType.FILE, file.id, enabled = !file.accessRemoved)
+                }
+            }
+            if (rows != null && visible.isEmpty() && artefacts.isEmpty() && creating.isEmpty()) item(key = "empty") {
+                EmptyNote(if (query.isEmpty()) "No artefacts" else "No matches", Icons.Outlined.Description,
                     if (query.isNotEmpty()) "No document title contains “$query”." else if (services.unlocked) "Documents in this scope appear here." else "Unlock to load documents.")
             }
         }

@@ -7,8 +7,9 @@ plugins {
 }
 
 // Only actual operator-provided public Android config enables Firebase. Missing config builds truthfully unavailable.
+val isolatedArtefactTest = providers.gradleProperty("isolatedArtefactTest").orNull == "true"
 val isolatedWatchTest = providers.gradleProperty("isolatedWatchTest").orNull == "true"
-if (!isolatedWatchTest && file("google-services.json").isFile) apply(plugin = "com.google.gms.google-services")
+if (!isolatedWatchTest && !isolatedArtefactTest && file("google-services.json").isFile) apply(plugin = "com.google.gms.google-services")
 
 android {
     namespace = "studio.otherstuff.ambulando.app"
@@ -20,8 +21,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 55
-        versionName = "0.9.27"
+        versionCode = 56
+        versionName = "0.9.28"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
@@ -46,7 +47,7 @@ android {
     }
 
     buildTypes {
-        debug { if (isolatedWatchTest) applicationIdSuffix = ".watchtest" }
+        debug { if (isolatedWatchTest) applicationIdSuffix = ".watchtest" else if (isolatedArtefactTest) applicationIdSuffix = ".artefacttest" }
         release {
             // Public export history is separate from private development history.
             vcsInfo { include = false }

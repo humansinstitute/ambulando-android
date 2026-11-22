@@ -158,7 +158,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             val target = when (route) {
                 is WorkRoute.Task -> AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
-                is WorkRoute.File -> AppSection.FILES
+                is WorkRoute.File -> if (model.section == AppSection.DOCS) AppSection.DOCS else AppSection.FILES
                 is WorkRoute.Thread, is WorkRoute.Channel -> chatEntrySection(model.section, overlay = notifications || search || settings || management != null)
                 else -> model.section
             }
@@ -264,6 +264,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             val target = when (route) {
                 is WorkRoute.Task -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.TASK to route.taskId
                 is WorkRoute.Doc -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.DOCUMENT to route.docId
+                is WorkRoute.File -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.FILE to route.fileId
                 is WorkRoute.Thread -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.THREAD to route.threadId
                 is WorkRoute.Channel -> studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.CHANNEL to route.channelId
                 null -> if (model.section == AppSection.CHAT) model.context.channelId?.let { studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.CHANNEL to it } else null

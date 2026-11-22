@@ -399,7 +399,7 @@ data class PinRecord(
     val raw: JsonObject,
 ) {
     enum class ResourceType(val wire: String) {
-        THREAD("thread"), TASK("task"), DOCUMENT("document"), CHANNEL("channel");
+        THREAD("thread"), TASK("task"), DOCUMENT("document"), CHANNEL("channel"), FILE("file");
 
         companion object {
             fun from(wire: String?): ResourceType? = entries.firstOrNull { it.wire == wire }

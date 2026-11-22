@@ -576,6 +576,7 @@ class WriteSender(
                     if (ambiguous) found()?.let { return WriteOutcome.Done(WriteAcknowledgement(files = listOf(it))) }
                     val o = linkedMapOf<String, JsonElement>("storage_object_id" to JsonPrimitive(objectId), "display_name" to (p["display_name"] ?: JsonPrimitive(name)))
                     p.string("folder_id")?.let { o["folder_id"] = JsonPrimitive(it) }
+                    p["metadata"]?.let { o["metadata"] = it }
                     val r = LocalStages.trace(Stage.UPLOAD_LINK) { send("POST", base + "/channels/" + TowerAPI.uuid(channel) + "/files", JsonObject(o)) }
                     if (ok(r)) record(r.body, "file", FileRecord::parse)?.let { return WriteOutcome.Done(WriteAcknowledgement(files = listOf(it))) }
                     if (r.status == 409) found()?.let { return WriteOutcome.Done(WriteAcknowledgement(files = listOf(it))) }

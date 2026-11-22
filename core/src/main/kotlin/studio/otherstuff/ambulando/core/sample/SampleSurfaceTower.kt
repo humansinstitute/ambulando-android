@@ -738,7 +738,7 @@ class SampleSurfaceTower(
         val pinned = o["pinned"] as? Boolean
         val expected = o["expected_row_version"].asInt()
         val mutation = o["mutation_id"].asString()
-        if (type !in setOf("thread", "task", "document", "channel") || !isUUID(resource) || pinned == null || expected == null || expected < 0 ||
+        if (type !in setOf("thread", "task", "document", "channel", "file") || !isUUID(resource) || pinned == null || expected == null || expected < 0 ||
             mutation == null || !isUUID(mutation) || !PIN_KEYS.containsAll(o.keys)
         ) return errorReply(400, "invalid_thread_pin")
         val hash = Sha256Hex.of("$type|$resource|$pinned|$expected")

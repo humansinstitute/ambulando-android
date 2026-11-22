@@ -236,6 +236,10 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     fun fileCache(): FileCache = FileCache(File(File(androidContext.cacheDir, "AmbulandoFiles"), requireNotNull(active) { "No workspace is open" }.boundary.id))
     /** Unsaved board edits of the workspace in front, in its boundary's own directory. */
     fun boardDrafts(): studio.otherstuff.ambulando.core.surfaces.BoardDraftStore = studio.otherstuff.ambulando.core.surfaces.BoardDraftStore(boardDraftDirectory(requireNotNull(active) { "No workspace is open" }))
+    fun htmlDraftFile(fileId: String): File {
+        require(studio.otherstuff.ambulando.core.transport.isUUID(fileId))
+        return File(boardDraftDirectory(requireNotNull(active) { "No workspace is open" }), "html-$fileId.json")
+    }
     private fun boardDraftDirectory(runtime: WorkspaceRuntime) = File(File(environment.baseDir, "board-drafts"), runtime.boundary.id)
     /** Direct writes from screens (canvas, board, scopes, task tree): the workspace's own guarded, write-gated transport. */
     val workspaceTransport: HttpTransport get() = active?.directTransport ?: transport
@@ -317,6 +321,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     val workspaces: List<WorkspaceRecord> get() = connection?.let { c -> entries.filter { it.connection.id == c.id }.map { it.workspace } } ?: emptyList()
     var scopes by mutableStateOf(emptyList<ScopeRecord>()); private set
     var channels by mutableStateOf(emptyList<ChannelRecord>()); private set
+    internal val artefactFilters = mutableStateMapOf<String, Pair<String, String>>()
     var context by mutableStateOf(WorkContext.HOME); private set
     var section by mutableStateOf(AppSection.DECK)
     var notice by mutableStateOf<String?>(null); private set

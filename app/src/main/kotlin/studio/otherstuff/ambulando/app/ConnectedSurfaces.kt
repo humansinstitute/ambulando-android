@@ -47,7 +47,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     var html by remember(route) { mutableStateOf<String?>(null) }
     var error by remember(route) { mutableStateOf<String?>(null) }
     LaunchedEffect(route) {
-        try { html = model.sync.napletHTML(model.connection!!, model.workspace!!, route.canvasId, route.napletId).first }
+        try { html = model.sync.napletHTML(model.connection!!, model.workspace!!, route.canvasId, route.napletId).second }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { error = e.message }
     }

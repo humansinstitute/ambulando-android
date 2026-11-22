@@ -775,6 +775,7 @@ class SampleTower(
     private fun lookupRecord(id: String): Map<String, Any?>? {
         work.task(id)?.let { t -> return mapOf("title" to t.str("title"), "channel_id" to t.str("channel_id"), "scope_id" to t.str("scope_id")) }
         work.doc(id)?.let { d -> return mapOf("title" to d.str("title"), "channel_id" to d.str("channel_id"), "scope_id" to d.str("scope_id")) }
+        work.files().firstOrNull { it.str("id") == id }?.let { f -> return mapOf("title" to f.str("display_name"), "channel_id" to f.str("channel_id"), "scope_id" to f.str("scope_id")) }
         val channels = mapOf(SampleIds.GENERAL to SampleIds.SCOPE_AMBULANDO, SampleIds.DESIGN to SampleIds.SCOPE_AMBULANDO, SampleIds.DEPLOYS to SampleIds.SCOPE_OPS)
         channels[id]?.let { return mapOf("title" to "channel", "channel_id" to id, "scope_id" to it) }
         if (id.startsWith("5a00bbbb")) return mapOf("title" to "Conversation", "channel_id" to SampleIds.GENERAL, "scope_id" to SampleIds.SCOPE_AMBULANDO)
@@ -885,6 +886,7 @@ internal object SampleSeed {
                 mapOf("id" to SampleIds.message(101), "author" to "Ana", "body" to "Retry kept the same request id", "created_at" to "2026-10-23T09:41:00.000Z"),
             )))
         val board = SampleContent.sampleBoard()
+        tower.work.seedFile(general, a, "Architecture sketch.excalidraw", board, studio.otherstuff.ambulando.core.surfaces.BoardScene.CONTENT_TYPE, fixedId = SampleIds.BOARD_FILE)
         val projection = s.seedBoardVersion(SampleIds.BOARD_FILE, SampleIds.BOARD_VERSION, 2, board)
         tower.boards.seed(SampleIds.BOARD_FILE, board, canWrite = true, author = SampleIds.ANA)
         s.seedNaplet(launch, "task_tree", general, "Task Tree", mapOf("x" to 40, "y" to 740, "width" to 820, "height" to 440, "z" to 9),

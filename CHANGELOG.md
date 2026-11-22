@@ -1,3 +1,10 @@
+## 0.9.28 (56)
+
+- Find documents, whiteboards and HTML together in the channel’s Artefacts section, with title and type filters.
+- Create whiteboard and HTML Files, pin them, and open them directly without a canvas.
+- Reuse the shared Excalidraw editor and saved versions; view HTML in the isolated viewer and edit its source with durable drafts and stale-save protection.
+- Keep the Artefacts channel and filters when opening an item and returning to the list. Existing documents and canvases remain available.
+
 ## 0.9.27 (55)
 
 - Channel Inbox menus now offer Channel options for the current available channel, alongside the existing mark-as-read actions.

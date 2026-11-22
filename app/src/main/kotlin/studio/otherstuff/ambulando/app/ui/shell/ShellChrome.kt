@@ -58,7 +58,7 @@ enum class AppSection(val title: String, val icon: ImageVector, val contextBound
     DECK("Deck", Icons.Outlined.ViewCarousel, contextBound = true, lockable = false),
     CHAT("Chat", Icons.Outlined.Forum, contextBound = true, lockable = true),
     TASKS("Tasks", Icons.Outlined.Checklist, contextBound = true, lockable = true),
-    DOCS("Docs", Icons.Outlined.Description, contextBound = true, lockable = true),
+    DOCS("Artefacts", Icons.Outlined.Description, contextBound = true, lockable = true),
     FILES("Files", Icons.Outlined.Folder, contextBound = true, lockable = true),
     AGENTS("Agents", Icons.Outlined.AutoAwesome, contextBound = true, lockable = false),
     CONTEXT("Context", Icons.Outlined.AccountTree, contextBound = true, lockable = false),

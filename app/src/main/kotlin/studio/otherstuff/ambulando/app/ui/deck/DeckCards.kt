@@ -286,6 +286,7 @@ import studio.otherstuff.ambulando.core.store.LocalStore
                             when (row.pin.resourceType.wire) {
                                 "task" -> services.open(WorkRoute.Task(screen.workspaceId, id))
                                 "document" -> services.open(WorkRoute.Doc(screen.workspaceId, id))
+                                "file" -> services.open(WorkRoute.File(screen.workspaceId, id))
                                 "thread" -> services.open(WorkRoute.Thread(screen.workspaceId, row.channelId, id))
                                 "channel" -> intents.openInChat(id)
                             }
@@ -294,6 +295,7 @@ import studio.otherstuff.ambulando.core.store.LocalStore
                 ) {
                     androidx.compose.material3.Icon(
                         when (row.pin.resourceType.wire) {
+                            "file" -> Icons.Outlined.Description
                             "task" -> Icons.Outlined.TaskAlt
                             "document" -> Icons.Outlined.Description
                             "channel" -> Icons.Outlined.Tag
