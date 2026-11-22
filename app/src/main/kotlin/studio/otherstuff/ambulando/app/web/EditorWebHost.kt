@@ -41,7 +41,15 @@ class EditorWebHost private constructor(
     @Volatile private var destroyed = false
     /** Answers still awaited from the page (main thread only); a page that dies never calls them back, so [destroy] resolves them. */
     private val pending = mutableSetOf<kotlinx.coroutines.CancellableContinuation<String?>>()
-    val webView: WebView = WebView(context)
+    val webView: WebView = WebView(context).apply {
+        // AndroidView otherwise supplies WRAP_CONTENT. Chromium then treats the
+        // document's percentage height as zero, even after Compose measures this
+        // view to fill the editor. The page needs a viewport, not content sizing.
+        layoutParams = android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        )
+    }
 
     private val assetLoader = WebViewAssetLoader.Builder()
         .setDomain(ASSET_HOST)

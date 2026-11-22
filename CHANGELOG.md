@@ -1,3 +1,8 @@
+## 0.9.29 (57)
+
+- Show the Excalidraw drawing and toolbar when opening a whiteboard from Files or Artefacts.
+- Give embedded editors a full viewport so percentage-height pages cannot collapse inside the native layout.
+
 ## 0.9.28 (56)
 
 - Find documents, whiteboards and HTML together in the channel’s Artefacts section, with title and type filters.
