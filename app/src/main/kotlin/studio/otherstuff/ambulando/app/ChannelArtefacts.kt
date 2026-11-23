@@ -28,6 +28,8 @@ import java.util.UUID
     var showing by remember(boundary) { mutableStateOf(false) }
     // null is an ordinary Document, which retains its existing DOC_CREATE storage and editor.
     var type by remember(boundary) { mutableStateOf<ArtefactType?>(null) }
+    var template by remember(boundary) { mutableStateOf("blank") }
+    var style by remember(boundary) { mutableStateOf("default") }
     var title by remember(boundary) { mutableStateOf("") }
     var channel by remember(boundary) { mutableStateOf(model.context.channelId) }
     var submitting by remember(boundary) { mutableStateOf(false) }
@@ -50,8 +52,21 @@ import java.util.UUID
                 (listOf<ArtefactType?>(null) + ArtefactType.entries).forEach { option ->
                     val wire = option?.wire ?: "document"
                     val label = option?.label ?: "Document"
-                    FilterChip(type == option, { type = option }, enabled = !submitting,
+                    FilterChip(type == option, { type = option; template = ArtefactTemplates.starters.first { it.type == (option?.wire ?: "document") }.id }, enabled = !submitting,
                         label = { Text(label) }, modifier = Modifier.fillMaxWidth().testTag("artefacts.type.$wire"))
+                }
+                Text("Starter")
+                ArtefactTemplates.starters.filter { it.type == (type?.wire ?: "document") }.forEach { starter ->
+                    FilterChip(template == starter.id, { template = starter.id }, enabled = !submitting,
+                        label = { Text(starter.label) }, modifier = Modifier.testTag("artefacts.template.${starter.id}"))
+                }
+                if (type != null) {
+                    Text("Style")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ArtefactTemplates.styles.forEach { (id, label) ->
+                            FilterChip(style == id, { style = id }, enabled = !submitting, label = { Text(label) }, modifier = Modifier.testTag("artefacts.style.$id"))
+                        }
+                    }
                 }
                 OutlinedTextField(title, { title = it }, enabled = !submitting, singleLine = true,
                     label = { Text("Title") }, modifier = Modifier.fillMaxWidth().testTag("artefacts.title"))
@@ -69,7 +84,7 @@ import java.util.UUID
             TextButton(enabled = canCreate, modifier = Modifier.testTag("artefacts.create"), onClick = {
                 if (submitting || !canCreate) return@TextButton
                 val destination = channel ?: return@TextButton
-                val kind = type; val name = title.trim()
+                val kind = type; val name = title.trim(); val starter = template; val chosenStyle = style
                 val writes = model.writes // Keep staging and queue ownership on the workspace where + was pressed.
                 // Disable synchronously: a second tap must not enqueue a second creation.
                 submitting = true; error = null
@@ -79,7 +94,7 @@ import java.util.UUID
                     try {
                         withContext(Dispatchers.IO) {
                             writes.staging.mkdirs()
-                            File(writes.staging, staged).writeText(kind?.initialContent() ?: "# $name\n")
+                            File(writes.staging, staged).writeText(ArtefactTemplates.source(kind?.wire ?: "document", starter, chosenStyle, name))
                         }
                         writes.submit(WriteIntent(if (kind == null) WriteKind.DOC_CREATE else WriteKind.FILE_UPLOAD, null, buildJsonObject {
                             put("channel_id", destination); put("staged", staged)
@@ -87,7 +102,7 @@ import java.util.UUID
                                 put("title", name); put("file_name", "document.md"); put("content_type", "text/markdown")
                             } else {
                                 put("display_name", "$name.${kind.extension}"); put("file_name", "artefact.${kind.extension}")
-                                put("content_type", kind.mime); put("metadata", kind.metadata())
+                                put("content_type", kind.mime); put("metadata", buildJsonObject { put("artefact", ArtefactTemplates.descriptor(kind.wire, starter, chosenStyle)) })
                             }
                         }), c, w)
                         queued = true
@@ -130,8 +145,9 @@ import java.util.UUID
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (e: Exception) { error = e.message }
             }
-            reference?.let { board -> BoardEditor(model, board, current.displayName) { exit?.invoke() } } ?: Text(error ?: "Loading whiteboard…")
+            reference?.let { board -> BoardEditor(model, board, current.displayName, provenance = { ArtefactProvenance(current) }) { exit?.invoke() } } ?: Text(error ?: "Loading whiteboard…")
         }
+        ArtefactType.SYSTEM_FLOW -> SystemFlowFile(model, current)
         ArtefactType.HTML -> HtmlFileArtefact(model, current)
         null -> NativeFiles(model, fileId, direct = false)
     }
@@ -215,6 +231,7 @@ import java.util.UUID
         return
     }
     Column(Modifier.fillMaxSize()) {
+        ArtefactProvenance(file)
         Row(Modifier.fillMaxWidth()) {
             RecordPin(model, PinRecord.ResourceType.FILE, file.id)
             var menu by remember { mutableStateOf(false) }

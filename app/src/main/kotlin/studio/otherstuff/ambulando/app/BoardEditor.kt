@@ -26,7 +26,7 @@ import studio.otherstuff.ambulando.core.sync.SyncPriority
 import java.io.File
 import java.util.UUID
 
-@Composable internal fun BoardEditor(model: AppModel, board: BoardReference, title: String, done: () -> Unit) {
+@Composable internal fun BoardEditor(model: AppModel, board: BoardReference, title: String, provenance: @Composable () -> Unit = {}, done: () -> Unit) {
     val c = model.connection ?: return; val w = model.workspace ?: return
     studio.otherstuff.ambulando.app.ui.shell.OwnEditorNavigation()
     val context = LocalContext.current
@@ -110,6 +110,7 @@ import java.util.UUID
                 }
             }
         }
+        provenance()
         BoardNotices(state, scope, controller, onDiscard = { discarding = true })
         error?.let { Notice(NoticeTone.WARNING, it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         page?.failure?.let { Notice(NoticeTone.ERROR, it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }

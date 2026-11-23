@@ -1,3 +1,11 @@
+## 0.9.38 (66)
+
+- Add controlled document/working-brief, whiteboard, interactive HTML and System Flow starters, with maintained styles for rich artefacts.
+- Edit typed System Flow nodes and relationships in a focused native editor with a diagram overview, durable drafts, immutable history and conflict protection.
+- Preserve complete schema 1–3 flow sources and linked scenes; show migration provenance and original-source links for richer legacy editing and feedback.
+- Render compatible pending embedded whiteboard images after scene loading, without rewriting saved source on open.
+- Keep HTML sandbox restrictions and existing NStack File storage and permissions. Forms and unsupported legacy functions still require their original editor.
+
 ## 0.9.37 (65)
 
 - Add a generic v2 File napplet runtime: Apps installs existing code Files through personal pins, uses manifest titles/icons and versioned capabilities, and checks for updates on the same File without a per-app build. Private JSON uses bounded canonical CAS; changed code/access prompts for separate v2 approval. Existing v1 tracker/report and saved data remain compatible.

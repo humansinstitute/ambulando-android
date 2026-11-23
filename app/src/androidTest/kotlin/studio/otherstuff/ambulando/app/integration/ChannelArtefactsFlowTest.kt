@@ -116,7 +116,7 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("artefacts.title").performTextInput(name)
             compose.onNodeWithTag("artefacts.create").performClick()
             compose.onNodeWithTag("docs.filter").performTextReplacement(name)
-            compose.waitUntil(30_000) { compose.onAllNodes(hasText("$name.excalidraw")).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.row") and hasAnyDescendant(hasText("$name.excalidraw")), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
             val api = model.towerAPI(model.connection!!)
             val file = runBlocking { api.channelFiles(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.single { it.displayName == "$name.excalidraw" } }
             assertEquals(ArtefactType.WHITEBOARD, ArtefactType.of(file))
@@ -186,7 +186,7 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("artefacts.create").assertIsEnabled().performClick()
             compose.onNodeWithTag("docs.filter").performTextReplacement("")
             compose.onNodeWithTag("artefacts.filter.html").performClick()
-            compose.waitUntil(30_000) { compose.onAllNodes(hasText("$name.html")).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.row") and hasAnyDescendant(hasText("$name.html")), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasTestTag("artefacts.row") and hasAnyDescendant(hasText("$name.html")), useUnmergedTree = true).performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.editSource")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("artefacts.editSource").performClick()
@@ -231,7 +231,7 @@ class ChannelArtefactsFlowTest {
             // Invoke the same displayed button callback twice before recomposition: only one write may be queued.
             compose.onNodeWithTag("artefacts.create").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { click -> click(); click() }
             compose.onNodeWithTag("docs.filter").performTextReplacement(docName)
-            compose.waitUntil(30_000) { compose.onAllNodes(hasText(docName)).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(30_000) { runBlocking { model.towerAPI(model.connection!!).channelDocs(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.any { it.title == docName } } }
             val api = model.towerAPI(model.connection!!)
             val doc = runBlocking { api.channelDocs(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.single { it.title == docName } }
             assertEquals(SampleIds.GENERAL, doc.channelId)
@@ -252,7 +252,7 @@ class ChannelArtefactsFlowTest {
             assertEquals(WriteState.RETRYING, pending.state)
             compose.runOnIdle { model.sampleTower!!.offline = false }
             compose.onNodeWithTag("write.retry").performClick()
-            compose.waitUntil(30_000) { compose.onAllNodes(hasText("$boardName.excalidraw")).fetchSemanticsNodes().isNotEmpty() && compose.onAllNodes(hasTestTag("write.retry")).fetchSemanticsNodes().isEmpty() }
+            compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.row") and hasAnyDescendant(hasText("$boardName.excalidraw")), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() && compose.onAllNodes(hasTestTag("write.retry")).fetchSemanticsNodes().isEmpty() }
             assertEquals(1, runBlocking { api.channelFiles(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.count { it.displayName == "$boardName.excalidraw" } })
             assertTrue(runBlocking { model.store.reader.workspaceWrites(model.connection!!.id, SampleIds.STUDIO).none { it.id == pending.id } })
         }
@@ -276,10 +276,10 @@ class ChannelArtefactsFlowTest {
         var ready = false
         compose.waitUntil(30_000) {
             instrumentation.runOnMainSync {
-                web!!.evaluateJavascript("JSON.stringify({state:document.querySelector('#board-root')?.dataset.boardEditorState,height:document.querySelector('canvas')?.getBoundingClientRect().height})") { result ->
+                web!!.evaluateJavascript("JSON.stringify({state:document.querySelector('#board-root')?.dataset.boardEditorState,key:document.querySelector('#board-root')?.dataset.boardKey,height:document.querySelector('canvas')?.getBoundingClientRect().height})") { result ->
                     val encoded = result?.let { org.json.JSONTokener(it).nextValue() as? String }
                     val probe = encoded?.let { org.json.JSONObject(it) }
-                    ready = probe?.optString("state") == "ready" && probe.optDouble("height") > 100
+                    ready = probe?.optString("state") == "ready" && !probe.optString("key").isNullOrBlank() && probe.optDouble("height") > 100
                 }
             }
             ready

@@ -63,3 +63,36 @@ pending/retrying/failed rich creations stay visible in Artefacts with the normal
 No “created” confirmation is shown before server acknowledgement. `ChannelArtefactsFlowTest` clicks this primary +
 to create all three types, checks persistence through the fixture API, draws/saves/reopens the created whiteboard,
 and checks cancellation and an offline upload retry without a duplicate File.
+
+## Controlled starters and System Flows
+
+The primary + also offers System Flow. Document starters are Blank document and Working brief; documents keep
+normal app typography. Whiteboard, Interactive explorer HTML and System Flow use maintained Ambulando/Paper styles.
+Rich File metadata retains the web's versioned `template_id`, `template_version`, `style_id` and `style_version` descriptor.
+These are packaged choices, never downloadable editor plugins. HTML explorer controls run locally in the existing
+sandbox; form submission and extra network access remain unavailable.
+
+System Flow Files use `application/vnd.ambulando.system-flow+json` and `builtin.system-flow`. The native editor
+validates web schema 1–3 and shows a diagram overview using saved positions, containers and directed relationships.
+Native fields edit node label, kind, owner, description and relationship labels; action nodes and flow relationships can
+be added with validated IDs. Complete labels remain inspectable below the overview. All diagrams, scene collections,
+edge styling, parent relationships and unedited source fields remain in the model. Linked whiteboard scene editing
+and feedback require the original editor; they are retained rather than flattened. Incomplete schema-3 indexes cannot
+be edited: an editable snapshot must contain every linked scene. The shared Flow source limit is 32 MiB.
+
+The focused flow editor owns its Back/title/save/version controls; section navigation is hidden until Back returns
+to the originating list. Each accepted edit is serialized into a boundary-private durable draft with its original base version, without
+publishing on Back. Save rechecks authority and creates a private immutable File version with CAS, then verifies
+readback. Historical versions are read-only; Latest resumes the preserved draft. Conflict, read-only or unavailable
+save leaves the draft and base intact. Discard requires explicit confirmation. Local field state preserves keyboard
+focus while ordered edits persist; network operations disable editing until finished.
+
+Migrated rich Files show selected source version, limitations and an original-source link. This is navigation outside
+the editor, not new network authority. Pending legacy embedded PNG/JPEG/GIF/WebP images receive a view-only saved
+status after checking their embedded data signature; files hydrate after scene elements. Opening does not write a
+revision or rewrite source bytes. Private assets continue through existing authenticated File/version routes.
+
+`SystemFlowTests`, bundled `board-images.test.js` and `SystemFlowFlowTest` cover the new contracts. The private-pilot
+clone instrumentation case expects operator-supplied read-only snapshots in the isolated package's private files
+`artefact66/`; they must never be bundled in the APK or committed. It tests device-local synthetic destinations and
+captures rendered pixels. Passing synthetic checks does not establish live member permissions or store delivery.

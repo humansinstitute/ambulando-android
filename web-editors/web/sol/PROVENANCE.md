@@ -25,3 +25,8 @@ web's document editor schema and Markdown conversion. They own no network or sto
 same paths from a newer sol commit, update the commit above and check that the message protocol in `../main.js` and
 `Ambulando/Views/BoardEditorView.swift` still matches (`load`, `patch`, `flush`, `action-ui`, `comments`, `clear` in;
 `ready`, `change`, `flushed`, `action`, `comment-op`, `error` out).
+
+Android artefact follow-up adapts `boardEditorElements` from sol `c2e3bb6` for view-only pending embedded-image
+compatibility and hydrates files after elements in `board-editor/editor.js`. These two files have bounded native
+changes; saved source bytes are not rewritten on open. The native starter descriptors and System Flow validator
+follow the same commit's `artefact-templates.js` and `system-flow-schema.js` without importing a remote runtime.

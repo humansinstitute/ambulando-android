@@ -1,5 +1,8 @@
 package studio.otherstuff.ambulando.app
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -66,8 +69,8 @@ import studio.otherstuff.ambulando.core.transport.obj
                 Icon(Icons.Filled.AddCircle, "New artefact", Modifier.size(28.dp), tint = Amb.colors.primary)
             } }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("all" to "All", "document" to "Docs", "excalidraw" to "Whiteboards", "html" to "HTML").forEach { (value, label) ->
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf("all" to "All", "document" to "Docs", "excalidraw" to "Whiteboards", "html" to "HTML", "system-flow" to "Flows").forEach { (value, label) ->
                 androidx.compose.material3.FilterChip(typeFilter == value, { typeFilter = value }, label = { Text(label) }, modifier = Modifier.testTag("artefacts.filter.$value"))
             }
         }

@@ -229,3 +229,19 @@ export function restoreBoardScene({ target, latest }) {
   const discussion = mergeBoardComments({}, latest, target);
   return { wingman: { comments: followCommentAnchors(discussion.comments, elements) }, type: 'excalidraw', version: 2, source: BOARD_SOURCE, elements, appState: pickAppState(target?.appState), files: { ...(latest?.files || {}), ...(target?.files || {}) } };
 }
+
+/** View-only compatibility for legacy scenes with hydrated images still marked pending. */
+export function boardEditorElements(scene) {
+  return (scene?.elements || []).map(element => {
+    if (element.type !== 'image' || element.status !== 'pending') return element;
+    const file = scene.files?.[element.fileId];
+    try {
+      const valid = validateFile(element.fileId, file);
+      const match = /^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/.exec(valid.dataURL);
+      if (!match || match[1] !== valid.mimeType || match[2].length % 4 !== 0) return element;
+      const signatures = { 'image/png': 'iVBORw0KGgo', 'image/jpeg': '/9j/', 'image/gif': 'R0lGOD', 'image/webp': 'UklGR' };
+      if (!signatures[valid.mimeType] || !match[2].startsWith(signatures[valid.mimeType])) return element;
+      return { ...element, status: 'saved' };
+    } catch { return element; }
+  });
+}

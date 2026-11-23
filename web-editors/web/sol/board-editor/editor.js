@@ -4,7 +4,7 @@ import { createElement, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CaptureUpdateAction, Excalidraw, restoreElements } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import { BOARD_APP_STATE_DEFAULTS, boardSceneFingerprint } from '../board-scene.js';
+import { BOARD_APP_STATE_DEFAULTS, boardEditorElements, boardSceneFingerprint } from '../board-scene.js';
 
 const CHANGE_DELAY_MS = 250;
 const root = () => document.getElementById('board-root');
@@ -23,7 +23,7 @@ function reportZoom(appState) {
 const SAFE_LINK = /^https?:\/\//i;
 
 function sceneElements(scene) {
-  return restoreElements(scene?.elements || [], null, { refreshDimensions: false, repairBindings: false });
+  return restoreElements(boardEditorElements(scene), null, { refreshDimensions: false, repairBindings: false });
 }
 
 function BoardEditor({ port, theme }) {
@@ -46,13 +46,14 @@ function BoardEditor({ port, theme }) {
     clearTimeout(state.current.timer); state.current.timer = 0; state.current.pending = null;
     state.current.comments = boardComments(scene); setDiscussion(state.current.comments);
     const files = Object.values(scene.files || {});
-    if (files.length) api.addFiles(files);
     for (const file of files) state.current.sentFiles.add(file.id);
     api.updateScene({
       elements: sceneElements(scene),
       ...(reset ? { appState: { ...BOARD_APP_STATE_DEFAULTS, ...(scene.appState || {}), zoom: { value: 1 }, scrollX: 0, scrollY: 0 } } : {}),
       captureUpdate: CaptureUpdateAction.NEVER,
     });
+    // Hydrate after installing elements so Excalidraw populates its image cache.
+    if (files.length) api.addFiles(files);
     // A newly opened board starts at 100%, centred on its content. Fitting to
     // the viewport zooms sparse boards up to Excalidraw's 3000% maximum (an
     // empty board has zero-size bounds). Later loads of the same key keep the
