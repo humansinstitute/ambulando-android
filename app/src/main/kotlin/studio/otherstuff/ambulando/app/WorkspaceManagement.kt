@@ -11,6 +11,8 @@ import androidx.compose.ui.unit.dp
 import studio.otherstuff.ambulando.core.management.ScopeChannelManager
 import studio.otherstuff.ambulando.core.store.directoryMembers
 import studio.otherstuff.ambulando.core.store.state
+import studio.otherstuff.ambulando.core.store.StoreTable
+import studio.otherstuff.ambulando.core.store.liveQuery
 import studio.otherstuff.ambulando.core.sync.SyncPriority
 
 /** Where Manage Workspace opens and, when named, which workspace it must be for (it waits until that one is in front). */
@@ -36,6 +38,8 @@ internal data class ManagementTarget(val route: AdminRoute, val boundaryId: Stri
     val boundaryId = runtime.boundary.id
     val scope = rememberCoroutineScope()
     val session = remember(boundaryId) { AdministrationSession(runtime.administrator { model.activeBoundaryId == boundaryId }, w.label, { model.activeBoundaryId }, scope) }
+    val directory = peopleDirectory(model)
+    SideEffect { session.people = directory }
     DisposableEffect(session) { onDispose { session.close() } }
     // Everything below (navigation stack, forms, remembered managers) belongs to this boundary and is rebuilt for another one.
     androidx.compose.runtime.key(boundaryId) {
@@ -63,7 +67,7 @@ internal data class ManagementTarget(val route: AdminRoute, val boundaryId: Stri
     if (showSetup) { ScopeSetupPage(model) { showSetup = false }; return }
     // Explicit audience for a new channel: nothing is chosen for the person, and an empty selection leaves the creator alone.
     val shares = remember(w.id) { mutableStateMapOf<String, String>() }
-    val people by produceState(emptyList<studio.otherstuff.ambulando.core.transport.MemberRecord>(), model.store, w.id) { value = model.store.reader.directoryMembers(w.id) }
+    val people by remember(model.store, w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == StoreTable.PROFILES }) { model.store.reader.directoryMembers(w.id) } }.collectAsState(emptyList())
     val groups by produceState(emptyList<studio.otherstuff.ambulando.core.management.AdministrationRow>(), model.store, c.id, w.id) {
         value = studio.otherstuff.ambulando.core.management.AdministrationRow.decode(
             model.store.reader.state(studio.otherstuff.ambulando.core.management.AdministrationKeys.list(c.id, w.id, studio.otherstuff.ambulando.core.management.AdministrationList.GROUPS)),

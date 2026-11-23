@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import studio.otherstuff.ambulando.core.management.withPersonNames
 import studio.otherstuff.ambulando.core.management.AdministrationCommand
 import studio.otherstuff.ambulando.core.management.AdministrationList
 import studio.otherstuff.ambulando.core.management.AdministrationResult
@@ -105,6 +106,13 @@ internal class AdministrationSession(
         val cached = admin.cached(list)
         if (isCurrent) rows[list] = cached
     }
+
+    // Display projections never feed raw member-edit initial values or cached records.
+    var people by mutableStateOf<studio.otherstuff.ambulando.core.profiles.PeopleDirectory?>(null)
+
+    fun personRow(row: AdministrationRow): AdministrationRow = row.withPersonNames(people)
+
+    fun displayRows(list: AdministrationList): List<AdministrationRow> = rows(list).map(::personRow)
 
     fun rows(list: AdministrationList): List<AdministrationRow> = rows[list] ?: emptyList()
 

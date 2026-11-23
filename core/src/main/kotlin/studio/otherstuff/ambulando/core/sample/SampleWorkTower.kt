@@ -266,6 +266,9 @@ class SampleWorkTower(
         val version = versionRow(fileId, versions.size + 1, objectId, versions.lastOrNull()?.get("id") as String?)
         state.put("file_versions", version["id"] as String, version)
         file["current_version_id"] = version["id"]
+        file["storage_object_id"] = objectId
+        file["current_version"] = version
+        file["content_type"] = version["content_type"]
         state.put("files", fileId, file)
         true
     }
@@ -344,13 +347,21 @@ class SampleWorkTower(
      */
     fun handle(request: HttpRequest): Reply? {
         val url = SampleURL.of(request) ?: return null
-        if (url.host == objectHost) return presignedPut(request, url)
+        if (url.host == objectHost) {
+            // Several sample workspaces share the object host; only its owner may answer this upload.
+            val id = url.path.substringAfterLast('/')
+            if (synchronized(lock) { state.row("objects", id) } == null) return null
+            return presignedPut(request, url)
+        }
         val path = url.path
         val base = "/api/v4/flightdeck-pg/workspaces/$workspaceId"
         val isStorage = path.startsWith("/api/v4/storage/")
         if (!isStorage && !path.startsWith("$base/")) return null
         val parts = (if (isStorage) path.removePrefix("/api/v4/storage/") else path.removePrefix("$base/")).split('/').filter { it.isNotEmpty() }
         val method = request.method.uppercase()
+        // Global object lookups must fall through to another workspace's fixture when this one does not own the id.
+        if (isStorage && parts.firstOrNull()?.let { studio.otherstuff.ambulando.core.transport.isUUID(it) } == true &&
+            synchronized(lock) { state.row("objects", parts.first()) } == null) return null
         if (!isStorage && !owns(parts)) return null
         when (val result = auth.verify(request)) {
             is SampleAuth.Result.Invalid -> return SampleAuth.unauthorized(result.reason)
@@ -690,6 +701,10 @@ class SampleWorkTower(
                 val version = versionRow(p[1], versions.size + 1, objectId, baseId)
                 state.put("file_versions", version["id"] as String, version)
                 file["current_version_id"] = version["id"]
+                // Match NStack replaceFlightDeckPgFileContent: current File points at the replacement object.
+                file["storage_object_id"] = objectId
+                file["current_version"] = version
+                file["content_type"] = version["content_type"]
                 file["row_version"] = ((file["row_version"].asInt() ?: 1) + 1).toLong()
                 file["updated_at"] = now()
                 state.put("files", p[1], file)

@@ -160,7 +160,7 @@ class WorkspaceRuntime(
     val engine = ScopedSyncScheduler(env.engine, boundary.id, boundary.connectionNamespace, activity)
 
     /** Reads and everything signed for this boundary only; closed while the workspace is paused. */
-    val readTransport: HttpTransport = WorkspaceHttpTransport(BoundaryGuardTransport(env.transport, boundary), activity)
+    val readTransport: HttpTransport = WorkspaceHttpTransport(BoundaryGuardTransport(RetainedFileAccessTransport(env.transport, store, workspace.id), boundary), activity)
     /** Queue senders: also closed until access is revalidated; a closed gate cancels (the queued row waits). */
     private val writeTransport: HttpTransport = WorkspaceHttpTransport(readTransport, writeActivity)
     /** Direct writes from screens (canvas, board, scopes, task tree): same gates, but a closed one is a visible failure. */
@@ -192,6 +192,16 @@ class WorkspaceRuntime(
         private set
     /** Set first by [close]; a runtime that was released for good (Disconnect, teardown) can never be started or opened again. */
     @Volatile private var closed = false
+
+    /** Observable gate generations, including same-boundary pause/resume and validation failure.
+     * Consumers must also check the live snapshot before publishing a suspended result. */
+    data class Readiness(val reads: WorkspaceActivity.Snapshot, val writes: WorkspaceActivity.Snapshot, val issue: String?) {
+        val ready: Boolean get() = reads.open && writes.open
+    }
+    fun readinessSnapshot() = Readiness(activity.snapshot(), writeActivity.snapshot(), validationIssue.value)
+    val readiness = kotlinx.coroutines.flow.combine(activity.state, writeActivity.state, validationIssue) { reads, writes, issue ->
+        Readiness(reads, writes, issue)
+    }
 
     /** True once this runtime's access was confirmed after the latest resume (write gate open). */
     val canSend: Boolean get() = writeActivity.isOpen

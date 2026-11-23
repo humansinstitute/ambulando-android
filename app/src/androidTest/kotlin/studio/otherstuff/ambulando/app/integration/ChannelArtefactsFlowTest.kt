@@ -23,6 +23,15 @@ import studio.otherstuff.ambulando.core.sample.SampleIds
 @RunWith(AndroidJUnit4::class)
 class ChannelArtefactsFlowTest {
     @get:Rule val compose = createEmptyComposeRule()
+    private fun captureEvidence(name: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+        java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "android71-$name.png").outputStream().use {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        bitmap.recycle()
+    }
+
 
     @Test fun channelListFindsAndOpensSharedWhiteboardWithoutCanvas() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -183,7 +192,7 @@ class ChannelArtefactsFlowTest {
             InstrumentationRegistry.getInstrumentation().runOnMainSync { model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.DOCS }
             compose.waitUntil(20_000) { model.context.channelId == SampleIds.GENERAL }
             compose.onNodeWithTag("artefacts.new").performClick()
-            val name = "HTML runtime " + System.currentTimeMillis()
+            val name = "HTML-runtime-" + System.currentTimeMillis()
             compose.onNodeWithTag("artefacts.title").performTextInput(name)
             compose.onNodeWithTag("artefacts.type.html").performClick()
             compose.onNode(hasText("general", substring = true) and hasAnyAncestor(isDialog())).performClick()
@@ -197,6 +206,12 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("artefacts.editSource").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("artefacts.source")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("artefacts.source").performTextReplacement("<h1>Saved on Android</h1>")
+            compose.onNodeWithText("Close (keep draft)").performClick()
+            compose.onNodeWithTag("artefacts.menu").performClick()
+            compose.onNodeWithTag("artefacts.editSource").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("artefacts.source")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("artefacts.source").assertTextContains("<h1>Saved on Android</h1>")
+            captureEvidence("html-recovered-source")
             compose.onNodeWithTag("artefacts.saveSource").performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.source")).fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithTag("artefacts.menu").performClick()
@@ -205,6 +220,34 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("artefacts.readOnly").assertIsDisplayed()
             compose.onNodeWithTag("artefacts.menu").performClick()
             compose.onNodeWithTag("artefacts.editSource").assertTextContains("Restore source")
+            compose.onNodeWithTag("artefacts.export").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("files.save").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("files.save").assertExists()
+            compose.onNodeWithTag("files.download").assertExists()
+            compose.onNodeWithTag("files.save").performClick()
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+            compose.waitUntil(10_000) { automation.rootInActiveWindow?.packageName?.toString()?.contains("documentsui") == true }
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("input keyevent 4")).use { it.readBytes() }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("Save cancelled.").fetchSemanticsNodes().isNotEmpty() }
+            captureEvidence("export-picker-cancel-return")
+            // Save again and verify the latest saved bytes, even while viewing historical HTML.
+            fun saveButton(root: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+                root ?: return null
+                if (root.text?.toString()?.equals("Save", ignoreCase = true) == true && root.isClickable) return root
+                for (index in 0 until root.childCount) saveButton(root.getChild(index))?.let { return it }
+                return null
+            }
+            compose.onNodeWithTag("files.save").performClick()
+            compose.waitUntil(10_000) { saveButton(automation.rootInActiveWindow) != null }
+            saveButton(automation.rootInActiveWindow)!!.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("Saved $name.html.").fetchSemanticsNodes().isNotEmpty() }
+            val savedBytes = android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("cat /sdcard/Download/$name.html")).use { it.readBytes() }
+            assertEquals("<h1>Saved on Android</h1>", savedBytes.toString(Charsets.UTF_8))
+            captureEvidence("export-saved-exact-bytes")
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("rm /sdcard/Download/$name.html")).use { it.readBytes() }
+            // Picker return must retain the sibling dialog and its registered result launcher.
+            compose.onNodeWithTag("artefacts.exportBack").assertExists().performClick()
+            compose.onNodeWithTag("artefacts.menu").assertExists()
         }
     }
 

@@ -59,6 +59,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     var page by remember { mutableStateOf<FileNappletWebHost?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(true) }
+    val visible by rememberUpdatedState(LocalEditorActive.current)
     var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
     var deferredResult by remember { mutableStateOf<JsonObject?>(null) }
     var lastWritable by remember { mutableStateOf<Boolean?>(null) }
@@ -97,7 +98,8 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     fun receipt(writable: Boolean) = NappletApproval.verified(c.origin, c.id, c.towerNpub,
         context.packageName, w.id, w.appNpub, c.signerNpub, file.id, html,
         file.raw.getValue("metadata").jsonObject, manifest, dataId, writable)
-    LaunchedEffect(transport) {
+    AppDiscoveryEffect(foreground && visible, transport) {
+        if (consentReady) return@AppDiscoveryEffect
         authorize()
         if (failure == null) {
             val current = receipt(lastWritable == true)
@@ -115,16 +117,8 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 foreground = true
-                if (trusted) scope.launch {
-                    authorize()
-                    if (failure == null && foreground) {
-                        page?.view?.onResume()
-                        deferredResult?.let { page?.deliver(it) }
-                        deferredResult = null
-                    }
-                }
             }
-            if (event == Lifecycle.Event.ON_STOP) {
+            if (event == Lifecycle.Event.ON_PAUSE) {
                 foreground = false; checking = true
                 // Keep memory drafts and let an already requested save resolve against its original base.
                 page?.view?.onPause()
@@ -136,13 +130,13 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     DisposableEffect(page) {
         val host = page
         val listener = android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused ->
-            if (focused && host != null && failure == null) scope.launch { authorize() }
+            if (focused && foreground && visible && host != null && failure == null) scope.launch { authorize() }
         }
         host?.view?.viewTreeObserver?.addOnWindowFocusChangeListener(listener)
         onDispose { host?.view?.viewTreeObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener) }
     }
-    LaunchedEffect(trusted, transport, model.activeBoundaryId) {
-        if (trusted) model.store.changes.stream().collect { changes ->
+    AppDiscoveryEffect(trusted && foreground && visible, transport, model.activeBoundaryId) {
+        model.store.changes.stream().collect { changes ->
             if (changes.any { (it.workspaceId == null || it.workspaceId == w.id) && it.table in setOf(
                 studio.otherstuff.ambulando.core.store.StoreTable.FILES, studio.otherstuff.ambulando.core.store.StoreTable.CHANNELS,
                 studio.otherstuff.ambulando.core.store.StoreTable.ACCESS, studio.otherstuff.ambulando.core.store.StoreTable.WORKSPACES,
@@ -150,12 +144,10 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
             ) }) authorize()
         }
     }
-    LaunchedEffect(trusted, transport) {
-        if (!trusted) return@LaunchedEffect
-        authorize()
-        if (failure != null) return@LaunchedEffect
+    AppDiscoveryEffect(trusted && foreground && visible && !checking, transport) {
+        if (page != null || failure != null) return@AppDiscoveryEffect
         withContext(Dispatchers.Main.immediate) { FileNappletWebHost.create(context, html, onMessage = { request ->
-            if (foreground && !busy && !updating && failure == null) {
+            if (foreground && visible && !busy && !updating && failure == null) {
                 val operation = request.string("operation")
                 if (operation == "dirty") dirty = request.bool("dirty") == true
                 else {
@@ -174,7 +166,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                                         put("type", "wingman-napplet-result"); put("version", 1); put("session", host.session); put("requestId", request.getValue("requestId"))
                                         put("status", "ready"); put("baseVersionId", value.version); put("value", value.value); put("canWrite", value.canWrite); put("privacy", "self-channel")
                                     }
-                                    if (foreground && !checking) host.deliver(result) else deferredResult = result
+                                    if (foreground && visible && !checking) host.deliver(result) else deferredResult = result
                                     if (operation == "save") dirty = false
                                 }
                             } catch (e: CancellationException) { throw e }
@@ -183,7 +175,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                                     val result = buildJsonObject {
                                         put("type", "wingman-napplet-result"); put("version", 1); put("session", host.session); put("requestId", request.getValue("requestId")); put("status", "error"); put("code", "conflict"); put("message", "A newer save exists. Reload explicitly before saving.")
                                     }
-                                    if (foreground && !checking) host.deliver(result) else deferredResult = result
+                                    if (foreground && visible && !checking) host.deliver(result) else deferredResult = result
                                 }
                             } catch (_: Exception) { stop() }
                             finally { busy = false }
@@ -192,8 +184,18 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                 }
             }
         }, onStopped = { stop() }).fold(onSuccess = { page = it }, onFailure = { android.util.Log.w("FileNappletHost", "Isolated view creation failed", it); failure = "This WebView cannot safely host the napplet." }) }
-        while (isActive && failure == null) { delay(30000); if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) authorize() }
+
     }
+    AppDiscoveryEffect(trusted && foreground && visible && failure == null, transport) {
+        authorize()
+        if (failure == null && foreground && visible) {
+            page?.view?.onResume()
+            deferredResult?.let { page?.deliver(it) }
+            deferredResult = null
+        }
+        while (isActive && failure == null) { delay(30000); authorize() }
+    }
+    LaunchedEffect(visible) { if(!visible) { checking = true; withContext(Dispatchers.Main.immediate) { page?.view?.onPause() } } }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(enabled = !busy && !updating, onClick = { close() }, modifier = Modifier.testTag("napplet.close")) { Text("Close") }
@@ -261,12 +263,26 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
 }
 
 /** Pin every signed request to the connection identity, including an identity change during signing. */
-internal fun AppModel.fileNappletAPI(connection: studio.otherstuff.ambulando.core.store.ConnectionRecord): TowerAPI {
+internal fun AppModel.fileNappletAPI(
+    connection: studio.otherstuff.ambulando.core.store.ConnectionRecord,
+    transport: studio.otherstuff.ambulando.core.transport.HttpTransport = workspaceTransport,
+    checkCurrent: (suspend () -> Unit)? = null,
+): TowerAPI {
     val bound = studio.otherstuff.ambulando.core.nostr.EventSigner { template ->
+        checkCurrent?.invoke()
         identity.requireSigner(connection.signerNpub)
         identity.sign(template).also {
+            checkCurrent?.invoke()
+            if (checkCurrent != null) identity.requireSigner(connection.signerNpub)
             check(studio.otherstuff.ambulando.core.nostr.NostrKeys.npub(it.pubkey) == connection.signerNpub)
         }
     }
-    return TowerAPI(TowerClient(TowerOrigin(connection.origin), workspaceTransport, bound), transfers)
+    val fenced = if (checkCurrent == null) transport else object : studio.otherstuff.ambulando.core.transport.HttpTransport {
+        override suspend fun send(request: studio.otherstuff.ambulando.core.transport.HttpRequest): studio.otherstuff.ambulando.core.transport.HttpResponse {
+            checkCurrent()
+            identity.requireSigner(connection.signerNpub)
+            return transport.send(request).also { checkCurrent(); identity.requireSigner(connection.signerNpub) }
+        }
+    }
+    return TowerAPI(TowerClient(TowerOrigin(connection.origin), fenced, bound), transfers)
 }

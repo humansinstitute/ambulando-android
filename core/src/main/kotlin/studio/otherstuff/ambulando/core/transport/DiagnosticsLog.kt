@@ -66,14 +66,17 @@ class DiagnosticsLog(private val capacity: Int = 300, private val file: File? = 
     @Serializable private data class Entry(
         val at: String, val endpoint: String? = null, val duration: Long? = null, val status: Int? = null,
         val error: String? = null, val correlation: String? = null, val retry: String? = null,
+        val reportStage: String? = null, val reportCause: String? = null,
     ) {
         fun safe(): Boolean = runCatching { Instant.parse(at) }.isSuccess &&
             (endpoint == null || DiagnosticsRedactor.validEndpoint(endpoint)) &&
             (duration == null || duration in 0..86_400_000) && (status == null || status in 100..599) &&
             (error == null || error in setOf("cancelled", "tls", "timeout", "dns", "connection", "error") || Regex("http-[1-5][0-9]{2}").matches(error)) &&
             (retry == null || retry in setOf("retry", "gave-up", "recovered")) &&
+            ((reportStage == null && reportCause == null) ||
+                (reportStage in ReportStage.entries.map { it.name } && reportCause in ReportCause.entries.map { it.name })) &&
             (correlation == null || correlation == DiagnosticsRedactor.correlation(HttpResponse(200, byteArrayOf(), mapOf(correlation.substringBefore('=') to correlation.substringAfter('=')))))
-        fun line(): String = listOfNotNull(at, endpoint, duration?.let { "${it}ms" }, status?.let { "status=$it" }, error?.let { "error=$it" }, correlation, retry).joinToString(" | ")
+        fun line(): String = listOfNotNull(at, endpoint, duration?.let { "${it}ms" }, status?.let { "status=$it" }, error?.let { "error=$it" }, correlation, retry, reportStage?.let { "report=$it" }, reportCause?.let { "cause=$it" }).joinToString(" | ")
     }
     private val limit = capacity.coerceIn(1, 300)
     private val entries = ArrayDeque<Entry>()
@@ -106,6 +109,10 @@ class DiagnosticsLog(private val capacity: Int = 300, private val file: File? = 
         entries.clear()
         runCatching { file?.delete(); file?.let { File(it.parentFile, it.name + ".tmp").delete() } }
         persist()
+    }
+    fun report(stage: ReportStage, cause: ReportCause, status: Int? = null) {
+        append(Entry(Instant.now().toString(), status = status?.takeIf { it in 100..599 },
+            reportStage = stage.name, reportCause = cause.name), cause != ReportCause.OK)
     }
     fun retry(outcome: String) { append(Entry(Instant.now().toString(), retry = outcome), true) }
     fun request(request: HttpRequest, duration: Long, response: HttpResponse?, error: Throwable?) {

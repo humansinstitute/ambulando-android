@@ -30,12 +30,14 @@ import studio.otherstuff.ambulando.core.surfaces.*
     var publisher by remember(boundary,authorityKey,services.unlocked) { mutableStateOf(c.signerNpub) }
     var busy by remember(boundary,authorityKey,services.unlocked) { mutableStateOf(false) }; var error by remember(boundary,authorityKey,services.unlocked) { mutableStateOf<String?>(null) }
     DisposableEffect(sync) { onDispose { sync.clear() } }
-    LaunchedEffect(sync,services.unlocked,w.accessRemoved) {
-        if(!services.unlocked || w.accessRemoved) { sync.clear(); selected=null; return@LaunchedEffect }
-        while(isActive) {
-            try { sync.refresh(); error=null } catch(e: CancellationException) {throw e} catch(_: Exception) {error="Workspace apps are unavailable. Legacy File apps remain below."}
-            delay(30000)
-        }
+    val active = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current
+    LaunchedEffect(services.unlocked,w.accessRemoved) {
+        if(!services.unlocked || w.accessRemoved) { sync.clear(); selected=null }
+    }
+    AppDiscoveryEffect(active && selected == null && services.unlocked && !w.accessRemoved, sync) {
+        // Discovery runs on open/foreground. Runtime hosts own their visible authority checks;
+        // the launcher must not poll while a dialog or another app is in front.
+        try { sync.refresh(); error=null } catch(e: CancellationException) {throw e} catch(_: Exception) {error="Workspace apps are unavailable. Legacy File apps remain below."}
     }
     Column(Modifier.fillMaxWidth()) {
         state.installations.forEach { i -> TextButton(onClick={ selected=i.id },enabled=state.available && services.unlocked && model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked && model.identityState?.npub==c.signerNpub,modifier=Modifier.testTag("runtime.app.${i.id}")) {

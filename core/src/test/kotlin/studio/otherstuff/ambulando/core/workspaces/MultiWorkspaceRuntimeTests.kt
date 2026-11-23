@@ -1,5 +1,7 @@
 package studio.otherstuff.ambulando.core.workspaces
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -49,8 +51,10 @@ class MultiWorkspaceRuntimeTests {
     private class World(val identity: IdentityService, val a: SampleTower, val b: SampleTower) {
         val posts = Collections.synchronizedList(ArrayList<String>())
         private fun route(url: String): SampleTower = if (URI(url).host == a.origin.host) a else b
+        @Volatile var beforeRequest: suspend (HttpRequest) -> Unit = {}
         val http = object : HttpTransport {
             override suspend fun send(request: HttpRequest): HttpResponse {
+                beforeRequest(request)
                 if (request.method == "POST" && request.url.substringBefore('?').endsWith("/messages")) posts.add(URI(request.url).host)
                 return route(request.url).send(request)
             }
@@ -86,6 +90,52 @@ class MultiWorkspaceRuntimeTests {
     private fun <T> test(block: suspend World.() -> T): T = runBlocking { val w = world(); try { withTimeout(60_000) { w.block() } } finally { runCatching { w.runtimes.close() }; w.engine.close() } }
 
     private suspend fun World.settle() { withTimeout(20_000) { engine.waitUntilIdle() } }
+
+    @Test fun reportWaitsForValidationThenObservesReadyWithoutChangingDirectGetOrPostGate() = test {
+        val ca = connect(a)
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        beforeRequest = { request ->
+            if (URI(request.url).path == "/api/v4/flightdeck-pg/workspaces") {
+                entered.complete(Unit); release.await()
+            }
+        }
+        val ra = runtimes.enable(ca, studio(ca))
+        entered.await()
+        assertFalse(ra.readinessSnapshot().ready)
+        var directRequests = 0
+        val previous = beforeRequest
+        beforeRequest = { request -> directRequests++; previous(request) }
+        val requestUrl = ca.origin + "/api/v4/flightdeck-pg/workspaces/" + ra.workspace.id + "/scopes"
+        for (method in listOf("GET", "POST")) {
+            assertTrue(runCatching { ra.directTransport.send(HttpRequest(method, requestUrl)) }.exceptionOrNull() is studio.otherstuff.ambulando.core.sync.WritesNotReady)
+        }
+        assertEquals("closed direct gate must refuse before HTTP", 0, directRequests)
+        val observed = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.currentCoroutineContext()).async {
+            ra.readiness.first { it.ready }
+        }
+        release.complete(Unit)
+        val ready = observed.await()
+        assertTrue(ready.ready)
+        assertEquals(ra.readinessSnapshot(), ready)
+        ra.closeGates()
+        assertFalse(ra.readinessSnapshot().ready)
+        assertNotEquals(ready.reads.generation, ra.readinessSnapshot().reads.generation)
+        assertNotEquals(ready.writes.generation, ra.readinessSnapshot().writes.generation)
+    }
+
+    @Test fun reportReadinessExposesValidationFailureAndLaterRecovery() = test {
+        val ca = connect(a)
+        a.offline = true
+        val ra = runtimes.enable(ca, studio(ca))
+        ra.awaitStarted()
+        assertFalse(ra.readinessSnapshot().ready)
+        assertTrue(ra.readiness.first { it.issue != null }.issue != null)
+        a.offline = false
+        ra.start(foreground = false, force = true)
+        val ready = ra.readiness.first { it.ready && it.issue == null }
+        assertTrue(ready.ready)
+    }
 
     @Test fun identicalWorkspaceIdsOnTwoTowersRunSideBySideWithSeparateStoresAndWrites() = test {
         val ca = connect(a); val cb = connect(b)

@@ -39,7 +39,7 @@ import java.time.Instant
 internal fun AppsPage(session: AdministrationSession, nav: AdminNavigation, push: (AdminRoute) -> Unit, back: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
-    val members = session.rows(AdministrationList.MEMBERS)
+    val members = session.displayRows(AdministrationList.MEMBERS)
     val delegations = session.rows(AdministrationList.DELEGATIONS)
     val installations = session.rows(AdministrationList.INSTALLATIONS)
     val publishing = session.rows(AdministrationList.PUBLISHING)
@@ -111,7 +111,7 @@ private fun filterLabel(value: String, key: String, nav: AdminNavigation): Strin
 @Composable
 internal fun DelegationPage(session: AdministrationSession, nav: AdminNavigation, back: () -> Unit) {
     val form = remember(session) { FormState(session, "delegation", mapOf("days" to "1")) }
-    val members = session.rows(AdministrationList.MEMBERS)
+    val members = session.displayRows(AdministrationList.MEMBERS)
     AdminPage("Grant app management", session, back, "admin.delegationPage") {
         RowPicker(form, "actor", "Delegate", members.map { PickOption(it.id, it.title, it.fields["npub"]?.let(::shortKey) ?: "", keywords = it.fields["npub"] ?: "") })
         AdminField(form, "app", "App identifier")

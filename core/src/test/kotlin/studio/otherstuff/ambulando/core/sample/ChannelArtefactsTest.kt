@@ -26,6 +26,11 @@ class ChannelArtefactsTest {
         assertTrue(h.api.addFileVersion(SampleIds.STUDIO, h.app, file.id, base, second, UUID.randomUUID().toString()) is VersionOutcome.Saved)
         assertEquals("<h1>One</h1>", h.api.artefactHTML(SampleIds.STUDIO, h.app, file.id, base))
         assertEquals("<h1>Two</h1>", h.api.artefactHTML(SampleIds.STUDIO, h.app, file.id))
+        // The real NStack replacement updates both the head and the ordinary File object pointer.
+        val current = h.api.artefactFile(SampleIds.STUDIO,h.app,file.id)
+        assertEquals(second,current.storageObjectId)
+        assertEquals(studio.otherstuff.ambulando.core.nostr.Sha256Hex.of("<h1>Two</h1>".toByteArray()),current.sha256)
+        assertEquals("<h1>Two</h1>", h.api.fileObject(SampleIds.STUDIO,h.app,file.id).bytes.toString(Charsets.UTF_8))
         assertTrue(h.api.addFileVersion(SampleIds.STUDIO, h.app, file.id, base, objectId("<h1>Stale</h1>"), UUID.randomUUID().toString()) is VersionOutcome.Conflict)
         assertEquals(2, h.api.fileVersions(SampleIds.STUDIO, h.app, file.id).versions.size)
     }

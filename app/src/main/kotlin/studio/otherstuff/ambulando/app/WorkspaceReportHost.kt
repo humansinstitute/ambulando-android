@@ -26,6 +26,7 @@ import studio.otherstuff.ambulando.core.transport.*
     val exit=studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current
     val context=LocalContext.current; val lifecycle=LocalLifecycleOwner.current.lifecycle
     val services=studio.otherstuff.ambulando.app.ui.nav.LocalAppServices.current
+    val visible by rememberUpdatedState(studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current)
     val boundary=model.activeBoundaryId
     val scope=rememberCoroutineScope()
     val gate=remember { Mutex() }
@@ -45,7 +46,7 @@ import studio.otherstuff.ambulando.core.transport.*
             file.raw.getValue("metadata").jsonObject,manifest,::current) { range -> model.sync.readWorkspaceReport(c,w,range) }
     }
     val receipt=remember(boundary,file.id,version) { NappletApproval.report(c.origin,c.id,c.towerNpub,context.packageName,w.id,w.appNpub,c.signerNpub,file.id,html,file.raw.getValue("metadata").jsonObject,manifest) }
-    fun clear() { operation?.cancel(); page?.destroy(); page=null; busy=false }
+    fun clear() { operation?.cancel(); operation=null; page?.destroy(); page=null; busy=false }
     fun stop() { approvals.forget(receipt); clear(); trusted=false; ready=false; failure="This report is unavailable. Close and reopen it to verify access." }
     suspend fun authorize(): Boolean {
         checking=true
@@ -55,39 +56,42 @@ import studio.otherstuff.ambulando.core.transport.*
             catch(e: Exception) { android.util.Log.w("WorkspaceReportHost","Code authority check failed",e); stop(); false }
             finally { checking=false }
     }
-    LaunchedEffect(transport) {
-        if(authorize()) { trusted=withContext(Dispatchers.IO) { approvals.approved(receipt) }; ready=true }
+    AppDiscoveryEffect(foreground && visible, transport) {
+        if(!ready && authorize()) { trusted=withContext(Dispatchers.IO) { approvals.approved(receipt) }; ready=true }
     }
     DisposableEffect(lifecycle,transport) {
         val observer=LifecycleEventObserver { _,event ->
-            if(event==Lifecycle.Event.ON_STOP) { foreground=false; clear() }
+            if(event==Lifecycle.Event.ON_PAUSE) { foreground=false; checking=true; clear() }
             if(event==Lifecycle.Event.ON_RESUME) foreground=true
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); clear() }
     }
     LaunchedEffect(services.unlocked,w.accessRemoved,boundary) { if(!current()) stop() }
-    LaunchedEffect(transport,trusted) {
-        if(trusted) model.store.changes.stream().collect { changes ->
+    AppDiscoveryEffect(trusted && foreground && studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current, transport) {
+        model.store.changes.stream().collect { changes ->
             if(changes.any { (it.workspaceId==null || it.workspaceId==w.id) && it.table in setOf(
                 studio.otherstuff.ambulando.core.store.StoreTable.FILES,studio.otherstuff.ambulando.core.store.StoreTable.CHANNELS,
                 studio.otherstuff.ambulando.core.store.StoreTable.ACCESS,studio.otherstuff.ambulando.core.store.StoreTable.WORKSPACES,
                 studio.otherstuff.ambulando.core.store.StoreTable.CONNECTIONS) }) gate.withLock { if(!authorize()) return@withLock }
         }
     }
-    LaunchedEffect(transport,trusted,foreground) {
-        if(!trusted || !foreground || failure!=null) return@LaunchedEffect
-        gate.withLock { if(!authorize()) return@LaunchedEffect }
+    AppDiscoveryEffect(trusted && foreground && visible && !checking, transport) {
+        if(page!=null || failure!=null) return@AppDiscoveryEffect
         withContext(Dispatchers.Main.immediate) { WorkspaceReportWebHost.create(context,html,onMessage={ request ->
-            if(!busy && !checking && foreground && current() && failure==null) {
+            val requestSession = WorkspaceReport.text(request,"session")
+            val host = page?.takeIf { it.session == requestSession }
+            if(host != null && !busy && trusted && foreground && visible && current() && failure==null) {
                 busy=true
                 operation=scope.launch {
+                    // Preserve the first read while focus/store authority is being checked, as the generic host does.
+                    yield()
                     gate.withLock {
-                        val host=page
                         try {
+                            check(page === host && trusted && foreground && visible && current() && failure == null)
                             val value=transport.read(WorkspaceReport.text(request,"range"))
                             ensureActive(); check(current())
-                            if(foreground && page===host) host?.deliver(buildJsonObject {
+                            if(foreground && visible && page===host) host?.deliver(buildJsonObject {
                                 put("type","wingman-napplet-result"); put("version",1); put("session",host.session)
                                 put("requestId",request.getValue("requestId")); put("status","ready"); put("value",value)
                                 put("canWrite",false); put("privacy","viewer-channels")
@@ -95,19 +99,24 @@ import studio.otherstuff.ambulando.core.transport.*
                         } catch(e: CancellationException) { throw e }
                         catch(_: Exception) {
                             // A missing API/offline response is unavailable, never a zero report. Recheck code authority first.
-                            if(authorize() && foreground && page===host) host?.deliver(buildJsonObject {
+                            if(page===host && foreground && visible && current() && authorize() && page===host) host?.deliver(buildJsonObject {
                                 put("type","wingman-napplet-result"); put("version",1); put("session",host.session)
                                 put("requestId",request.getValue("requestId")); put("status","error"); put("code","unavailable")
                                 put("message","The workspace report is unavailable. Refresh when access is available.")
                             })
-                        } finally { busy=false }
+                        } finally { if (page === host && operation === currentCoroutineContext()[Job]) { busy=false; operation=null } }
                     }
                 }
             }
         },onStopped={ android.util.Log.w("WorkspaceReportHost","Sandbox stopped"); stop() }).fold(onSuccess={ page=it },onFailure={ android.util.Log.w("WorkspaceReportHost","Isolated view creation failed",it); stop() }) }
+
+    }
+    AppDiscoveryEffect(trusted && foreground && visible && failure == null, transport) {
+        gate.withLock { if (authorize()) page?.view?.onResume() }
         while(isActive && failure==null) { delay(30000); gate.withLock { authorize() } }
     }
-    Column(Modifier.fillMaxSize()) {
+    LaunchedEffect(visible) { if (!visible) { checking = true; withContext(Dispatchers.Main.immediate) { page?.view?.onPause() } } }
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
             TextButton(onClick={ clear(); exit?.invoke() },modifier=Modifier.testTag("report.close")) { Text("Close") }
             Text("Workspace Report",Modifier.weight(1f).padding(12.dp))
@@ -124,7 +133,9 @@ import studio.otherstuff.ambulando.core.transport.*
                     finally { busy=false }
                 } } },modifier=Modifier.testTag("report.trust")) { Text("Trust and open") }
             }
-            else -> page?.let { host -> AndroidView(factory={host.view},update={ it.visibility=if(checking || !foreground) android.view.View.INVISIBLE else android.view.View.VISIBLE },modifier=Modifier.fillMaxWidth().weight(1f).testTag("report.host")) }
+            else -> page?.let { host -> key(host.session) {
+                AndroidView(factory={host.view},update={ it.visibility=if(checking || !foreground || !visible) android.view.View.INVISIBLE else android.view.View.VISIBLE },modifier=Modifier.fillMaxWidth().weight(1f).testTag("report.host"))
+            } }
         }
     }
 }

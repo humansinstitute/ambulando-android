@@ -30,3 +30,11 @@ Android artefact follow-up adapts `boardEditorElements` from sol `c2e3bb6` for v
 compatibility and hydrates files after elements in `board-editor/editor.js`. These two files have bounded native
 changes; saved source bytes are not rewritten on open. The native starter descriptors and System Flow validator
 follow the same commit's `artefact-templates.js` and `system-flow-schema.js` without importing a remote runtime.
+
+The author-name presentation extension follows the shared web/native board editor protocol:
+`author-identities` out (`key`, at most 2000 exact identity strings), `author-names` in
+(`key`, replacement `names` map, at most 2000 entries and 256 characters per label).
+The native host validates complete npub checksums and resolves only its existing local people directory.
+The editor ignores mismatched view keys, clears names on a load-key change or `clear`, and renders
+names as React text with the exact identity retained in the title. Names never enter scene JSON,
+comments, drafts or version history. Android retains its existing embedded-image display adaptations.

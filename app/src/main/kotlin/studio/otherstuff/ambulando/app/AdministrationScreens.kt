@@ -273,7 +273,7 @@ private fun MembersPage(session: AdministrationSession, push: (AdminRoute) -> Un
         TextButton(onClick = { push(AdminRoute.MemberAdd) }, enabled = session.canAdminister, modifier = Modifier.testTag("admin.member.add")) { Text("Add workspace member") }
         OutlinedTextField(query, { query = it }, label = { Text("Find workspace members") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("admin.member.search"))
         ListStatus(session, AdministrationList.MEMBERS, "members", "admin.members")
-        val members = GroupDirectory.search(session.rows(AdministrationList.MEMBERS), query)
+        val members = GroupDirectory.search(session.displayRows(AdministrationList.MEMBERS), query)
         for (row in members) {
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 RowSummary(row, "admin.member.${row.id}", row.fields["npub"]?.let { shortKey(it) })
@@ -310,7 +310,7 @@ private fun MemberProfilePage(session: AdministrationSession, actorId: String, b
     }
     val form = remember(session, actorId) { FormState(session, "member-profile:$actorId", mapOf("name" to row.title)) }
     AdminPage("Edit member display name", session, back, "admin.memberProfilePage") {
-        Text(row.title)
+        Text(session.personRow(row).title)
         AdminField(form, "name", "Display name")
         SaveBar(form, session, allowed = session.canAdminister, confirmTitle = "Change this display name?",
             confirmText = "The new name is shown to everyone in ${session.workspaceLabel}.") {
@@ -339,7 +339,7 @@ private fun GroupsPage(session: AdministrationSession, push: (AdminRoute) -> Uni
         TextButton(onClick = { push(AdminRoute.GroupNew) }, enabled = session.canAdminister, modifier = Modifier.testTag("admin.group.new")) { Text("New group") }
         OutlinedTextField(query, { query = it }, label = { Text("Find groups") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("admin.group.search"))
         ListStatus(session, AdministrationList.GROUPS, "groups", "admin.groups")
-        val groups = GroupDirectory.search(session.rows(AdministrationList.GROUPS), query)
+        val groups = GroupDirectory.search(session.displayRows(AdministrationList.GROUPS), query)
         for (group in groups) {
             TextButton(onClick = { push(AdminRoute.Group(group.id)) }, modifier = Modifier.fillMaxWidth().testTag("admin.group.${group.id}")) {
                 Column(Modifier.fillMaxWidth()) {
@@ -365,8 +365,8 @@ private fun GroupNewPage(session: AdministrationSession, back: () -> Unit) {
 
 @Composable
 private fun GroupPage(session: AdministrationSession, groupId: String, back: () -> Unit) {
-    val groups = session.rows(AdministrationList.GROUPS)
-    val members = session.rows(AdministrationList.MEMBERS)
+    val groups = session.displayRows(AdministrationList.GROUPS)
+    val members = session.displayRows(AdministrationList.MEMBERS)
     val group = groups.firstOrNull { it.id == groupId }
     val form = remember(session, groupId) { FormState(session, "group-member:$groupId", mapOf("kind" to "human")) }
     val childForm = remember(session, groupId) { FormState(session, "child-group:$groupId", emptyMap()) }

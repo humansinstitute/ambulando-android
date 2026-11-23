@@ -22,6 +22,39 @@ class WorkspaceReportDiscoveryTest {
         assertEquals(1, h.api.fileVersions(SampleIds.STUDIO,h.app,first.code.id).versions.size)
     }
 
+    @Test fun failuresAtEveryTraversalStageRemainFailuresAndNeverWrite() = runBlocking {
+        val h = SampleHarness()
+        h.api.createWorkspaceReport(SampleIds.STUDIO, h.app, TestKeys.NPUB, "<h1>Report</h1>")
+        for ((collection, stage) in listOf("scopes" to ReportStage.SCOPES, "channels" to ReportStage.CHANNELS, "files" to ReportStage.FILES)) {
+            for (mode in listOf("denied", "partial", "malformed", "full_page")) {
+                var writes = 0
+                val log = DiagnosticsLog()
+                val transport = object : HttpTransport {
+                    override suspend fun send(request: HttpRequest): HttpResponse {
+                        if (request.method != "GET") writes++
+                        if (URI(request.url).path.endsWith("/$collection")) {
+                            if (mode == "denied") return HttpResponse(403, "{}".toByteArray())
+                            if (mode == "malformed") return HttpResponse(200, "{".toByteArray())
+                            val response = h.tower.send(request)
+                            val value = Json.parseToJsonElement(response.body.toString(Charsets.UTF_8)).jsonObject
+                            val rows = value.getValue(collection).jsonArray
+                            val changed = if (mode == "partial") JsonObject(value + ("partial" to JsonPrimitive(true)))
+                                else JsonObject(value + (collection to JsonArray(List(200) { rows.first() })))
+                            return HttpResponse(200, changed.toString().toByteArray())
+                        }
+                        return h.tower.send(request)
+                    }
+                }
+                val api = TowerAPI(TowerClient(h.tower.origin, transport, SampleSigners.primary))
+                assertTrue("$collection $mode", runCatching {
+                    api.workspaceReportInstances(SampleIds.STUDIO, h.app, TestKeys.NPUB, ReportDiagnostics(log))
+                }.isFailure)
+                assertEquals(0, writes)
+                assertTrue(log.export("test", 1, 36).contains("report=${stage.name}"))
+            }
+        }
+    }
+
     @Test fun incompleteDeniedOrMalformedDiscoveryCannotEnableSetup() = runBlocking {
         val h = SampleHarness()
         h.api.createWorkspaceReport(SampleIds.STUDIO, h.app, TestKeys.NPUB, "<h1>Tracker</h1>")

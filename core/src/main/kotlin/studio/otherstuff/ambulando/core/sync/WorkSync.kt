@@ -39,6 +39,7 @@ import studio.otherstuff.ambulando.core.transport.doc
 import studio.otherstuff.ambulando.core.transport.docBody
 import studio.otherstuff.ambulando.core.transport.docComments
 import studio.otherstuff.ambulando.core.transport.fileObject
+import studio.otherstuff.ambulando.core.transport.fileVersionBytes
 import studio.otherstuff.ambulando.core.transport.reactions
 import studio.otherstuff.ambulando.core.transport.storageContent
 import studio.otherstuff.ambulando.core.transport.task
@@ -294,28 +295,31 @@ class FileCache(val root: File) {
  * object-store downloads through a background transfer seam are not wired on Android yet: the typed route is always
  * used.)
  */
-suspend fun WorkspaceSync.download(connection: ConnectionRecord, workspace: WorkspaceRecord, file: FileRecord, cache: FileCache) {
+suspend fun WorkspaceSync.download(connection: ConnectionRecord, workspace: WorkspaceRecord, file: FileRecord, cache: FileCache, version: studio.otherstuff.ambulando.core.transport.FileVersionRecord? = null) {
     engine.enqueueRead(WorkspaceSync.downloadKey(workspace.id, file.id), SyncPriority.USER, force = true) {
         identity.requireReader(connection.signerNpub)
         if (workspace.accessRemoved || file.accessRemoved || store.reader.isChannelAccessRemoved(workspace.id, file.channelId)) return@enqueueRead
-        val obj = api(connection).fileObject(workspace.id, workspace.appNpub, file.id)
+        val bytes = if (version == null) api(connection).fileObject(workspace.id, workspace.appNpub, file.id).bytes
+            else { require(version.fileId == file.id); api(connection).fileVersionBytes(workspace.id, workspace.appNpub, file.id, version) }
         checkCancelled()
-        if (file.sha256 != null && obj.sha256 != file.sha256) throw studio.otherstuff.ambulando.core.transport.FileTransferError.Integrity
-        cache.store(obj.bytes, file)
+        if (file.sha256 != null && studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes) != file.sha256) throw studio.otherstuff.ambulando.core.transport.FileTransferError.Integrity
+        cache.store(bytes, file)
         store.writer.touch(setOf(ChangeKey(StoreTable.FILES, workspace.id)))
     }
 }
 
 /** Awaited, user-initiated export: errors reach the save UI instead of becoming background retries. */
-suspend fun WorkspaceSync.downloadForExport(connection: ConnectionRecord, workspace: WorkspaceRecord, file: FileRecord, cache: FileCache): File =
-    engine.perform("export:${workspace.id}:${file.id}") {
+suspend fun WorkspaceSync.downloadForExport(connection: ConnectionRecord, workspace: WorkspaceRecord, file: FileRecord, cache: FileCache, version: studio.otherstuff.ambulando.core.transport.FileVersionRecord? = null): File =
+    engine.perform("export:${workspace.id}:${file.id}:${version?.id.orEmpty()}") {
         identity.requireReader(connection.signerNpub)
         require(!workspace.accessRemoved && !file.accessRemoved && !store.reader.isChannelAccessRemoved(workspace.id, file.channelId)) { "This file is no longer available to you." }
+        require(version == null || (version.fileId == file.id && version.sha256 != null && version.sha256 == file.sha256))
         cache.cached(file) ?: run {
-            val obj = api(connection).fileObject(workspace.id, workspace.appNpub, file.id)
-            if (file.sha256 != null && obj.sha256 != file.sha256) throw studio.otherstuff.ambulando.core.transport.FileTransferError.Integrity
+            val bytes = if (version == null) api(connection).fileObject(workspace.id, workspace.appNpub, file.id).bytes
+                else { require(version.fileId == file.id); api(connection).fileVersionBytes(workspace.id, workspace.appNpub, file.id, version) }
+            if (file.sha256 != null && studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes) != file.sha256) throw studio.otherstuff.ambulando.core.transport.FileTransferError.Integrity
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            cache.store(obj.bytes, file).also { store.writer.touch(setOf(ChangeKey(StoreTable.FILES, workspace.id))) }
+            cache.store(bytes, file).also { store.writer.touch(setOf(ChangeKey(StoreTable.FILES, workspace.id))) }
         }
     }
 

@@ -184,7 +184,7 @@ private fun DeckPagination(cards: List<DeckCard>, selection: DeckCard?, onSelect
         cards.forEach { card ->
             val on = selection == card
             Box(
-                Modifier.size(width = 32.dp, height = 30.dp)
+                Modifier.size(48.dp)
                     .clickable(role = Role.Button) { onSelect(card) }
                     .semantics { contentDescription = "Show ${card.title}"; selected = on }
                     .testTag("deck.page.${card.key}"),

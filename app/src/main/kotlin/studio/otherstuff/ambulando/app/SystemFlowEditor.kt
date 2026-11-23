@@ -47,17 +47,22 @@ import java.util.UUID
     studio.otherstuff.ambulando.app.ui.shell.OwnEditorNavigation()
     val exit = studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current
     BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current) { exit?.invoke() }
-    val controller = remember(c.id, w.id, file.id) {
-        val api = model.towerAPI(c)
+    val runtime = model.active ?: return
+    val controller = remember(runtime, c, w, file.id) {
+        val api = model.fileNappletAPI(c).fencedArtefactAPI(runtime.store.reader,w,file.id) {
+            model.active === runtime && !runtime.workspace.accessRemoved && model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked
+        }
         SystemFlowController(object : SystemFlowController.Transport {
             override suspend fun head(): Pair<Boolean, FileVersionList> {
-                val fresh = api.artefactFile(w.id, w.appNpub, file.id)
-                check(ArtefactType.of(fresh) == ArtefactType.SYSTEM_FLOW && !fresh.accessRemoved && !fresh.archived)
-                return (fresh.raw.bool("can_write") == true) to api.fileVersions(w.id, w.appNpub, file.id)
+                return runtime.sync.genericNappletRead(file.id) {
+                    val fresh = api.artefactFile(w.id, w.appNpub, file.id)
+                    check(ArtefactType.of(fresh) == ArtefactType.SYSTEM_FLOW && !fresh.accessRemoved && !fresh.archived)
+                    (fresh.raw.bool("can_write") == true) to api.fileVersions(w.id, w.appNpub, file.id)
+                }
             }
             override suspend fun bytes(version: FileVersionRecord): ByteArray {
                 require(version.sha256 != null && version.sizeBytes in 1..SystemFlow.MAX_BYTES.toLong()) { "System Flow requires a bounded, hash-verified version." }
-                return api.fileVersionBytes(w.id, w.appNpub, file.id, version)
+                return runtime.sync.genericNappletRead(file.id) { api.fileVersionBytes(w.id, w.appNpub, file.id, version) }
             }
             override suspend fun save(base: String, bytes: ByteArray): VersionOutcome {
                 val objectId = api.store(w.id, w.appNpub, bytes, ArtefactType.SYSTEM_FLOW.mime, "flow.json", null) { }
@@ -67,12 +72,14 @@ import java.util.UUID
     }
     val state by controller.state.collectAsState()
     LaunchedEffect(controller) { controller.open() }
-    SystemFlowEditor(state, file.displayName, { action -> model.act { action(controller) } }, file.raw.obj("metadata")?.obj("artefact")?.string("style_id") ?: "default", onBack = { exit?.invoke() }) { ArtefactProvenance(file) }
+    var exporting by remember(runtime, file.id) { mutableStateOf(false) }
+    if (exporting) ArtefactFileActions(model, file) { exporting = false }
+    SystemFlowEditor(state, file.displayName, { action -> model.act { action(controller) } }, file.raw.obj("metadata")?.obj("artefact")?.string("style_id") ?: "default", onBack = { exit?.invoke() }, onExport = { exporting = true }) { ArtefactProvenance(file) }
 }
 
 /** Native typed controls, no arbitrary code/runtime or host bridge. Complete scene collections stay opaque and intact. */
 @Composable internal fun SystemFlowEditor(state: SystemFlowController.State, title: String,
-    act: (suspend (SystemFlowController) -> Unit) -> Unit, style: String = "default", onBack: () -> Unit = {}, provenance: @Composable () -> Unit = {}) {
+    act: (suspend (SystemFlowController) -> Unit) -> Unit, style: String = "default", onBack: () -> Unit = {}, onExport: (() -> Unit)? = null, provenance: @Composable () -> Unit = {}) {
     var diagram by remember { mutableIntStateOf(0) }
     var versions by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
@@ -91,6 +98,7 @@ import java.util.UUID
                 IconButton(onClick = { versions = true }, modifier = Modifier.testTag("flow.versions")) { Icon(Icons.Outlined.MoreHoriz, "Flow options") }
                 DropdownMenu(versions, { versions = false }) {
                     provenance()
+                    onExport?.let { export -> DropdownMenuItem(text = { Text("Download / share File") }, onClick = { versions = false; export() }, modifier = Modifier.testTag("artefacts.export")) }
                     if (cleanSaved) Text(state.message, Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("flow.status"))
                     Text("Typed node and relationship editing. Linked whiteboard scenes and feedback stay intact; use the original for those edits.",
                         Modifier.widthIn(max = 320.dp).padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall)

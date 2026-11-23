@@ -26,16 +26,17 @@ import studio.otherstuff.ambulando.core.sync.SyncPriority
 import java.io.File
 import java.util.UUID
 
-@Composable internal fun BoardEditor(model: AppModel, board: BoardReference, title: String, provenance: @Composable () -> Unit = {}, done: () -> Unit) {
+@Composable internal fun BoardEditor(model: AppModel, board: BoardReference, title: String, provenance: @Composable () -> Unit = {}, exportFile: studio.otherstuff.ambulando.core.transport.FileRecord? = null, done: () -> Unit) {
     val c = model.connection ?: return; val w = model.workspace ?: return
     studio.otherstuff.ambulando.app.ui.shell.OwnEditorNavigation()
+    val boundaryId = model.activeBoundaryId
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var state by remember(board.fileId) { mutableStateOf(BoardState()) }
+    var state by remember(board.fileId, boundaryId) { mutableStateOf(BoardState()) }
     var error by remember { mutableStateOf<String?>(null) }
-    var page by remember { mutableStateOf<EditorWebHost?>(null) }
-    val session = remember { UUID.randomUUID().toString() }
-    val transport = remember(board.fileId) {
+    var page by remember(board.fileId, boundaryId) { mutableStateOf<EditorWebHost?>(null) }
+    val session = remember(board.fileId, model.activeBoundaryId) { UUID.randomUUID().toString() }
+    val transport = remember(board.fileId, boundaryId) {
         val base = TowerBoardTransport(model.identity, model.workspaceTransport, c, w, board.fileId, title)
         object : BoardController.Transport {
             override suspend fun versions() = model.engine.perform("board-versions:${board.fileId}", SyncPriority.USER) { base.versions() }
@@ -45,29 +46,45 @@ import java.util.UUID
             override suspend fun rename(name: String) = model.engine.perform("board-rename:${board.fileId}", SyncPriority.USER) { base.rename(name) }
         }
     }
-    val latest = remember { arrayOfNulls<BoardState>(1) }
+    val latest = remember(board.fileId, boundaryId) { arrayOfNulls<BoardState>(1) }
     fun stateNow(): BoardState? = latest[0]
-    val controller = remember(board.fileId) { BoardController(board.fileId, title, c.signerNpub, transport, model.boardDrafts(), { value -> scope.launch { state = value } }) }
+    val controller = remember(board.fileId, boundaryId) { BoardController(board.fileId, title, c.signerNpub, transport, model.boardDrafts(), { value -> scope.launch { state = value } }) }
+    val directory = peopleDirectory(model)
+    val authorNames = remember(controller) { BoardAuthorNames() }
+    var authorRevision by remember(controller) { mutableIntStateOf(0) }
     fun close() { scope.launch { controller.suspendBoard(); controller.detach(session); done() } }
     BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current) { close() }
     DisposableEffect(controller) {
+        var current = true
         EditorWebHost.create(context, "index.html", setOf("board"), 32 * 1024 * 1024) { _, raw ->
             // The page's own Save button (sol `action`) saves only while the controller's state still allows it.
-            scope.launch { if (isSaveAction(raw)) { if (stateNow()?.saveAction?.enabled == true) controller.save() } else controller.receive(session, raw) }
+            scope.launch { if (!current || model.activeBoundaryId != boundaryId) return@launch
+                if (authorNames.request(raw)) { authorRevision++; return@launch }
+                if (isSaveAction(raw)) { if (stateNow()?.saveAction?.enabled == true) controller.save() } else controller.receive(session, raw) }
         }
             .onSuccess { host -> page = host; host.load() }.onFailure { error = it.message }
-        onDispose { page?.destroy(); controller.close() }
+        onDispose { current = false; page?.destroy(); controller.close() }
     }
     LaunchedEffect(controller, page) {
         val host = page ?: return@LaunchedEffect
-        controller.attach(session) { json -> scope.launch { host.call("window.ambulandoBoard.deliver", json) } }
+        controller.attach(session) { json -> scope.launch {
+            if (page !== host || model.activeBoundaryId != boundaryId) return@launch
+            authorNames.sent(json)
+            host.call("window.ambulandoBoard.deliver", json)
+        } }
         controller.sync(board, title)
+    }
+    LaunchedEffect(page, directory, authorRevision) {
+        val host = page ?: return@LaunchedEffect
+        authorNames.message(directory)?.let { host.call("window.ambulandoBoard.deliver", it) }
     }
     SideEffect { latest[0] = state }
     var noting by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var discarding by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var exporting by remember(board.fileId, boundaryId) { mutableStateOf(false) }
+    if (exporting && exportFile != null) ArtefactFileActions(model, exportFile) { exporting = false }
     // The page draws its own Save button from the controller's state (sol `action-ui`).
     LaunchedEffect(page, state.saveAction) {
         val host = page ?: return@LaunchedEffect
@@ -97,6 +114,7 @@ import java.util.UUID
                     }
                     BoardStatusPill(state)
                     provenance()
+                    if (exportFile != null) DropdownMenuItem(text = { Text("Download / share File") }, onClick = { menu = false; exporting = true }, modifier = Modifier.testTag("artefacts.export"))
                     Text("Versions", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                     if (state.versions.isEmpty()) DropdownMenuItem(text = { Text(if (state.versionsLoading) "Loading versions…" else "Show versions") }, onClick = { scope.launch { controller.loadVersions() } })
                     state.versions.take(30).forEach { version ->

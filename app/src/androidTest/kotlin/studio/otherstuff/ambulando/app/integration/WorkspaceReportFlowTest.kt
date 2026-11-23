@@ -95,6 +95,8 @@ class WorkspaceReportFlowTest {
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
             loaded(); assertNotEquals(nonce,page(web!!,"nappletSession"))
+            assertEquals("42",page(web!!,"document.getElementById('messages').textContent"))
+            capture("workspace-report-resumed.png",web!!,context)
             tower.workspaceReportFixture={ workspace,range -> JsonObject(studio.otherstuff.ambulando.core.sample.SampleWorkspaceReport.value(workspace,range,identity)+("complete" to JsonPrimitive(false))) }
             page(web!!,"document.getElementById('refresh').click()")
             compose.waitUntil(20000) { page(web!!,"document.getElementById('status').textContent")?.contains("unavailable")==true }

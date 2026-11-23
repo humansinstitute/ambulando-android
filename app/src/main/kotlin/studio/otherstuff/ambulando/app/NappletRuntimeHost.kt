@@ -24,6 +24,7 @@ import studio.otherstuff.ambulando.core.surfaces.*
 @Composable internal fun NappletRuntimeHost(model: AppModel,sync: NappletRuntimeSync,id: String,onClose: ()->Unit) {
     val c=model.connection ?: return; val w=model.workspace ?: return
     val services=studio.otherstuff.ambulando.app.ui.nav.LocalAppServices.current
+    val visible by rememberUpdatedState(LocalEditorActive.current)
     val boundary=model.activeBoundaryId; val context=LocalContext.current; val scope=rememberCoroutineScope()
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     val authority=runCatching {NappletRuntimeContext.create(c,w)}.getOrNull()
@@ -65,36 +66,39 @@ import studio.otherstuff.ambulando.core.surfaces.*
                 installation=fresh
                 if(trusted && !approvals.approved(fresh)) { clear(); trusted=false }
             }
-        } catch(e: CancellationException) { throw e } catch(_: Exception) { stop() } finally { checking=false; if(foreground && trusted && failure==null && current()) page?.resume() }
+        } catch(e: CancellationException) { throw e } catch(_: Exception) { stop() } finally { checking=false; if(foreground && visible && trusted && failure==null && current()) page?.resume() }
     }
-    LaunchedEffect(updatePending,busy,dirty) { if(updatePending && !busy && !dirty) gate.withLock { refresh() } }
+    LaunchedEffect(updatePending,busy,dirty,foreground,visible) { if(updatePending && !busy && !dirty && foreground && visible) gate.withLock { refresh() } }
     BackHandler { act(onClose) }
-    LaunchedEffect(id,boundary,authorityKey) { gate.withLock { refresh() } }
     DisposableEffect(lifecycle,authorityKey) {
         val observer=LifecycleEventObserver { _,event ->
-            if(event==Lifecycle.Event.ON_STOP) {
+            if(event==Lifecycle.Event.ON_PAUSE) {
                 foreground=false; checking=true; page?.pause()
                 if(busy) { job?.cancel(); job=null; busy=false; notice="An operation was interrupted. Reload records before retrying a change; it may already have saved." }
             }
-            if(event==Lifecycle.Event.ON_RESUME) { foreground=true; scope.launch { gate.withLock { refresh() } } }
+            if(event==Lifecycle.Event.ON_RESUME) { foreground=true }
         }
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer); clear() }
     }
     DisposableEffect(page) {
-        val host=page; val listener=android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused -> if(focused) scope.launch { gate.withLock { refresh() } } }
+        val host=page; val listener=android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused -> if(focused && foreground && visible) scope.launch { gate.withLock { refresh() } } }
         host?.view?.viewTreeObserver?.addOnWindowFocusChangeListener(listener)
         onDispose { host?.view?.viewTreeObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener) }
     }
     LaunchedEffect(services.unlocked,w.accessRemoved,model.activeBoundaryId,authorityKey) { if(!current()) stop() }
-    LaunchedEffect(sync,foreground) { if(foreground) while(isActive) { delay(30000); gate.withLock { refresh() } } }
-    LaunchedEffect(sync,trusted,foreground,html,epoch,access,checking) {
+    AppDiscoveryEffect(foreground && visible, sync,id,boundary,authorityKey) {
+        gate.withLock { refresh() }
+        while(isActive) { delay(30000); gate.withLock { refresh() } }
+    }
+    LaunchedEffect(visible) { if(!visible) { checking=true; page?.pause() } }
+    LaunchedEffect(sync,trusted,foreground,html,epoch,access,checking,visible) {
         val i=installation; val bytes=html
-        if(checking || page!=null || !trusted || !foreground || !current() || failure!=null || i==null || bytes==null || access) return@LaunchedEffect
+        if(!visible || checking || page!=null || !trusted || !foreground || !current() || failure!=null || i==null || bytes==null || access) return@LaunchedEffect
         if(NappletRuntimeProtocol.support(i.manifest)!=null) return@LaunchedEffect
         withContext(Dispatchers.Main.immediate) {
         NappletRuntimeWebHost.create(context,bytes,i.manifest,accept={ request ->
             val op=NappletRuntimeProtocol.text(request,"operation"); val session=NappletRuntimeProtocol.text(request,"session")
-            if(!trusted || !foreground || !current() || failure!=null || page?.session?.let { it!=session }==true) false
+            if(!trusted || !foreground || !visible || !current() || failure!=null || page?.session?.let { it!=session }==true) false
             else if(op=="dirty") { dirty=request["dirty"]==JsonPrimitive(true); dirtyRevision++; true }
             else if(busy || (checking && op !in setOf("list","get"))) false
             else {
@@ -105,20 +109,20 @@ import studio.otherstuff.ambulando.core.surfaces.*
                         val result=withTimeout(45000) {
                             yield()
                             gate.withLock {
-                                host=page?.takeIf { it.session==session }; check(host!=null && trusted && foreground && current())
+                                host=page?.takeIf { it.session==session }; check(host!=null && trusted && foreground && visible && current())
                                 val authority=sync.authority(i); require(authority.publisher==i.publisher && approvals.approved(i) && NappletRuntimeProtocol.permits(authority.manifest,i.manifest))
                                 sync.execute(i,request)
                             }
                         }
-                        ensureActive(); if(page===host && current() && foreground && trusted) host?.deliver(NappletRuntimeProtocol.result(session,NappletRuntimeProtocol.text(request,"requestId"),result))
+                        ensureActive(); if(page===host && current() && foreground && visible && trusted) host?.deliver(NappletRuntimeProtocol.result(session,NappletRuntimeProtocol.text(request,"requestId"),result))
                         if(op in setOf("create","update","delete")) { if(dirtyRevision==revisionAtRequest) dirty=false }
                     } catch(_: TimeoutCancellationException) {
-                        if(page===host && current() && foreground && trusted) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),"unavailable"))
+                        if(page===host && current() && foreground && visible && trusted) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),"unavailable"))
                     } catch(e: CancellationException) { throw e }
                     catch(e: Exception) {
-                        if(page===host && current() && foreground && trusted) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),if(e is NappletRuntimeAPI.Conflict) "conflict" else "unavailable"))
+                        if(page===host && current() && foreground && visible && trusted) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),if(e is NappletRuntimeAPI.Conflict) "conflict" else "unavailable"))
                         if(e is NappletRuntimeSync.Compatibility) notice=e.message
-                        else if(e !is NappletRuntimeAPI.Conflict) gate.withLock { refresh() }
+                        else if(foreground && visible && e !is NappletRuntimeAPI.Conflict) gate.withLock { refresh() }
                     } finally { if(job===currentCoroutineContext()[Job]) { busy=false; job=null } }
                 }; true
             }

@@ -18,17 +18,19 @@ import studio.otherstuff.ambulando.app.ui.nav.*
 
 /** Personal File pins are bookmarks, never permission grants or a replacement app catalogue. */
 @Composable internal fun GenericApps(model: AppModel) {
-    val c=model.connection ?: return; val w=model.workspace ?: return
+    val runtime=model.active ?: return
+    val c=runtime.connection; val w=runtime.workspace
     val services=LocalAppServices.current
     val scope=rememberCoroutineScope(); val boundary=model.activeBoundaryId
-    val pinsState=remember(c.id,w.id) { PinsState(model.store,c.id,w.id,scope) }
+    val pinsState=remember(c.id,w.id) { PinsState(runtime.store,c.id,w.id,scope) }
     DisposableEffect(pinsState) { pinsState.start(); onDispose { pinsState.stop() } }
     val pinResult by pinsState.state.collectAsState()
     val pins=pinResult.value
-    LaunchedEffect(c.id,w.id) { model.sync.refreshPins(c,w) }
+    val active = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current
+    AppDiscoveryEffect(active && services.unlocked && !w.accessRemoved,c.id,w.id) { runtime.sync.refreshPins(c,w) }
     suspend fun setPinned(pinned: Boolean,id: String) {
         check(model.activeBoundaryId==boundary && services.unlocked && !w.accessRemoved)
-        val old=model.store.reader.pin(c.id,w.id,PinRecord.ResourceType.FILE,id)
+        val old=runtime.store.reader.pin(c.id,w.id,PinRecord.ResourceType.FILE,id)
         model.writes.submit(WriteIntent(WriteKind.PIN_SET,id,buildJsonObject {
             put("resource_type","file"); put("pinned",pinned); put("expected_row_version",old?.rowVersion ?: 0)
             put("mutation_id",java.util.UUID.randomUUID().toString())
@@ -37,9 +39,9 @@ import studio.otherstuff.ambulando.app.ui.nav.*
     var adding by remember(boundary) { mutableStateOf(false) }; var link by remember(boundary) { mutableStateOf("") }
     var error by remember(boundary) { mutableStateOf<String?>(null) }; var busy by remember(boundary) { mutableStateOf(false) }
     var installed by remember(boundary) { mutableStateOf<List<Pair<FileRecord,GenericNapplet.Binding>>>(emptyList()) }
-    val files by remember(boundary) { model.store.liveQuery({ it.workspaceId==w.id }) { model.store.reader.files(w.id) } }.collectAsState(emptyList())
-    suspend fun verify(id: String): Pair<FileRecord,GenericNapplet.Binding> = model.sync.genericNappletRead(id) {
-        val api=model.fileNappletAPI(c); val file=api.artefactFile(w.id,w.appNpub,id)
+    val files by remember(boundary) { runtime.store.liveQuery({ it.workspaceId==w.id }) { runtime.store.reader.files(w.id) } }.collectAsState(emptyList())
+    suspend fun verify(id: String): Pair<FileRecord,GenericNapplet.Binding> = runtime.sync.genericNappletRead(id) {
+        val api=model.fileNappletAPI(c,runtime.directTransport).fencedArtefactAPI(runtime.store.reader,runtime.workspace,id) { model.active === runtime && services.unlocked }; val file=api.artefactFile(w.id,w.appNpub,id)
         require(!file.accessRemoved && !file.archived && file.raw.string("record_state")!="deleted")
         val list=api.genericNappletHead(w.id,w.appNpub,id); val version=list.versions.single { it.id==list.currentVersionId }
         require(version.contentType?.substringBefore(';')=="text/html")
@@ -47,10 +49,23 @@ import studio.otherstuff.ambulando.app.ui.nav.*
         FileNapplet.verifiedHTML(bytes,html,requireNotNull(version.sizeBytes),requireNotNull(version.sha256))
         file to requireNotNull(GenericNapplet.parse(html,file.raw.obj("metadata") ?: JsonObject(emptyMap())))
     }
+    // Launcher descriptors only; opening always verifies code and current authority in the host.
+    val verifiedPins = remember(boundary) { FileDescriptorCache<Pair<FileRecord,GenericNapplet.Binding>>() }
     val ids=(pins.visibleItems.filter { it.pin.resourceType==PinRecord.ResourceType.FILE }.map { it.pin.resourceId } + pins.pending.values.filter { it.isPending && it.payloadObject["pinned"]==JsonPrimitive(true) && it.string("resource_type")=="file" }.mapNotNull { it.targetId }).distinct()
-    LaunchedEffect(boundary,ids,files.filter { it.id in ids }.map { it.id to it.raw.string("current_version_id") }) {
+    AppDiscoveryEffect(active && services.unlocked && !w.accessRemoved,boundary,ids,files.filter { it.id in ids }.map { Triple(it.id,it.raw,it.accessRemoved) }) {
         val result=mutableListOf<Pair<FileRecord,GenericNapplet.Binding>>()
-        for(id in ids) try { result+=verify(id) } catch(e: CancellationException) { throw e } catch(_: Exception) { }
+        verifiedPins.retain(ids.toSet())
+        for(id in ids) try {
+            val known = files.firstOrNull { it.id == id }
+            if (known?.accessRemoved == true || known?.let { runtime.store.reader.isChannelAccessRemoved(w.id,it.channelId) } == true) {
+                verifiedPins.remove(id); continue
+            }
+            val cached = verifiedPins.get(known)
+            val verified = cached ?: runtime.store.reader.withArtefactAccess(runtime.workspace,id,{ model.active === runtime && services.unlocked }) { verify(id) }.also {
+                verifiedPins.put(it.first,it)
+            }
+            result += verified
+        } catch(e: CancellationException) { throw e } catch(_: Exception) { verifiedPins.remove(id) }
         if(model.activeBoundaryId==boundary) installed=result
     }
     Column(Modifier.fillMaxWidth().padding(horizontal=16.dp)) {
@@ -71,7 +86,7 @@ import studio.otherstuff.ambulando.app.ui.nav.*
         try {
             val id=genericFileId(link,c.origin,w.id)
             val (file,_)=verify(id); check(model.activeBoundaryId==boundary && services.unlocked)
-            model.store.writer.upsertFiles(w.id,listOf(file)); setPinned(true,file.id)
+            runtime.store.writer.upsertFiles(w.id,listOf(file)); setPinned(true,file.id)
             error=null; adding=false; services.open(WorkRoute.File(w.id,file.id))
         } catch(e: CancellationException) { throw e } catch(e: Exception) { android.util.Log.w("GenericApps","Existing File installation unavailable",e); error="This File could not be verified as a supported napplet. No File or data was created." } finally { busy=false }
     }}) {Text("Add and open")}},dismissButton={TextButton(enabled=!busy,onClick={adding=false}) {Text("Cancel")}})

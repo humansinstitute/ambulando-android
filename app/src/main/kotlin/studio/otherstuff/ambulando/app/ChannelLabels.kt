@@ -17,3 +17,16 @@ import studio.otherstuff.ambulando.core.store.*
     return model.channels.associate { row -> row.id to SidebarNavigation.label(
         NavChannel(row.id, row.scopeId, row.name, row.kind, row.position, row.raw), connection.signerNpub, people?.names ?: emptyMap()) }
 }
+
+/** Existing connection-local profile cache; no profile fetch or membership changes. */
+@Composable internal fun peopleDirectory(model: AppModel): studio.otherstuff.ambulando.core.profiles.PeopleDirectory? {
+    val workspace = model.workspace ?: return null
+    val connection = model.connection ?: return null
+    val store = model.store
+    val people by remember(model.activeBoundaryId, connection.id, workspace.id) {
+        store.liveQuery({ it.workspaceId == workspace.id || it.table == StoreTable.PROFILES }) {
+            store.reader.people(connection.id, workspace.id)
+        }
+    }.collectAsState(null)
+    return people
+}

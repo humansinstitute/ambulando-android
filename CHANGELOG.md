@@ -1,3 +1,11 @@
+## 0.9.43 (71)
+
+- Pause app discovery and host authority checks while hidden or backgrounded.
+- Preserve HTML recovery drafts through close/save races and keep retained artefacts readable without granting server access.
+- Restore saved File download/share controls for rich artefacts and improve search labels and Deck touch targets.
+- Resolve board comment authors and workspace member labels from exact cached profiles without changing saved identities.
+- Wait for validated workspace readiness before report discovery and keep setup conservative after failures.
+
 ## 0.9.42 (70)
 
 - Show current conversation agent status, latest public updates and expandable ordered history beside the triggering message.

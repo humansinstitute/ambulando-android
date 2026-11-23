@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -127,28 +128,61 @@ import java.util.UUID
 /** Direct File route, shared by Docs, chat mentions and pins; never needs a canvas. */
 @Composable internal fun DirectArtefact(model: AppModel, fileId: String) {
     val c = model.connection ?: return; val w = model.workspace ?: return
+    val runtime = model.active ?: return
+    val store = runtime.store
+    fun currentBoundary() = model.active === runtime && model.activeBoundaryId == runtime.boundary.id && !runtime.workspace.accessRemoved && model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked && model.identityState?.npub == c.signerNpub
+    val api = remember(runtime,c,w,fileId) { model.fileNappletAPI(c).fencedArtefactAPI(store.reader,w,fileId,::currentBoundary) }
     var file by remember(c.id, w.id, fileId) { mutableStateOf<FileRecord?>(null) }
-    var error by remember(fileId) { mutableStateOf<String?>(null) }
-    LaunchedEffect(c.id, w.id, fileId) {
-        try { file = model.towerAPI(c).artefactFile(w.id, w.appNpub, fileId) }
+    var error by remember(c.id, w.id, fileId) { mutableStateOf<String?>(null) }
+    val services = LocalAppServices.current
+    var localOnly by remember(c.id, w.id, fileId) { mutableStateOf(false) }
+    val retained by remember(c.id, w.id, fileId) {
+        store.liveQuery({ it.workspaceId == w.id }) { store.reader.file(w.id, fileId) }
+    }.collectAsState(null)
+    LaunchedEffect(runtime, w, fileId, services.unlocked, w.accessRemoved, retained?.accessRemoved == true) {
+        val cached = store.reader.file(w.id, fileId)
+        localOnly = !services.unlocked || w.accessRemoved || cached?.accessRemoved == true ||
+            cached?.let { store.reader.isChannelAccessRemoved(w.id, it.channelId) } == true
+        if (localOnly) {
+            file = cached
+            error = if (cached == null) "Unlock and reconnect to open this artefact." else null
+            return@LaunchedEffect
+        }
+        try {
+            val received = runtime.sync.genericNappletRead(fileId) {
+                store.reader.withArtefactAccess(w, fileId, ::currentBoundary) { api.artefactFile(w.id, w.appNpub, fileId) }
+            }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            check(currentBoundary())
+            file = received
+        }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { error = e.message ?: "This artefact is unavailable." }
+        catch (e: Exception) {
+            if (currentBoundary() && cached != null &&
+                (e is java.io.IOException || e is TowerError.Http && e.status in setOf(403,404))) {
+                if (e is TowerError.Http) store.writer.markAccessRemoved(w.id, AccessTarget.File(fileId))
+                file = store.reader.file(w.id,fileId) ?: cached
+                localOnly = true
+            } else error = e.message ?: "This artefact is unavailable."
+        }
     }
     val exit = studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current
     val current = file
     if (current == null) { Text(error ?: "Loading artefact…", Modifier.padding(16.dp)); return }
+    // The normal File reader can preview/share retained verified bytes without server authority.
+    if (localOnly) { NativeFiles(model, fileId, direct = false); return }
     when (ArtefactType.of(current)) {
         ArtefactType.WHITEBOARD -> {
             var reference by remember(current) { mutableStateOf<BoardReference?>(null) }
             LaunchedEffect(current) {
                 try {
-                    val versions = TowerBoardTransport(model.identity, model.workspaceTransport, c, w, fileId, current.displayName).versions()
+                    val versions = runtime.sync.genericNappletRead(fileId) { TowerBoardTransport(model.identity, runtime.directTransport, c, w, fileId, current.displayName).versions() }
                     val version = versions.second.firstOrNull { it.id == versions.first } ?: error("No saved board version")
                     reference = BoardReference(fileId, version.id, version.number, version.sha256, 0, current.updatedAt, current.raw.bool("can_write") == true)
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (e: Exception) { error = e.message }
             }
-            reference?.let { board -> BoardEditor(model, board, current.displayName, provenance = { ArtefactProvenance(current) }) { exit?.invoke() } } ?: Text(error ?: "Loading whiteboard…")
+            reference?.let { board -> BoardEditor(model, board, current.displayName, provenance = { ArtefactProvenance(current) }, exportFile = current) { exit?.invoke() } } ?: Text(error ?: "Loading whiteboard…")
         }
         ArtefactType.SYSTEM_FLOW -> SystemFlowFile(model, current)
         ArtefactType.HTML -> HtmlFileArtefact(model, current)
@@ -157,8 +191,15 @@ import java.util.UUID
 }
 
 
+private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVersionList, val html: String, val binding: GenericNapplet.Binding?)
+
 @Composable internal fun HtmlFileArtefact(model: AppModel, file: FileRecord, appMode: Boolean = false) {
     val c = model.connection ?: return; val w = model.workspace ?: return
+    val runtime = model.active ?: return
+    val store = runtime.store
+    fun currentBoundary() = model.active === runtime && !runtime.workspace.accessRemoved &&
+        model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked && model.identityState?.npub == c.signerNpub
+    val api = remember(runtime,c,w,file.id) { model.fileNappletAPI(c).fencedArtefactAPI(store.reader,w,file.id,::currentBoundary) }
     var reload by remember(file.id) { mutableStateOf(0) }
     var html by remember(file.id) { mutableStateOf<String?>(null) }
     var verifiedFile by remember(file.id) { mutableStateOf(file) }
@@ -170,36 +211,55 @@ import java.util.UUID
     var base by remember(file.id) { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     val draftFile = remember(c.id, w.id, file.id) { model.htmlDraftFile(file.id) }
-    LaunchedEffect(source, base) {
-        val draft = source; val version = base
-        if (draft != null && version != null) withContext(Dispatchers.IO) {
-            draftFile.parentFile?.mkdirs()
-            val temporary = File(draftFile.parentFile, draftFile.name + ".pending")
-            temporary.writeText(buildJsonObject { put("base_version_id", version); put("source", draft) }.toString())
-            check(temporary.renameTo(draftFile)) { "Could not preserve the HTML draft" }
+    val drafts = remember(draftFile) { HtmlDraftStore(draftFile) }
+    var recovery by remember(draftFile) { mutableStateOf<HtmlDraftStore.Draft?>(null) }
+    val sourceSave = remember(drafts) { HtmlSourceSave(drafts) }
+    fun preserveSource(text: String) {
+        val expected = base ?: return
+        if (recovery?.accepted == true) return
+        source = text
+        val edit = HtmlDraftStore.Draft(expected, text)
+        recovery = edit
+        val ticket = drafts.ticket()
+        // View-model ownership survives closing this dialog or navigating away. Writes are ordered.
+        model.act {
+            try { drafts.save(edit, ticket) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { if (currentBoundary()) error = e.message ?: "Could not preserve your HTML source." }
         }
     }
-    LaunchedEffect(file.id, selected, reload) {
+    LaunchedEffect(runtime, w, file.id, selected, reload) {
         try {
             html = null; generic = null; error = null
-            model.sync.genericNappletRead(file.id) {
-                val api = model.fileNappletAPI(c)
-                verifiedFile = api.artefactFile(w.id,w.appNpub,file.id)
-                versions = if(selected==null && verifiedFile.raw.obj("metadata")?.obj("napplet")?.get("version")==JsonPrimitive(2)) api.genericNappletHead(w.id,w.appNpub,file.id) else api.fileVersions(w.id, w.appNpub, file.id)
-                val rendered = api.artefactHTML(w.id, w.appNpub, file.id, selected ?: versions?.currentVersionId)
-                generic = GenericNapplet.parse(rendered, verifiedFile.raw.obj("metadata") ?: JsonObject(emptyMap()))
+            val received = runtime.sync.genericNappletRead(file.id) {
+              store.reader.withArtefactAccess(w, file.id, ::currentBoundary) {
+                val verified = api.artefactFile(w.id,w.appNpub,file.id)
+                val history = if(selected==null && verified.raw.obj("metadata")?.obj("napplet")?.get("version")==JsonPrimitive(2)) api.genericNappletHead(w.id,w.appNpub,file.id) else try { api.fileVersions(w.id, w.appNpub, file.id) } catch (_: TowerError.ListLimitReached) { api.genericNappletHead(w.id,w.appNpub,file.id) }
+                val rendered = api.artefactHTML(w.id, w.appNpub, file.id, selected ?: history.currentVersionId)
+                val parsed = GenericNapplet.parse(rendered, verified.raw.obj("metadata") ?: JsonObject(emptyMap()))
                 val manifest = nappletManifest(rendered)
                 val bound = manifest?.let { runCatching { FileNapplet.binding(file.raw.getValue("metadata").jsonObject, it) }.getOrNull() }
                 val legacyReport=manifest?.let { runCatching { WorkspaceReport.binding(file.raw.getValue("metadata").jsonObject,it) }.getOrNull() }
-                require(generic!=null || bound!=null || legacyReport!=null || !GenericNapplet.claimsRuntime(rendered,verifiedFile.raw.obj("metadata") ?: JsonObject(emptyMap()))) { "This napplet declaration is invalid or unsupported." }
-                html = if (selected == null && (generic != null || bound != null || manifest?.let { runCatching { WorkspaceReport.binding(file.raw.getValue("metadata").jsonObject, it) }.getOrNull() } != null)) {
-                    val version = versions!!.versions.first { it.id == versions!!.currentVersionId }
+                require(parsed!=null || bound!=null || legacyReport!=null || !GenericNapplet.claimsRuntime(rendered,verified.raw.obj("metadata") ?: JsonObject(emptyMap()))) { "This napplet declaration is invalid or unsupported." }
+                val preview = if (selected == null && (parsed != null || bound != null || manifest?.let { runCatching { WorkspaceReport.binding(file.raw.getValue("metadata").jsonObject, it) }.getOrNull() } != null)) {
+                    val version = history.versions.first { it.id == history.currentVersionId }
                     require(version.contentType?.substringBefore(';') == "text/html" && version.sizeBytes in 1..FileNapplet.MAX_BYTES.toLong() && version.sha256 != null)
                     val bytes = api.fileVersionBytes(w.id, w.appNpub, file.id, version)
                     FileNapplet.verifiedHTML(bytes, rendered, requireNotNull(version.sizeBytes), requireNotNull(version.sha256))
                 } else rendered
-                if(generic!=null) model.store.writer.upsertFiles(w.id,listOf(verifiedFile))
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                check(currentBoundary())
+                HtmlArtefactRead(verified,history,preview,parsed)
+              }
             }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            check(currentBoundary())
+            if (received.binding != null) {
+                store.reader.withArtefactAccess(runtime.workspace,file.id,::currentBoundary) {
+                    store.writer.cacheVerifiedArtefact(received.file,::currentBoundary)
+                }
+            }
+            verifiedFile = received.file; versions = received.versions; generic = received.binding; html = received.html
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { error = e.message; html = null }
     }
@@ -237,6 +297,8 @@ import java.util.UUID
     val exit = studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current
     BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current && source == null) { exit?.invoke() }
     var menu by remember(file.id) { mutableStateOf(false) }
+    var exporting by remember(file.id) { mutableStateOf(false) }
+    if (exporting) ArtefactFileActions(model, verifiedFile) { exporting = false }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             IconButton(onClick = { exit?.invoke() }, modifier = Modifier.testTag("artefacts.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
@@ -246,25 +308,31 @@ import java.util.UUID
                 IconButton(onClick = { menu = true }, modifier = Modifier.testTag("artefacts.menu")) { Icon(Icons.Outlined.MoreHoriz, "Artefact options") }
                 DropdownMenu(menu, { menu = false }) {
                     ArtefactProvenance(file)
+                    DropdownMenuItem(text = { Text("Download / share File") }, onClick = { menu = false; exporting = true }, modifier = Modifier.testTag("artefacts.export"))
                     RecordPin(model, PinRecord.ResourceType.FILE, file.id, inMenu = true)
                     Text("Versions", Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("artefacts.history"), style = MaterialTheme.typography.labelMedium)
                     DropdownMenuItem(text = { Text("Latest") }, enabled = !saving, onClick = { selected = null; menu = false })
                     versions?.versions?.asReversed()?.forEach { v -> DropdownMenuItem(text = { Text("v${v.versionNumber}") }, enabled = !saving, onClick = { selected = v.id; menu = false }) }
-                    DropdownMenuItem(text = { Text(if (selected == null) "Edit source" else "Restore source") }, enabled = file.raw.bool("can_write") == true && !saving, onClick = {
+                    DropdownMenuItem(text = { Text(if (selected == null) "Edit source" else "Restore source") }, enabled = verifiedFile.raw.bool("can_write") == true && !saving, onClick = {
                         menu = false
                         model.act {
                             try {
-                                val restored = withContext(Dispatchers.IO) { if (draftFile.isFile) runCatching { Json.parseToJsonElement(draftFile.readText()).jsonObject }.getOrNull() else null }
+                                val restored = drafts.load()
+                                check(currentBoundary())
                                 if (restored != null) {
-                                    base = restored["base_version_id"]?.jsonPrimitive?.content
-                                    source = restored["source"]?.jsonPrimitive?.content
-                                    error = "Restored your unsaved source. Saving still checks the version it started from."
+                                    base = restored.base
+                                    recovery = restored
+                                    source = restored.source
+                                    error = if (restored.accepted) "This edit was saved. Verify its saved content before starting another edit." else "Restored your unsaved source. Saving still checks the version it started from."
                                     return@act
                                 }
-                                val list = model.towerAPI(c).fileVersions(w.id, w.appNpub, file.id)
+                                val list = runtime.sync.genericNappletRead(file.id) { store.reader.withArtefactAccess(w,file.id,::currentBoundary) { try { api.fileVersions(w.id, w.appNpub, file.id) } catch (_: TowerError.ListLimitReached) { api.genericNappletHead(w.id,w.appNpub,file.id) } } }
                                 val version = list.versions.first { it.id == (selected ?: list.currentVersionId) }
                                 require(version.contentType?.substringBefore(';') == "text/html") { "This HTML manifest must be edited by its authoring tool." }
-                                source = model.towerAPI(c).fileVersionBytes(w.id, w.appNpub, file.id, version).toString(Charsets.UTF_8); base = list.currentVersionId
+                                val bytes = runtime.sync.genericNappletRead(file.id) { store.reader.withArtefactAccess(w,file.id,::currentBoundary) { api.fileVersionBytes(w.id, w.appNpub, file.id, version) } }
+                                check(currentBoundary())
+                                source = bytes.toString(Charsets.UTF_8); base = list.currentVersionId
+                                recovery = HtmlDraftStore.Draft(requireNotNull(base), requireNotNull(source))
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (e: Exception) { error = e.message }
                         }
@@ -277,23 +345,36 @@ import java.util.UUID
         if (html == null && error == null) Text("Loading HTML…")
     }
     source?.let { text -> AlertDialog(onDismissRequest = { if (!saving) source = null }, title = { Text("Edit HTML source") }, text = {
-        Column { OutlinedTextField(text, { source = it }, modifier = Modifier.heightIn(max = 400.dp).testTag("artefacts.source")); error?.let { Text(it) } }
+        Column { OutlinedTextField(text, { preserveSource(it) }, enabled = !saving && recovery?.accepted != true, modifier = Modifier.heightIn(max = 400.dp).testTag("artefacts.source")); error?.let { Text(it) } }
     }, confirmButton = { TextButton(enabled = !saving, onClick = {
         val draft = source ?: return@TextButton; val expected = base ?: return@TextButton
         saving = true
         model.act {
             try {
-                val api = model.towerAPI(c)
-                val objectId = api.store(w.id, w.appNpub, draft.toByteArray(), "text/html", "artefact.html", null) { }
-                when (val result = api.addFileVersion(w.id, w.appNpub, file.id, expected, objectId, UUID.randomUUID().toString())) {
-                    is VersionOutcome.Saved -> { withContext(Dispatchers.IO) { draftFile.delete() }; source = null; selected = null; versions = api.fileVersions(w.id, w.appNpub, file.id); html = api.artefactHTML(w.id, w.appNpub, file.id) }
-                    is VersionOutcome.Conflict -> error = "A newer version was saved elsewhere. Your source is kept here; copy it before reloading."
-                    is VersionOutcome.Denied -> error = "Permission denied. Your source is kept here."
-                    is VersionOutcome.Retryable -> error = "Save failed. Your source is kept here; retry when connected."
-                }
+                store.reader.withArtefactAccess(w,file.id,::currentBoundary) { Unit }
+                val edit = recovery?.takeIf { it.base == expected && it.source == draft } ?: HtmlDraftStore.Draft(expected, draft)
+                sourceSave.save(edit, upload = { pending ->
+                    api.store(w.id, w.appNpub, pending.source.toByteArray(), "text/html", "artefact.html", null) { }
+                }, commit = { pending ->
+                    api.addFileVersion(w.id, w.appNpub, file.id, pending.base, requireNotNull(pending.uploadedObjectId), pending.mutationId)
+                }, head = {
+                    runtime.sync.genericNappletRead(file.id) { api.genericNappletHead(w.id,w.appNpub,file.id).currentVersionId }
+                }, read = { id ->
+                    runtime.sync.genericNappletRead(file.id) { api.savedHtmlBytes(w.id,w.appNpub,file.id,id) }
+                }, checkCurrent = {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    store.reader.withArtefactAccess(runtime.workspace,file.id,::currentBoundary) { Unit }
+                })
+                check(currentBoundary())
+                source = null; recovery = null; selected = null; reload++
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { error = e.message }
-            finally { saving = false }
+            catch (e: Exception) {
+                if (currentBoundary()) {
+                    recovery = drafts.load()
+                    error = if (recovery?.accepted == true) "Saved, but readback could not be confirmed. Your draft is kept. Retry only verifies the saved content." else e.message
+                }
+            }
+            finally { if (currentBoundary()) saving = false }
         }
-    }, modifier = Modifier.testTag("artefacts.saveSource")) { Text(if (saving) "Saving…" else "Save version") } }, dismissButton = { TextButton(enabled = !saving, onClick = { source = null }) { Text("Close (keep draft)") } }) }
+    }, modifier = Modifier.testTag("artefacts.saveSource")) { Text(if (saving) "Saving…" else if (recovery?.accepted == true) "Verify saved version" else "Save version") } }, dismissButton = { TextButton(enabled = !saving, onClick = { source = null }) { Text("Close (keep draft)") } }) }
 }

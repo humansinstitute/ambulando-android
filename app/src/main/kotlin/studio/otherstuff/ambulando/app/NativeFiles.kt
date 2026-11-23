@@ -37,7 +37,7 @@ import studio.otherstuff.ambulando.core.sync.*
 import java.io.File
 import java.util.UUID
 
-@Composable internal fun NativeFiles(model: AppModel, fileId: String? = null, direct: Boolean = true) {
+@Composable internal fun NativeFiles(model: AppModel, fileId: String? = null, direct: Boolean = true, exactFile: studio.otherstuff.ambulando.core.transport.FileRecord? = null, exactVersion: studio.otherstuff.ambulando.core.transport.FileVersionRecord? = null) {
     if (fileId != null && direct) { DirectArtefact(model, fileId); return }
     val w = model.workspace ?: return; val c = model.connection ?: return
     val context = LocalContext.current
@@ -80,7 +80,12 @@ import java.util.UUID
     val loadedRows = rows
     if (fileId != null) {
         key(model.activeBoundaryId, fileId) {
-            FileDetail(model, loadedRows.firstOrNull(), channelNames, cache, onPreview = { file, type -> preview = file to type })
+            val localRecord = loadedRows.firstOrNull()
+            val verified = exactFile?.takeIf { it.workspaceId == w.id && it.id == fileId }
+            val selected = if (verified != null && (exactVersion != null || localRecord == null || verified.rowVersion >= localRecord.rowVersion)) {
+                verified.copy(accessRemoved = verified.accessRemoved || localRecord?.accessRemoved == true)
+            } else localRecord
+            FileDetail(model, selected, channelNames, cache, version = exactVersion, onPreview = { file, type -> preview = file to type })
         }
     } else GroupedSurface(Modifier.fillMaxSize()) {
         ListHeaderBar {
@@ -178,7 +183,7 @@ internal fun fileIcon(contentType: String?): androidx.compose.ui.graphics.vector
 }
 
 /** One file: its details, then Preview and Share once downloaded, or Download (iOS `FileDetail`). */
-@Composable private fun FileDetail(model: AppModel, file: studio.otherstuff.ambulando.core.transport.FileRecord?, channelNames: Map<String, String>, cache: FileCache, onPreview: (File, String) -> Unit) {
+@Composable private fun FileDetail(model: AppModel, file: studio.otherstuff.ambulando.core.transport.FileRecord?, channelNames: Map<String, String>, cache: FileCache, version: studio.otherstuff.ambulando.core.transport.FileVersionRecord? = null, onPreview: (File, String) -> Unit) {
     val w = model.workspace ?: return; val c = model.connection ?: return
     val context = LocalContext.current
     val amb = Amb.colors
@@ -189,7 +194,7 @@ internal fun fileIcon(contentType: String?): androidx.compose.ui.graphics.vector
     var failure by remember(file.id) { mutableStateOf<String?>(null) }
     val sync = model.sync
     val save = rememberFileSave(file.displayName, attachmentMimeType(file.displayName, file.contentType)) {
-        sync.downloadForExport(c, w, file, cache)
+        sync.downloadForExport(c, w, file, cache, version)
     }
     GroupedSurface(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 12.dp)) {
         GroupedRow(first = true, last = false) {
@@ -217,7 +222,7 @@ internal fun fileIcon(contentType: String?): androidx.compose.ui.graphics.vector
             GroupedRow(first = true, last = true, onClick = {
                 downloading = true; failure = null
                 model.act {
-                    try { model.sync.download(c, w, file, cache) }
+                    try { model.sync.download(c, w, file, cache, version) }
                     catch (e: kotlinx.coroutines.CancellationException) { throw e }
                     catch (e: Exception) { failure = e.message ?: "The download failed." }
                     finally { downloading = false }

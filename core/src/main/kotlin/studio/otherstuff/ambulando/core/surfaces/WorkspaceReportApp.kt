@@ -5,17 +5,19 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import studio.otherstuff.ambulando.core.transport.*
 
-suspend fun TowerAPI.workspaceReportInstances(workspace: String, app: String, viewer: String): List<FileRecord> {
+suspend fun TowerAPI.workspaceReportInstances(workspace: String, app: String, viewer: String, diagnostics: ReportDiagnostics? = null): List<FileRecord> {
+    suspend fun <T> at(stage: ReportStage, work: suspend () -> T): T = diagnostics?.at(stage, work) ?: work()
     val self = JsonArray(listOf(JsonPrimitive(viewer)))
-    val conversations = scopes(workspace, app).onEach { require(it.workspaceId == workspace) }.filter { it.kind == "dm" && it.raw.bool("is_archived")!=true && it.raw.string("record_state")!="deleted" }.flatMap { scope ->
-        channels(workspace, scope.id, app).onEach { require(it.workspaceId == workspace && it.scopeId == scope.id) }
+    val conversations = at(ReportStage.SCOPES) { scopes(workspace, app).onEach { require(it.workspaceId == workspace) } }.filter { it.kind == "dm" && it.raw.bool("is_archived")!=true && it.raw.string("record_state")!="deleted" }.flatMap { scope ->
+        at(ReportStage.CHANNELS) { channels(workspace, scope.id, app).onEach { require(it.workspaceId == workspace && it.scopeId == scope.id) } }
     }.filter { it.raw.bool("is_archived")!=true && it.raw.string("record_state")!="deleted" && it.kind == "dm" && it.raw["participant_npubs"] == self }
-    val found = conversations.flatMap { channel ->
+    val found = conversations.flatMap { channel -> at(ReportStage.FILES) {
         client.list(TowerAPI.base(workspace) + "/channels/${TowerAPI.uuid(channel.id)}/files", app, "files")
             .map(FileRecord::parse).onEach { require(it.workspaceId == workspace && it.channelId == channel.id) }
             .filter { !it.archived && it.raw.string("record_state") != "deleted" && it.raw.obj("metadata")?.obj("napplet")?.string("app_id") == WorkspaceReport.ID }
     }
-    require(found.map { it.id }.distinct().size==found.size)
+    }
+    at(ReportStage.FILES) { require(found.map { it.id }.distinct().size==found.size) }
     return found.sortedWith(compareBy({ it.createdAt }, { it.id }))
 }
 

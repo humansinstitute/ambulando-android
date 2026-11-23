@@ -5,6 +5,7 @@ import studio.otherstuff.ambulando.core.transport.LocalStages.Stage
 import studio.otherstuff.ambulando.core.transport.LocalStages.Result
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,15 +27,19 @@ import java.util.concurrent.atomic.AtomicLong
 class WorkspaceActivity(enabled: Boolean = false) {
     private val open = AtomicBoolean(enabled)
     private val generation = AtomicLong(0)
+    data class Snapshot(val open: Boolean, val generation: Long)
+    private val _state = MutableStateFlow(Snapshot(enabled, 0))
+    val state: StateFlow<Snapshot> = _state.asStateFlow()
+    @Synchronized fun snapshot() = Snapshot(isOpen, currentGeneration)
 
     val isOpen: Boolean get() = open.get()
     val currentGeneration: Long get() = generation.get()
 
     /** Closes the gate; everything started so far is stale. */
-    fun pause() { open.set(false); generation.incrementAndGet() }
+    @Synchronized fun pause() { open.set(false); generation.incrementAndGet(); _state.value = snapshot() }
 
     /** Opens the gate for a new generation. */
-    fun resume(): Long { generation.incrementAndGet(); open.set(true); return generation.get() }
+    @Synchronized fun resume(): Long { generation.incrementAndGet(); open.set(true); _state.value = snapshot(); return generation.get() }
 
     /** The generation to remember when work starts, or null while paused. */
     fun lease(): Long? = if (open.get()) generation.get() else null

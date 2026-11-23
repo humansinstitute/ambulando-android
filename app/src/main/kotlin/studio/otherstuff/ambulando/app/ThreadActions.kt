@@ -145,7 +145,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
 
 @Composable private fun GetItDoneDialog(model: AppModel, message: MessageRecord, rootId: String, threadId: String?, enabled: Boolean, dismiss: () -> Unit) {
     val w = model.workspace ?: return
-    val members by produceState(emptyList<studio.otherstuff.ambulando.core.transport.MemberRecord>(), w.id) { value = model.store.reader.directoryMembers(w.id) }
+    val members by remember(model.store, w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == studio.otherstuff.ambulando.core.store.StoreTable.PROFILES }) { model.store.reader.directoryMembers(w.id) } }.collectAsState(emptyList())
     val messages by produceState(listOf(message), w.id, message.id) {
         value = threadId?.let { model.store.reader.threadMessages(w.id, it, 6) }?.takeIf { it.isNotEmpty() } ?: listOf(message)
     }
@@ -154,13 +154,18 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     var output by remember { mutableStateOf(GetItDone.Output.CHAT) }
     var assignee by remember { mutableStateOf<String?>(null) }
     var failure by remember { mutableStateOf(false) }
-    LaunchedEffect(members) { if (message.senderNpub != model.connection?.signerNpub) assignee = members.firstOrNull { it.npub == message.senderNpub }?.npub }
+    var assigneeChosen by remember { mutableStateOf(false) }
+    LaunchedEffect(members) {
+        if (!assigneeChosen && message.senderNpub != model.connection?.signerNpub) {
+            members.firstOrNull { it.npub == message.senderNpub }?.let { assignee = it.npub; assigneeChosen = true }
+        }
+    }
     AlertDialog(onDismissRequest = dismiss, title = { Text("Get it done") }, text = {
         Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).testTag("getitdone.form")) {
             OutlinedTextField(title, { title = it }, label = { Text("What should happen?") }, modifier = Modifier.testTag("getitdone.title"))
             PickerRow("Output", output.label, GetItDone.Output.entries.map { it.label to it }, { output = it }, tag = "getitdone.output")
             PickerRow("Assignee", members.firstOrNull { it.npub == assignee }?.label ?: "Unassigned",
-                listOf<Pair<String, String?>>("Unassigned" to null) + members.map { it.label to it.npub }, { assignee = it }, tag = "getitdone.assignee")
+                listOf<Pair<String, String?>>("Unassigned" to null) + members.map { it.label to it.npub }, { assignee = it; assigneeChosen = true }, tag = "getitdone.assignee")
             OutlinedTextField(extra, { extra = it }, label = { Text("Extra instructions (optional)") }, maxLines = 4, modifier = Modifier.testTag("getitdone.extra"))
             Text(GetItDone.excerpt(messages), style = MaterialTheme.typography.bodySmall, maxLines = 4)
             if (failure) Text("Could not queue the task. Check your connection and try again.")

@@ -226,6 +226,19 @@ fun StoreWriter.docDraftStore(reader: StoreReader? = null): DocDraftStore {
 
 /** Upserts files. With `completeChannel`, files of that channel Tower no longer lists are flagged. */
 suspend fun StoreWriter.upsertFiles(workspaceId: String, records: List<FileRecord>, completeChannel: String? = null): Int = write {
+    writeFiles(workspaceId, records, completeChannel)
+}
+
+/** A direct verified read can refresh metadata, but cannot restore locally revoked authority. */
+suspend fun StoreWriter.cacheVerifiedArtefact(record: FileRecord, current: () -> Boolean): Int = write {
+    check(current())
+    val removed = db.first("SELECT 1 FROM workspaces WHERE workspace_id = ? AND access_removed = 1", record.workspaceId) { true } == true ||
+        db.first("SELECT 1 FROM files WHERE workspace_id = ? AND id = ? AND access_removed = 1", record.workspaceId, record.id) { true } == true
+    check(!removed) { "This artefact is no longer available. Received history is kept." }
+    writeFiles(record.workspaceId, listOf(record), null)
+}
+
+private fun WriteTx.writeFiles(workspaceId: String, records: List<FileRecord>, completeChannel: String?): Int {
     val blocked = db.removedChannelIds(workspaceId)
     val rows = records.filter { it.workspaceId == workspaceId && it.channelId !in blocked }
     var changed = 0
@@ -245,7 +258,7 @@ suspend fun StoreWriter.upsertFiles(workspaceId: String, records: List<FileRecor
         changed += flagMissing("files", workspaceId, "channel_id", completeChannel, rows.mapTo(HashSet()) { it.id })
     }
     if (changed > 0) emit(StoreTable.FILES, workspaceId)
-    changed
+    return changed
 }
 
 /** Upserts one channel's folders. With `complete`, folders Tower no longer lists are flagged. */
@@ -560,7 +573,7 @@ suspend fun StoreReader.search(workspaceId: String, text: String, limit: Int = 6
                 SearchHit(SearchHit.Kind.DOC, d.id, d.title, (d.summary ?: "").take(140), d.channelId, null, d.accessRemoved)
             }
             "file" -> fileRow(workspaceId, id)?.let { f ->
-                SearchHit(SearchHit.Kind.FILE, f.id, f.displayName, f.contentType ?: "", f.channelId, null, f.accessRemoved)
+                SearchHit(SearchHit.Kind.FILE, f.id, f.displayName, studio.otherstuff.ambulando.core.surfaces.ArtefactType.of(f)?.label ?: (f.contentType ?: ""), f.channelId, null, f.accessRemoved)
             }
             else -> messageRow(workspaceId, id)?.takeIf { !it.deleted }?.let { m ->
                 SearchHit(SearchHit.Kind.MESSAGE, m.id, m.senderLabel ?: "Message", MentionCodec.plain(m.body).take(160), m.channelId, m.threadId,

@@ -43,4 +43,33 @@ class FileExportTest {
             assertEquals(requests, transport.recorded.size)
         } finally { engine.close(); store.close(); cache.root.deleteRecursively() }
     }
+    @Test fun richExportUsesExactSavedVersionInsteadOfOriginalObjectAndPreservesOldCache(): Unit = runBlocking {
+        val original = "original HTML".toByteArray()
+        val edited = "<h1>Saved on Android</h1>".toByteArray()
+        val file = FileRecord(Fixtures.WORKSPACE_ID, Fixtures.newId(), null, Fixtures.CHANNEL_1, null, Fixtures.newId(),
+            "saved.html", contentType = "text/html", sizeBytes = original.size.toLong(), sha256 = Sha256Hex.of(original), createdAt = "", updatedAt = "")
+        val version = FileVersionRecord(Fixtures.newId(),file.id,2,Fixtures.newId(),edited.size.toLong(),"text/html",Sha256Hex.of(edited),null,null,null,"")
+        val savedFile = file.copy(storageObjectId=version.storageObjectId,sha256=version.sha256,sizeBytes=version.sizeBytes,rowVersion=2)
+        val workspace = WorkspaceRecord(file.workspaceId,Fixtures.APP_NPUB,"Synthetic",null,null,null,null,JsonObject(emptyMap()))
+        val transport = StubTransport { request ->
+            assertTrue("export must read the immutable saved version",request.url.endsWith("/versions/${version.id}/object"))
+            200 to edited
+        }
+        val store=LocalStore(tempDir()); val engine=SyncEngine(); val cache=FileCache(tempDir())
+        val connection=ConnectionRecord.create(TowerOrigin(Fixtures.ORIGIN),TestKeys.NPUB,null)
+        val sync=WorkspaceSync(store,engine,makeIdentity(),transport)
+        try {
+            cache.store(original,file)
+            val exported=sync.downloadForExport(connection,workspace,savedFile,cache,version)
+            assertArrayEquals(edited,exported.readBytes())
+            assertArrayEquals(original,cache.cached(file)!!.readBytes())
+            assertEquals(1,transport.recorded.size)
+            assertEquals(exported,sync.downloadForExport(connection,workspace,savedFile,cache,version))
+            assertEquals(1,transport.recorded.size)
+            assertTrue(runCatching { sync.downloadForExport(connection,workspace,savedFile.copy(accessRemoved=true),cache,version) }.isFailure)
+            assertTrue(runCatching { sync.downloadForExport(connection,workspace,savedFile,cache,version.copy(fileId=Fixtures.newId())) }.isFailure)
+            assertEquals(1,transport.recorded.size)
+        } finally { engine.close(); store.close(); cache.root.deleteRecursively() }
+    }
+
 }

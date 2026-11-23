@@ -104,7 +104,7 @@ internal fun ChannelAccessPage(session: AdministrationSession, nav: AdminNavigat
                 for (row in s.grants) {
                     val custom = row.fields["access_level"] == "custom"
                     val type = row.fields["principal_type"]; val id = row.fields["principal_id"] ?: row.id
-                    RowSummary(row, "admin.grant.$id", if (custom) row.channelPermissions.joinToString(", ") else null)
+                    RowSummary(session.personRow(row), "admin.grant.$id", if (custom) row.channelPermissions.joinToString(", ") else null)
                     if (s.canManage) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!custom) TextButton(onClick = { push(AdminRoute.ChannelGrant(channelId, type, id)) }, modifier = Modifier.testTag("admin.grant.change.$id")) { Text("Change access") }
                         else Text("Custom permissions are preserved. Add access separately, or explicitly revoke this grant.", style = MaterialTheme.typography.bodySmall)
@@ -113,7 +113,7 @@ internal fun ChannelAccessPage(session: AdministrationSession, nav: AdminNavigat
                 }
                 if (s.grants.isEmpty()) Text("No individual grants. Access may come from groups.", style = MaterialTheme.typography.bodySmall)
                 Text("Scope roles (do not grant this channel)", style = MaterialTheme.typography.titleSmall)
-                for (row in s.scopeGrants) RowSummary(row, "admin.scopeRole.${row.id}")
+                for (row in s.scopeGrants) RowSummary(session.personRow(row), "admin.scopeRole.${row.id}")
                 if (s.scopeGrants.isEmpty()) Text("None readable.", style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -143,7 +143,7 @@ internal fun ChannelGrantPage(session: AdministrationSession, nav: AdminNavigati
     val existing = ready.grants.firstOrNull { it.fields["principal_type"] == route.principalType && (it.fields["principal_id"] ?: it.id) == route.principalId }
     val level = existing?.fields?.get("access_level")?.takeIf { it in AdministrationCommand.ACCESS_LEVELS } ?: "view"
     val form = remember(session, route) { FormState(session, "grant:${route.channelId}:${route.principalId ?: "new"}", mapOf("type" to (route.principalType ?: "actor"), "access" to level)) }
-    val members = session.rows(AdministrationList.MEMBERS)
+    val members = session.displayRows(AdministrationList.MEMBERS)
     AdminPage(if (route.principalId == null) "Grant channel access" else "Change channel access", session, back, "admin.channelGrantPage") {
         Text(channel?.let { "#${it.name}" } ?: "Unavailable channel")
         if (route.principalId == null) {
@@ -151,7 +151,7 @@ internal fun ChannelGrantPage(session: AdministrationSession, nav: AdminNavigati
             val options = if (form["type"] == "group") ready.groups.map { PickOption(it.id, it.title, "${it.children.size} people") }
             else members.map { PickOption(it.id, it.title, it.fields["npub"]?.let(::shortKey) ?: "", keywords = it.fields["npub"] ?: "") }
             RowPicker(form, "principal", "Recipient", options, emptyLabel = if (form["type"] == "group") "Group choices are unavailable to you. Choose a person instead." else "No saved members")
-        } else Text(existing?.title ?: "Recipient unavailable")
+        } else Text(existing?.let { session.personRow(it).title } ?: "Recipient unavailable")
         AdminChoice(form, "access", "Access", listOf("view" to "View", "contribute" to "Contribute", "manage" to "Manage"))
         Text("Manage access includes authority over this channel. Tower checks the exact grant.", style = MaterialTheme.typography.bodySmall)
         SaveBar(form, session, allowed = ready.canManage && (route.principalId != null || form["principal"].isNotEmpty()), confirmTitle = "Apply this workspace change?",
@@ -201,7 +201,7 @@ internal fun ScopeAccessPage(session: AdministrationSession, nav: AdminNavigatio
             TextButton(onClick = { push(AdminRoute.ScopeGrant(scopeId, null, null, current.revision)) }, enabled = manage, modifier = Modifier.testTag("admin.scope.grant")) { Text("Grant scope role") }
             for (row in current.grants) {
                 val type = row.fields["principal_type"]; val id = row.fields["principal_id"] ?: row.id
-                RowSummary(row, "admin.scopeRole.${row.id}")
+                RowSummary(session.personRow(row), "admin.scopeRole.${row.id}")
                 if (manage) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { push(AdminRoute.ScopeGrant(scopeId, type, id, current.revision)) }, modifier = Modifier.testTag("admin.scopeRole.change.$id")) { Text("Change role") }
                     TextButton(onClick = { pending = row }, modifier = Modifier.testTag("admin.scopeRole.revoke.$id")) { Text("Revoke role grants") }
@@ -239,9 +239,9 @@ internal fun ScopeGrantPage(session: AdministrationSession, nav: AdminNavigation
         if (current != null && current.revision != route.revision) Text("This scope's access changed elsewhere. Go back and review it before saving your retained entries.", modifier = Modifier.testTag("admin.scopeGrant.stale"))
         if (route.principalId == null) {
             AdminChoice(form, "type", "Give access to", listOf("actor" to "Person or agent", "group" to "Group"))
-            val options = if (form["type"] == "group") (current?.groups ?: emptyList()).map { PickOption(it.id, it.title) } else (current?.actors ?: emptyList()).map { PickOption(it.id, it.title, it.fields["npub"]?.let(::shortKey) ?: "", keywords = it.fields["npub"] ?: "") }
+            val options = if (form["type"] == "group") (current?.groups ?: emptyList()).map { PickOption(it.id, it.title) } else (current?.actors ?: emptyList()).map { PickOption(it.id, session.personRow(it).title, it.fields["npub"]?.let(::shortKey) ?: "", keywords = it.fields["npub"] ?: "") }
             RowPicker(form, "principal", "Recipient", options)
-        } else Text(current?.grants?.firstOrNull { (it.fields["principal_id"] ?: it.id) == route.principalId }?.title ?: "Recipient")
+        } else Text(current?.grants?.firstOrNull { (it.fields["principal_id"] ?: it.id) == route.principalId }?.let { session.personRow(it).title } ?: "Recipient")
         AdminChoice(form, "role", "Role", listOf("context_editor" to "Context editor", "scope_manager" to "Scope manager"))
         Text("Context editors can edit the context tree. Scope managers can also manage scope settings and access. Neither role grants access to linked content.", style = MaterialTheme.typography.bodySmall)
         SaveBar(form, session, allowed = verified && (route.principalId != null || form["principal"].isNotEmpty()), confirmTitle = "Apply this scope change?",

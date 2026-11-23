@@ -99,7 +99,7 @@ import studio.otherstuff.ambulando.core.transport.obj
             }
             if (rows != null && visible.isEmpty() && artefacts.isEmpty() && creating.isEmpty()) item(key = "empty") {
                 EmptyNote(if (query.isEmpty()) "No artefacts" else "No matches", Icons.Outlined.Description,
-                    if (query.isNotEmpty()) "No document title contains “$query”." else if (services.unlocked) "Documents in this scope appear here." else "Unlock to load documents.")
+                    if (query.isNotEmpty()) "No artefact title contains “$query”." else if (services.unlocked) "Artefacts in this scope appear here." else "Unlock to load artefacts.")
             }
         }
     }
@@ -206,7 +206,9 @@ import studio.otherstuff.ambulando.core.transport.obj
     val stale = activity.filter { !it.isTerminal && it !in live }
     val recent = activity.filter { it.isTerminal }.take(30)
     val working = live.map { it.agentNpub }.toSet()
-    fun agentName(npub: String) = rows?.firstOrNull { it.agentNpub == npub }?.displayName ?: (npub.take(12) + "…")
+    val directory = peopleDirectory(model)
+    fun agentName(npub: String) = studio.otherstuff.ambulando.core.profiles.PersonNamePolicy.usable(rows?.firstOrNull { it.agentNpub == npub }?.displayName)
+        ?: directory?.name(npub) ?: "Unknown person"
     val open: (AgentActivityRecord) -> Unit = { item -> item.threadId?.let { services.open(WorkRoute.Thread(w.id, item.channelId, it)) } }
     GroupedSurface(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
@@ -220,7 +222,7 @@ import studio.otherstuff.ambulando.core.transport.obj
                     GroupedRow(index == 0, index == agents.lastIndex, tag = "agents.row") {
                         Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(20.dp), tint = amb.primary) }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(agent.displayName, fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = amb.foreground)
+                            Text(agentName(agent.agentNpub), fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = amb.foreground)
                             Text((listOf(agent.agentNpub.take(12) + "…") + agent.capabilities.take(3)).joinToString(" · "), fontSize = AmbType.caption, color = amb.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         val busy = agent.agentNpub in working

@@ -26,6 +26,7 @@ import studio.otherstuff.ambulando.core.transport.*
     OwnEditorNavigation(); val exit=LocalRouteExit.current
     val services=studio.otherstuff.ambulando.app.ui.nav.LocalAppServices.current
     val context=LocalContext.current; val lifecycle=LocalLifecycleOwner.current.lifecycle
+    val visible by rememberUpdatedState(studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current)
     val boundary=model.activeBoundaryId; val scope=rememberCoroutineScope(); val gate=remember { Mutex() }
     val approvals=remember { GenericApprovalStore(java.io.File(model.environment.baseDir,"napplet-approvals")) }
     var receipt by remember { mutableStateOf<GenericNapplet.Receipt?>(null) }
@@ -63,15 +64,15 @@ import studio.otherstuff.ambulando.core.transport.*
         if(!binding.storage || busy || !trusted || !foreground || !current() || failure!=null) return
         try {
             val value=transport.aggregate(GenericNapplet.text(request,"range"))
-            if(page===host && foreground && current() && trusted) host.deliver(buildJsonObject {
+            if(page===host && foreground && visible && current() && trusted) host.deliver(buildJsonObject {
                 put("type","wingman-napplet-result"); put("version",2); put("session",host.session); put("requestId",request.getValue("requestId")); put("status","ready")
                 put("value",value); put("canWrite",false); put("privacy","viewer-channels")
             })
         } catch(_: TimeoutCancellationException) {
-            if(page===host && foreground && current() && trusted) host.deliver(GenericNapplet.error(host.session,GenericNapplet.text(request,"requestId"),"unavailable"))
+            if(page===host && foreground && visible && current() && trusted) host.deliver(GenericNapplet.error(host.session,GenericNapplet.text(request,"requestId"),"unavailable"))
         } catch(e: CancellationException) { throw e }
         catch(e: Exception) {
-            if(page===host && foreground && current() && trusted) host.deliver(GenericNapplet.error(host.session,GenericNapplet.text(request,"requestId"),GenericNapplet.errorCode(binding,e)))
+            if(page===host && foreground && visible && current() && trusted) host.deliver(GenericNapplet.error(host.session,GenericNapplet.text(request,"requestId"),GenericNapplet.errorCode(binding,e)))
         }
     }
     fun action(a: String) {
@@ -84,32 +85,31 @@ import studio.otherstuff.ambulando.core.transport.*
     }
     fun requestAction(a: String) { if(!busy) { if(dirty) confirm=a else action(a) } }
     BackHandler(enabled=LocalEditorActive.current) { requestAction("close") }
-    LaunchedEffect(transport) { gate.withLock { if(authorize()) { receipt=makeReceipt(writable==true); trusted=approvals.approved(receipt!!); ready=true } } }
+    AppDiscoveryEffect(foreground && visible, transport) { if (!ready) gate.withLock { if(authorize()) { receipt=makeReceipt(writable==true); trusted=approvals.approved(receipt!!); ready=true } } }
     DisposableEffect(lifecycle,transport) {
         val observer=LifecycleEventObserver { _,event ->
-            if(event==Lifecycle.Event.ON_STOP) { foreground=false; clear(); frameEpoch++ }
+            if(event==Lifecycle.Event.ON_PAUSE) { foreground=false; checking=true; clear(); frameEpoch++ }
             if(event==Lifecycle.Event.ON_RESUME) foreground=true
         }
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer); clear() }
     }
     DisposableEffect(page) {
-        val host=page; val listener=android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused -> if(focused) scope.launch { gate.withLock { if(authorize()) revalidateStorage() } } }
+        val host=page; val listener=android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused -> if(focused) scope.launch { gate.withLock { if(foreground && visible && authorize()) revalidateStorage() } } }
         host?.view?.viewTreeObserver?.addOnWindowFocusChangeListener(listener)
         onDispose { host?.view?.viewTreeObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener) }
     }
     LaunchedEffect(services.unlocked,w.accessRemoved,model.activeBoundaryId) { if(!current()) stop() }
-    LaunchedEffect(transport,trusted) {
-        if(trusted) model.store.changes.stream().collect { changes -> if(changes.any { (it.workspaceId==null || it.workspaceId==w.id) && it.table in setOf(
+    AppDiscoveryEffect(trusted && foreground && LocalEditorActive.current, transport) {
+        model.store.changes.stream().collect { changes -> if(changes.any { (it.workspaceId==null || it.workspaceId==w.id) && it.table in setOf(
             studio.otherstuff.ambulando.core.store.StoreTable.FILES,studio.otherstuff.ambulando.core.store.StoreTable.CHANNELS,studio.otherstuff.ambulando.core.store.StoreTable.ACCESS,studio.otherstuff.ambulando.core.store.StoreTable.WORKSPACES,studio.otherstuff.ambulando.core.store.StoreTable.CONNECTIONS) }) gate.withLock { if(authorize()) revalidateStorage() } }
     }
-    LaunchedEffect(transport,trusted,foreground,frameEpoch) {
-        if(!trusted || !foreground || failure!=null) return@LaunchedEffect
-        gate.withLock { if(!authorize()) return@LaunchedEffect }
+    AppDiscoveryEffect(trusted && foreground && visible && !checking, transport,frameEpoch) {
+        if(page!=null || failure!=null) return@AppDiscoveryEffect
         withContext(Dispatchers.Main.immediate) {
             GenericNappletWebHost.create(context,html,binding,accept={ request ->
                 val op=GenericNapplet.text(request,"operation")
                 val requestSession=GenericNapplet.text(request,"session")
-                if(busy || !trusted || !foreground || !current() || failure!=null ||
+                if(busy || !trusted || !foreground || !visible || !current() || failure!=null ||
                     (page!=null && page!!.session!=requestSession) || (checking && op!="read")) false
                 else if(op=="dirty") { dirty=request.getValue("dirty").jsonPrimitive.boolean; true }
                 else {
@@ -123,7 +123,7 @@ import studio.otherstuff.ambulando.core.transport.*
                                 yield() // Let construction finish before checking the mounted page nonce.
                                 gate.withLock {
                                     host=page?.takeIf { it.session==requestSession }
-                                    check(host!=null && trusted && foreground && current() && failure==null)
+                                    check(host!=null && trusted && foreground && visible && current() && failure==null)
                                     require(authorize())
                                     val snapshot=if(binding.capability=="private-json-file") {
                                         if(op=="save") { require(writable==true); transport.save(GenericNapplet.text(request,"baseVersionId"),request.getValue("value").jsonObject) }
@@ -131,7 +131,7 @@ import studio.otherstuff.ambulando.core.transport.*
                                     } else null
                                     val value=snapshot?.value ?: transport.aggregate(GenericNapplet.text(request,"range"))
                                     require(authorize(snapshot?.version)); if(snapshot!=null) require(snapshot.canWrite==writable)
-                                    ensureActive(); check(page===host && foreground && current() && trusted)
+                                    ensureActive(); check(page===host && foreground && visible && current() && trusted)
                                     if(binding.storage) lastStorageRequest=request
                                     buildJsonObject {
                                         put("type","wingman-napplet-result"); put("version",2); put("session",requestSession); put("requestId",request.getValue("requestId")); put("status","ready")
@@ -139,16 +139,16 @@ import studio.otherstuff.ambulando.core.transport.*
                                     }
                                 }
                             }
-                            ensureActive(); if(page===host && foreground && current() && trusted) host?.deliver(result)
+                            ensureActive(); if(page===host && foreground && visible && current() && trusted) host?.deliver(result)
                             if(op=="save") dirty=false
                         } catch(_: TimeoutCancellationException) {
                             val target=page?.takeIf { it.session==requestSession }
-                            if(target!=null && foreground && current() && trusted && failure==null)
+                            if(target!=null && foreground && visible && current() && trusted && failure==null)
                                 target.deliver(GenericNapplet.error(requestSession,GenericNapplet.text(request,"requestId"),"unavailable"))
                         } catch(e: CancellationException) { throw e }
                         catch(e: Exception) {
                             gate.withLock {
-                                if(page===host && host!=null && trusted && foreground && current() && authorize())
+                                if(page===host && host!=null && trusted && foreground && visible && current() && authorize())
                                     host?.deliver(GenericNapplet.error(requestSession,GenericNapplet.text(request,"requestId"),GenericNapplet.errorCode(binding,e)))
                             }
                         } finally {
@@ -158,8 +158,13 @@ import studio.otherstuff.ambulando.core.transport.*
                 }
             },onStopped={ stop() }).fold(onSuccess={ page=it },onFailure={ stop() })
         }
+
+    }
+    AppDiscoveryEffect(trusted && foreground && visible && failure == null, transport) {
+        gate.withLock { if(authorize()) { page?.view?.onResume(); revalidateStorage() } }
         while(isActive && failure==null) { delay(30000); gate.withLock { if(authorize()) revalidateStorage() } }
     }
+    LaunchedEffect(visible) { if (!visible) { checking = true; withContext(Dispatchers.Main.immediate) { page?.view?.onPause() } } }
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth()) {
             TextButton(enabled=!busy,onClick={ requestAction("close") },modifier=Modifier.testTag("generic.close")) { Text("Close") }
@@ -180,7 +185,7 @@ import studio.otherstuff.ambulando.core.transport.*
                 TextButton(enabled=!checking && !busy,onClick={ scope.launch { gate.withLock { if(authorize()) { val r=makeReceipt(writable==true); receipt=r; if(!approvals.remember(r)) notice="Approval applies to this session only."; trusted=true } } } },modifier=Modifier.testTag("generic.trust")) { Text("Trust and open") }
             }
             else -> page?.let { host -> key(host.session) {
-                AndroidView(factory={host.view},update={ it.visibility=if(checking || !foreground) android.view.View.INVISIBLE else android.view.View.VISIBLE },modifier=Modifier.fillMaxWidth().weight(1f).testTag("generic.host"))
+                AndroidView(factory={host.view},update={ it.visibility=if(checking || !foreground || !visible) android.view.View.INVISIBLE else android.view.View.VISIBLE },modifier=Modifier.fillMaxWidth().weight(1f).testTag("generic.host"))
             } }
         }
     }

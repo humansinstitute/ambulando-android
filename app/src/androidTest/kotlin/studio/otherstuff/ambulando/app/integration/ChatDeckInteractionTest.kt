@@ -1,6 +1,7 @@
 package studio.otherstuff.ambulando.app.integration
 
 import android.content.Intent
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
@@ -90,7 +91,7 @@ class ChatDeckInteractionTest {
     @Test fun inboxTypeTogglesSearchAndRowActionsWork() = launch { model ->
         compose.runOnIdle { val c = model.channels.first { it.id == SampleIds.GENERAL }; model.selectContext(c.scopeId, c.id); model.section = AppSection.DECK }
         compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("deck.page.inbox")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("deck.page.inbox").performClick()
+        compose.onNodeWithTag("deck.page.inbox").assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).performClick()
         compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("deck.inbox.item")).fetchSemanticsNodes().isNotEmpty() }
         val kinds = { compose.onAllNodes(hasTestTag("deck.inbox.item")).fetchSemanticsNodes().map { it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)?.firstOrNull().orEmpty() } }
         assertTrue(kinds().any { it.startsWith("Task") })

@@ -20,10 +20,24 @@ strip. Whiteboards retain their drawing tools and primary Save; System Flows kee
 loading and conflict information remains available when relevant. Ordinary HTML uses its own toolbar instead of the outer
 app navigation and duplicate viewer title; pinning and source editing are in its overflow.
 
+The HTML, whiteboard and System Flow overflow menus also offer “Download / share File”. This opens the existing File
+controls: checksum-verified download, local preview, Android sharing and Save to Files through Android's document picker.
+These actions use the current saved File; they do not publish unsaved editor changes or export a historical revision.
+Previously downloaded Files remain available in the read-only File reader after access loss; no new server reads or
+mutations are authorized by a retained local copy. A direct open during a network failure also offers that File reader
+when the record was previously received. Full offline rich-editor rendering remains unavailable.
+
 HTML's overflow menu browses saved revisions. Edit source saves an immutable version against the base that was read;
 a stale base leaves the draft intact. Restore source starts from historical bytes and saves against the current base.
 Unsaved source and its base are preserved within the workspace's private draft directory; closing the source dialog
-keeps the draft, and reopening restores it. Source editing is limited to ordinary HTML bytes; manifest JSON is edited
+keeps the draft, and reopening restores it. Accepted source edits persist in ordered, atomic view-model-owned writes,
+so closing the dialog does not cancel the latest write. Successful version saves verify exact source readback before
+clearing recovery data; a generation fence prevents old queued edits from recreating the cleared draft.
+The save acknowledgement and retry identity are retained with recovery source. If verification fails after Tower accepts
+the edit, reopening offers verification only and never uploads the acknowledged edit again. Verification reads the exact
+immutable saved version, independently of history length or a newer head. When Tower omits its version identity, a bounded
+head read is checked against the exact source; an unverified mismatch keeps recovery intact. Malformed recovery
+data is reported and retained. Source editing is limited to ordinary HTML bytes; manifest JSON is edited
 through its authoring tool. Permission checks remain on the server for every read and mutation.
 
 Personal File pins use the existing actor-private CAS pin routes with `resource_type:file`. Chat File mentions,

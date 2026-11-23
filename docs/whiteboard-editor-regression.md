@@ -16,3 +16,19 @@ Before release, verify on the target device:
 - Upgrade the previously delivered app using the same signing certificate. Confirm identity, connections, list navigation and drafts remain, then repeat both entry routes and Back actions.
 
 Device screenshot and upgrade acceptance are required before store delivery. A crashing emulator host is a validation blocker; do not repeatedly restart it or count a successful source build as runtime acceptance.
+
+## Profile-name presentation
+
+Run `bun test web-editors/test` for the editor helper, text escaping, exact-identity fallback, bounds and
+unchanged comment/scene data. `BoardAuthorNamesTests` covers checksum validation, local-cache arrival,
+rename/removal and stale document/history keys. `AdministrationNamesTests` checks custom labels,
+group children and unchanged raw actor/record fields. These JVM tests require the normal core test slot.
+
+On the reserved synthetic device, run `BoardAuthorNamesTest` for the actual bundled WebView discussion:
+unknown author, cached name, rename, wrong identity, stale view, escaped text, retained reply draft and
+no content write caused by presentation updates. Also run existing board editing/history/draft tests.
+Manually verify late profile updates in member/group/delegate lists, the channel audience picker,
+document comment recipient resolution and agent labels. An open member edit form must keep the stored
+value and unsaved edits while its surrounding display label updates. A profile rename must not change
+a selected assignee, ACL recipient, channel route or board/comment identity. Keep key/copy/security
+fields visible as before. Do not treat source checks or test compilation as device acceptance.

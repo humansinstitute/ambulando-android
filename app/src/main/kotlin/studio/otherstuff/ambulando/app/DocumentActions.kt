@@ -66,7 +66,7 @@ import java.util.UUID
 @Composable internal fun DocumentComments(model: AppModel, docId: String, enabled: Boolean) {
     val w = model.workspace ?: return; val c = model.connection ?: return
     val rows by remember(w.id, docId) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.comments(w.id, CommentRecord.Parent.DOC, docId) } }.collectAsState(emptyList())
-    val members by remember(w.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.directoryMembers(w.id) } }.collectAsState(emptyList())
+    val members by remember(w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == studio.otherstuff.ambulando.core.store.StoreTable.PROFILES }) { model.store.reader.directoryMembers(w.id) } }.collectAsState(emptyList())
     val people by remember(c.id, w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == StoreTable.PROFILES }) { model.store.reader.people(c.id, w.id) } }.collectAsState(null)
     val names = remember(members, people) { members.associate { it.npub to it.label } + (people?.names ?: emptyMap()) }
     val draft = studio.otherstuff.ambulando.app.ui.work.rememberCommentDraft(docId)
@@ -160,7 +160,7 @@ import java.util.UUID
     var working by remember(doc.id) { mutableStateOf(false) }
     var outcome by remember(doc.id) { mutableStateOf<String?>(null) }
     val source = model.channels.firstOrNull { it.id == doc.channelId }
-    val names by produceState(emptyMap<String, String>(), w.id) { value = model.store.reader.directoryMembers(w.id).associate { it.npub to it.label } }
+    val names by remember(model.store, w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == studio.otherstuff.ambulando.core.store.StoreTable.PROFILES }) { model.store.reader.directoryMembers(w.id).associate { it.npub to it.label } } }.collectAsState(emptyMap())
     if (trigger != null) trigger { if (enabled && source != null && services.unlocked) { open = true; outcome = null } }
     else TextButton(enabled = enabled && source != null && services.unlocked, onClick = { open = true; outcome = null }, modifier = Modifier.testTag("doc.move")) { Text("Move…") }
     if (!open || source == null) return
