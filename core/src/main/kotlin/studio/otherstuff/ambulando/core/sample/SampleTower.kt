@@ -117,6 +117,8 @@ class SampleTower(
     // MARK: Toggles (the sample-data controls in Settings and UI test launch flags)
 
     /** Called with every request before this tower handles it; a test suspends a chosen one here and releases it later. */
+    /** Explicit fixture response only; never computed from sample rows or used by release mode. */
+    @Volatile var workspaceReportFixture: ((String, String) -> kotlinx.serialization.json.JsonObject)? = null
     @Volatile var requestGate: (suspend (HttpRequest) -> Unit)? = null
 
     /** Every request fails as if there were no network (open event streams drop). */
@@ -282,6 +284,12 @@ class SampleTower(
             if (url.path.startsWith(prefix) && url.path.removePrefix(prefix).substringBefore('/') in revokedWorkspaces) {
                 return errorReply(403, "forbidden")
             }
+        }
+        if (request.method == "GET" && url.path.endsWith("/workspace-report")) {
+            val w=url.path.substringBeforeLast('/').substringAfterLast('/')
+            val range=java.net.URI(request.url).rawQuery?.split('&')?.firstOrNull { it.startsWith("range=") }?.substringAfter('=') ?: ""
+            val value=workspaceReportFixture?.invoke(w,range) ?: return errorReply(404,"not_found")
+            return 200 to value.toString().toByteArray()
         }
         administration.scopeLease(request, url.path)?.let { return it }
         // Surface routes first: their ownership is exact (board versions live under `/files/:f/versions/:v/object`).

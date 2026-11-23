@@ -34,7 +34,7 @@ that an emulator is an authenticated live member session.
 
 ## Unsupported on Android
 
-Feed, direct Autopilot pipeline/session views, FIPS transport, workrooms and reports. Not offered on any native client (no supported contract): group rename/delete, removing or promoting a workspace member, managed-app uninstall/runtime teardown. Web-owned
+Feed, direct Autopilot pipeline/session views, FIPS transport, workrooms. Not offered on any native client (no supported contract): group rename/delete, removing or promoting a workspace member, managed-app uninstall/runtime teardown. Web-owned
 WApp and personal-agent configuration is not recreated. The app does not promise indefinite background execution.
 
 Android OS push uses Firebase Messaging with canonical Tower registration, actual Firebase Android config and OS
@@ -351,3 +351,5 @@ The four stabilisation commits were read line by line against the risks below be
   Overnight touch injection/full-screen (2 of 10), Multi (0 of 10). Small samples; the bounded next diagnosis stays as written above.
 - JVM on the release source: core 749 tests (1 optional skip), app 77, zero failures. (After the editor change above: core 749, app 89.)
 
+
+Workspace Report: Apps and current-origin direct route, private code File setup/adoption/chooser and separate remembered read-only capability. See [contract and validation](workspace-report.md). Requires the connected Tower report API; missing routes show unavailable. Synthetic checks do not establish live counts.

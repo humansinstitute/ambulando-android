@@ -108,7 +108,7 @@ class ActiveFailureObservationTest {
         val captured = mutableListOf<LocalStages.Event>()
         val previous = LocalStages.observer
         try {
-            val prefixes = "discover scopes profiles attention-types notifications pins messages reactions thread directory channels tasks task task-relationships docs doc files inbox events scope-order scope-collapsed notifications-archive notification-item notification-prefs context context-refs canvases canvas board agents agent-activity toolbox thread-record download attachment voice admin manage personal-agents writes outbox export doc-move doc-save doc-lease doc-inspect doc-latest doc-versions paste branch rename-thread naplet-html pin-order canvas-create board-versions board-read board-publish board-rename task-tree tree-create tree-view canvas-edit".split(" ")
+            val prefixes = "discover scopes profiles attention-types notifications pins messages reactions thread directory channels tasks task task-relationships docs doc files inbox events scope-order scope-collapsed notifications-archive notification-item notification-prefs context context-refs canvases canvas board agents agent-activity workspace-report toolbox thread-record download attachment voice admin manage personal-agents writes outbox export doc-move doc-save doc-lease doc-inspect doc-latest doc-versions paste branch rename-thread naplet-html pin-order canvas-create board-versions board-read board-publish board-rename task-tree tree-create tree-view canvas-edit".split(" ")
             val payload = "https://secret.example/npub?grant=private#hash"
             for (prefix in prefixes) scoped.enqueueRead("$prefix:$payload", SyncPriority.VISIBLE) { error(payload) }
             scoped.waitUntilIdle()

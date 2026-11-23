@@ -142,7 +142,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         }
     }
     fun openUrl(url: String) {
-        val appRoute = if (w != null && c != null && !w.accessRemoved) dailyMetricsLink(url, c.origin, w.id) else null
+        val appRoute = if (w != null && c != null && !w.accessRemoved) (dailyMetricsLink(url, c.origin, w.id) ?: workspaceReportLink(url, c.origin, w.id) ?: runCatching { WorkRoute.File(w.id, genericFileId(url,c.origin,w.id)) }.getOrNull()) else null
         if (appRoute != null) {
             model.section = AppSection.TOOLBOX
             if (stacks.of(AppSection.TOOLBOX).lastOrNull() != appRoute) stacks.push(AppSection.TOOLBOX, appRoute)
@@ -162,6 +162,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     val services = AppServices(avatars, ::openUrl, { route ->
         if (route.workspaceId == w?.id) {
             val target = when (route) {
+                is WorkRoute.WorkspaceReport -> AppSection.TOOLBOX
                 is WorkRoute.DailyMetrics -> AppSection.TOOLBOX
                 is WorkRoute.Task -> AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
@@ -325,6 +326,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         }, routeScreen = { _, route ->
             if (screen != null) when (route) {
                 is WorkRoute.Task -> Column { Box(Modifier.weight(1f)) { TaskDetailScreen(remember(screen, route.taskId) { TaskDetailState(model.store, screen, route.taskId, coroutineScope) }, screen, intents) } }
+                is WorkRoute.WorkspaceReport -> WorkspaceReportScreen(model)
                 is WorkRoute.DailyMetrics -> DailyMetricsScreen(model)
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)

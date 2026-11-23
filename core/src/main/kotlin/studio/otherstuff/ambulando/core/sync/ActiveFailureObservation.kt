@@ -51,6 +51,7 @@ internal fun activeFailureCategory(key: String): Stage = when {
     key.startsWith("board:") -> Stage.ACTIVE_FAILED_BOARD
     key.startsWith("agents:") -> Stage.ACTIVE_FAILED_AGENTS
     key.startsWith("agent-activity:") -> Stage.ACTIVE_FAILED_AGENT_ACTIVITY
+    key.startsWith("workspace-report:") -> Stage.ACTIVE_FAILED_WORKSPACE_REPORT
     key.startsWith("toolbox:") -> Stage.ACTIVE_FAILED_TOOLBOX
     key.startsWith("thread-record:") -> Stage.ACTIVE_FAILED_THREAD_RECORD
     key.startsWith("download:") -> Stage.ACTIVE_FAILED_DOWNLOAD

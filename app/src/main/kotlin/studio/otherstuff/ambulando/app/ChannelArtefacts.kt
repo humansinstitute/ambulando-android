@@ -142,6 +142,8 @@ import java.util.UUID
     val c = model.connection ?: return; val w = model.workspace ?: return
     var reload by remember(file.id) { mutableStateOf(0) }
     var html by remember(file.id) { mutableStateOf<String?>(null) }
+    var verifiedFile by remember(file.id) { mutableStateOf(file) }
+    var generic by remember(file.id) { mutableStateOf<GenericNapplet.Binding?>(null) }
     var versions by remember(file.id) { mutableStateOf<FileVersionList?>(null) }
     var selected by remember(file.id) { mutableStateOf<String?>(null) }
     var error by remember(file.id) { mutableStateOf<String?>(null) }
@@ -160,24 +162,45 @@ import java.util.UUID
     }
     LaunchedEffect(file.id, selected, reload) {
         try {
-            html = null; error = null
-            versions = model.towerAPI(c).fileVersions(w.id, w.appNpub, file.id)
-            val api = model.towerAPI(c)
-            val rendered = api.artefactHTML(w.id, w.appNpub, file.id, selected ?: versions?.currentVersionId)
-            val manifest = nappletManifest(rendered)
-            val bound = manifest?.let { runCatching { FileNapplet.binding(file.raw.getValue("metadata").jsonObject, it) }.getOrNull() }
-            html = if (selected == null && bound != null) {
-                val version = versions!!.versions.first { it.id == versions!!.currentVersionId }
-                require(version.contentType?.substringBefore(';') == "text/html" && version.sizeBytes in 1..FileNapplet.MAX_BYTES.toLong() && version.sha256 != null)
-                val bytes = api.fileVersionBytes(w.id, w.appNpub, file.id, version)
-                FileNapplet.verifiedHTML(bytes, rendered, requireNotNull(version.sizeBytes), requireNotNull(version.sha256))
-            } else rendered
+            html = null; generic = null; error = null
+            model.sync.genericNappletRead(file.id) {
+                val api = model.fileNappletAPI(c)
+                verifiedFile = api.artefactFile(w.id,w.appNpub,file.id)
+                versions = if(selected==null && verifiedFile.raw.obj("metadata")?.obj("napplet")?.get("version")==JsonPrimitive(2)) api.genericNappletHead(w.id,w.appNpub,file.id) else api.fileVersions(w.id, w.appNpub, file.id)
+                val rendered = api.artefactHTML(w.id, w.appNpub, file.id, selected ?: versions?.currentVersionId)
+                generic = GenericNapplet.parse(rendered, verifiedFile.raw.obj("metadata") ?: JsonObject(emptyMap()))
+                val manifest = nappletManifest(rendered)
+                val bound = manifest?.let { runCatching { FileNapplet.binding(file.raw.getValue("metadata").jsonObject, it) }.getOrNull() }
+                val legacyReport=manifest?.let { runCatching { WorkspaceReport.binding(file.raw.getValue("metadata").jsonObject,it) }.getOrNull() }
+                require(generic!=null || bound!=null || legacyReport!=null || !GenericNapplet.claimsRuntime(rendered,verifiedFile.raw.obj("metadata") ?: JsonObject(emptyMap()))) { "This napplet declaration is invalid or unsupported." }
+                html = if (selected == null && (generic != null || bound != null || manifest?.let { runCatching { WorkspaceReport.binding(file.raw.getValue("metadata").jsonObject, it) }.getOrNull() } != null)) {
+                    val version = versions!!.versions.first { it.id == versions!!.currentVersionId }
+                    require(version.contentType?.substringBefore(';') == "text/html" && version.sizeBytes in 1..FileNapplet.MAX_BYTES.toLong() && version.sha256 != null)
+                    val bytes = api.fileVersionBytes(w.id, w.appNpub, file.id, version)
+                    FileNapplet.verifiedHTML(bytes, rendered, requireNotNull(version.sizeBytes), requireNotNull(version.sha256))
+                } else rendered
+                if(generic!=null) model.store.writer.upsertFiles(w.id,listOf(verifiedFile))
+            }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { error = e.message }
+        catch (e: Exception) { error = e.message; html = null }
+    }
+    if(error != null && (verifiedFile.raw.obj("metadata")?.obj("napplet")?.get("version") == JsonPrimitive(2) || generic != null)) {
+        Text("This napplet is invalid or unavailable. Close and reopen to verify it.", Modifier.padding(16.dp)); return
+    }
+    if(selected==null && source==null && html!=null && generic!=null && versions?.currentVersionId!=null) {
+        key(model.activeBoundaryId,file.id,versions!!.currentVersionId,generic) {
+            GenericNappletHost(model,verifiedFile,html!!,generic!!,versions!!.currentVersionId!!) { reload++ }
+        }
+        return
     }
     val declaration = html?.let(::nappletManifest)
     val binding = declaration?.let { m -> runCatching { FileNapplet.binding(file.raw.getValue("metadata").jsonObject, m) }.getOrNull() }
     val currentVersion = versions?.currentVersionId
+    val reportBinding=declaration?.let { runCatching { WorkspaceReport.binding(file.raw.getValue("metadata").jsonObject,it) }.getOrNull() }
+    if(selected==null && source==null && reportBinding==w.id && declaration!=null && currentVersion!=null) {
+        key(model.activeBoundaryId,file.id,currentVersion,reportBinding) { WorkspaceReportHost(model,file,html!!,declaration,currentVersion) }
+        return
+    }
     if (selected == null && source == null && declaration != null && binding != null && currentVersion != null) {
         key(model.activeBoundaryId, file.id, currentVersion, binding) {
             FileNappletScreen(model, file, html!!, declaration, binding, currentVersion) { reload++ }
@@ -185,7 +208,10 @@ import java.util.UUID
         return
     }
     if (appMode) {
-        Text(error ?: if (html == null) "Opening Daily Metrics…" else "This tracker is invalid or unavailable. No replacement was created.", Modifier.padding(16.dp))
+        val reportApp=file.raw.obj("metadata")?.obj("napplet")?.string("app_id")==WorkspaceReport.ID
+        Text(error ?: if (html == null) { if(reportApp) "Opening Workspace Report…" else "Opening Daily Metrics…" }
+            else if(reportApp) "This report is invalid or unavailable. No replacement was created."
+            else "This tracker is invalid or unavailable. No replacement was created.", Modifier.padding(16.dp))
         return
     }
     Column(Modifier.fillMaxSize()) {

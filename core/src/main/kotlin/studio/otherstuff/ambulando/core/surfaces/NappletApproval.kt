@@ -9,6 +9,22 @@ import studio.otherstuff.ambulando.core.transport.*
 @ConsistentCopyVisibility
 data class NappletApproval private constructor(val slot: String, val fingerprint: String) {
     companion object {
+        /** Separate receipt policy: only exact code and workspace-bound read capability, never counts/channel sets. */
+        fun report(origin: String, connection: String, service: String?, namespace: String, workspace: String,
+                   app: String, viewer: String, code: String, html: String, metadata: JsonObject, manifest: JsonObject): NappletApproval {
+            require(WorkspaceReport.binding(metadata,manifest)==workspace && isUUID(code))
+            val boundary=buildJsonObject {
+                put("origin",TowerOrigin(origin).url); put("connection",connection); put("service",service)
+                put("namespace",namespace); put("workspace",workspace); put("app",app); put("viewer",viewer); put("codeFile",code)
+                put("capability","workspace-report-v1:read")
+            }
+            fun hash(v: JsonObject)=Sha256Hex.of(sortedJson(v).toString().toByteArray())
+            return NappletApproval(hash(boundary),hash(buildJsonObject {
+                put("boundary",boundary); put("codeSha256",Sha256Hex.of(html.toByteArray())); put("manifest",manifest)
+                put("binding",workspace); put("policy",1)
+            }))
+        }
+
         /** Call only after validating code bytes and freshly authorizing these exact bindings. */
         fun verified(origin: String, connection: String, service: String?, namespace: String, workspace: String,
                      app: String, viewer: String, codeId: String, html: String, metadata: JsonObject,

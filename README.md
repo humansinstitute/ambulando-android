@@ -25,6 +25,8 @@ See [Garmin recorder setup, protocol and build instructions](docs/garmin-recorde
 - Notification inbox shared with other Ambulando apps: unread badge, filters, read/dismiss/archive, tap-through, offline reading.
 - Local search; Deck activity, personal pins, recent channels, canvases and WApp/agent launchers.
 - Native canvas viewport and naplets, task relationships, native Excalidraw previews and bundled board editing.
+- [Generic File napplets](docs/generic-napplets.md) in Apps: install existing HTML Files, run supported capabilities, and load new apps or UI revisions without rebuilding the Android client.
+- [Workspace Report](docs/workspace-report.md) in Apps, with a private code File and a separate read-only aggregate capability; unavailable until the connected Tower supports the report API.
 - Daily Metrics in Apps, with private NStack File data and [device-local approval controls](docs/napplet-approval.md) for verified napplet code and bound access.
 - Context references, agents/activity, Toolbox, scope/channel management and an HTTPS browser with explicit NIP-07 consent and [NIP-44 v2 encryption/decryption](docs/browser-nip44.md).
 
@@ -33,7 +35,7 @@ Firebase Android configuration, matching configured Tower support and Android no
 See the [phone/server setup guide](docs/android-push-setup.md); installed source alone does not establish live delivery.
 
 See [feature status and validation](docs/parity-matrix.md). Feed, FIPS transport, pipeline/session
-viewers, workrooms and reports are not supported. WApp configuration
+viewers and workrooms are not supported. WApp configuration
 and personal agent configuration remain in the web app.
 
 ## Privacy

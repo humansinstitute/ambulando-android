@@ -1,3 +1,13 @@
+## 0.9.37 (65)
+
+- Add a generic v2 File napplet runtime: Apps installs existing code Files through personal pins, uses manifest titles/icons and versioned capabilities, and checks for updates on the same File without a per-app build. Private JSON uses bounded canonical CAS; changed code/access prompts for separate v2 approval. Existing v1 tracker/report and saved data remain compatible.
+
+- Add Workspace Report to Apps and its direct workspace route, reusing a private Note to self code File.
+- Show authorized channel activity, current inventory, task states, coverage and ranking remainder through a separate read-only capability.
+- Remember approval for unchanged verified report code and workspace access; clear aggregates when the host loses authority or backgrounds.
+- Require the connected Tower’s report API. Missing routes, offline state and invalid snapshots show unavailable instead of invented totals.
+- Retain the Artefacts creation improvements from build 64 and the existing Daily Metrics behavior.
+
 ## 0.9.36 (64)
 
 - Make the prominent Artefacts + offer Document, Whiteboard and HTML together, with one creation action.
