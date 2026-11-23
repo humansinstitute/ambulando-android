@@ -36,10 +36,11 @@ import studio.otherstuff.ambulando.core.transport.*
     var failure by remember { mutableStateOf<String?>(null) }; var notice by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(true) }; var busy by remember { mutableStateOf(false) }
     var writable by remember { mutableStateOf<Boolean?>(null) }; var dirty by remember { mutableStateOf(false) }
+    var lastStorageRequest by remember { mutableStateOf<JsonObject?>(null) }
     var confirm by remember { mutableStateOf<String?>(null) }; var job by remember { mutableStateOf<Job?>(null) }
     fun current()=model.activeBoundaryId==boundary && model.connection?.id==c.id && model.workspace?.id==w.id && model.workspace?.accessRemoved==false && services.unlocked
-    val transport=remember(boundary,file.id,version) { GenericNappletTransport(model.fileNappletAPI(c),w.id,w.appNpub,c.signerNpub,file.id,version,html,file.raw.getValue("metadata").jsonObject,binding,::current) { model.sync.readWorkspaceReport(c,w,it) } }
-    fun clear() { job?.cancel(); job=null; page?.destroy(); page=null; transport.clear(); busy=false; dirty=false }
+    val transport=remember(boundary,file.id,version) { GenericNappletTransport(model.fileNappletAPI(c),w.id,w.appNpub,c.signerNpub,file.id,version,html,file.raw.getValue("metadata").jsonObject,binding,::current) { if(binding.storage) model.sync.readWorkspaceStorageReport(c,w,it) else model.sync.readWorkspaceReport(c,w,it) } }
+    fun clear() { lastStorageRequest=null; job?.cancel(); job=null; page?.destroy(); page=null; transport.clear(); busy=false; dirty=false }
     fun stop() { clear(); trusted=false; failure="This napplet is unavailable. Reopen it to verify current access." }
     fun makeReceipt(write: Boolean)=GenericNapplet.receipt(buildJsonObject {
         put("baseUrl",c.origin); put("tower",c.towerNpub ?: ""); put("service",w.raw.obj("identity")?.string("workspace_service_npub") ?: "")
@@ -54,6 +55,24 @@ import studio.otherstuff.ambulando.core.transport.*
         catch(e: CancellationException) { throw e }
         catch(e: GenericNappletTransport.Conflict) { throw e }
         catch(_: Exception) { stop(); false } finally { checking=false }
+    }
+    // Re-read through the same sync owner: code File authority does not prove workspace.manage.
+    suspend fun revalidateStorage() {
+        val request=lastStorageRequest ?: return
+        val host=page ?: return
+        if(!binding.storage || busy || !trusted || !foreground || !current() || failure!=null) return
+        try {
+            val value=transport.aggregate(GenericNapplet.text(request,"range"))
+            if(page===host && foreground && current() && trusted) host.deliver(buildJsonObject {
+                put("type","wingman-napplet-result"); put("version",2); put("session",host.session); put("requestId",request.getValue("requestId")); put("status","ready")
+                put("value",value); put("canWrite",false); put("privacy","viewer-channels")
+            })
+        } catch(_: TimeoutCancellationException) {
+            if(page===host && foreground && current() && trusted) host.deliver(GenericNapplet.error(host.session,GenericNapplet.text(request,"requestId"),"unavailable"))
+        } catch(e: CancellationException) { throw e }
+        catch(e: Exception) {
+            if(page===host && foreground && current() && trusted) host.deliver(GenericNapplet.error(host.session,GenericNapplet.text(request,"requestId"),GenericNapplet.errorCode(binding,e)))
+        }
     }
     fun action(a: String) {
         clear()
@@ -74,14 +93,14 @@ import studio.otherstuff.ambulando.core.transport.*
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer); clear() }
     }
     DisposableEffect(page) {
-        val host=page; val listener=android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused -> if(focused) scope.launch { gate.withLock { authorize() } } }
+        val host=page; val listener=android.view.ViewTreeObserver.OnWindowFocusChangeListener { focused -> if(focused) scope.launch { gate.withLock { if(authorize()) revalidateStorage() } } }
         host?.view?.viewTreeObserver?.addOnWindowFocusChangeListener(listener)
         onDispose { host?.view?.viewTreeObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener) }
     }
     LaunchedEffect(services.unlocked,w.accessRemoved,model.activeBoundaryId) { if(!current()) stop() }
     LaunchedEffect(transport,trusted) {
         if(trusted) model.store.changes.stream().collect { changes -> if(changes.any { (it.workspaceId==null || it.workspaceId==w.id) && it.table in setOf(
-            studio.otherstuff.ambulando.core.store.StoreTable.FILES,studio.otherstuff.ambulando.core.store.StoreTable.CHANNELS,studio.otherstuff.ambulando.core.store.StoreTable.ACCESS,studio.otherstuff.ambulando.core.store.StoreTable.WORKSPACES,studio.otherstuff.ambulando.core.store.StoreTable.CONNECTIONS) }) gate.withLock { authorize() } }
+            studio.otherstuff.ambulando.core.store.StoreTable.FILES,studio.otherstuff.ambulando.core.store.StoreTable.CHANNELS,studio.otherstuff.ambulando.core.store.StoreTable.ACCESS,studio.otherstuff.ambulando.core.store.StoreTable.WORKSPACES,studio.otherstuff.ambulando.core.store.StoreTable.CONNECTIONS) }) gate.withLock { if(authorize()) revalidateStorage() } }
     }
     LaunchedEffect(transport,trusted,foreground,frameEpoch) {
         if(!trusted || !foreground || failure!=null) return@LaunchedEffect
@@ -113,6 +132,7 @@ import studio.otherstuff.ambulando.core.transport.*
                                     val value=snapshot?.value ?: transport.aggregate(GenericNapplet.text(request,"range"))
                                     require(authorize(snapshot?.version)); if(snapshot!=null) require(snapshot.canWrite==writable)
                                     ensureActive(); check(page===host && foreground && current() && trusted)
+                                    if(binding.storage) lastStorageRequest=request
                                     buildJsonObject {
                                         put("type","wingman-napplet-result"); put("version",2); put("session",requestSession); put("requestId",request.getValue("requestId")); put("status","ready")
                                         snapshot?.let { put("baseVersionId",it.version) }; put("value",value); put("canWrite",snapshot?.canWrite ?: false); put("privacy",if(snapshot!=null) "self-channel" else "viewer-channels")
@@ -129,7 +149,7 @@ import studio.otherstuff.ambulando.core.transport.*
                         catch(e: Exception) {
                             gate.withLock {
                                 if(page===host && host!=null && trusted && foreground && current() && authorize())
-                                    host?.deliver(GenericNapplet.error(requestSession,GenericNapplet.text(request,"requestId"),if(e is GenericNappletTransport.Conflict) "conflict" else "unavailable"))
+                                    host?.deliver(GenericNapplet.error(requestSession,GenericNapplet.text(request,"requestId"),GenericNapplet.errorCode(binding,e)))
                             }
                         } finally {
                             if(job===currentCoroutineContext()[Job]) { busy=false; job=null }
@@ -138,7 +158,7 @@ import studio.otherstuff.ambulando.core.transport.*
                 }
             },onStopped={ stop() }).fold(onSuccess={ page=it },onFailure={ stop() })
         }
-        while(isActive && failure==null) { delay(30000); gate.withLock { authorize() } }
+        while(isActive && failure==null) { delay(30000); gate.withLock { if(authorize()) revalidateStorage() } }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth()) {
@@ -156,7 +176,7 @@ import studio.otherstuff.ambulando.core.transport.*
             failure!=null -> Text(failure!!,Modifier.padding(16.dp))
             !ready -> LinearProgressIndicator(Modifier.fillMaxWidth())
             !trusted -> {
-                Text("Run ${binding.title}? Bound resource: ${binding.resource}. This verified code can "+(if(binding.capability=="workspace-aggregate") "read aggregate activity in accessible workspace channels." else if(writable==true) "read and replace its bound private JSON File." else "read its bound private JSON File.")+" Only run code you trust. Approval is remembered on this device for these code bytes and access.",Modifier.padding(16.dp))
+                Text("Run ${binding.title}? Bound resource: ${binding.resource}. This verified code can "+(if(binding.storage) "read workspace activity plus workspace-wide storage totals, including retained data from private scopes. No message or file content. Requires workspace management permission." else if(binding.capability=="workspace-aggregate") "read aggregate activity in accessible workspace channels." else if(writable==true) "read and replace its bound private JSON File." else "read its bound private JSON File.")+" Only run code you trust. Approval is remembered on this device for these code bytes and access.",Modifier.padding(16.dp))
                 TextButton(enabled=!checking && !busy,onClick={ scope.launch { gate.withLock { if(authorize()) { val r=makeReceipt(writable==true); receipt=r; if(!approvals.remember(r)) notice="Approval applies to this session only."; trusted=true } } } },modifier=Modifier.testTag("generic.trust")) { Text("Trust and open") }
             }
             else -> page?.let { host -> key(host.session) {

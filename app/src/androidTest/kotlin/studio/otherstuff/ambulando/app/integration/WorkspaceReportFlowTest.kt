@@ -66,7 +66,7 @@ class WorkspaceReportFlowTest {
             writes=0
             compose.onNodeWithTag("report.trust").performClick()
             var web: WebView?=null
-            fun loaded() { compose.waitUntil(20000) { instrumentation.runOnMainSync { web=find(window.decorView) }; web!=null && page(web!!,"document.getElementById('report')?.hidden")=="false" } }
+            fun loaded() { compose.waitUntil(20000) { instrumentation.runOnMainSync { web=find(window.decorView) }; web!=null && runCatching { page(web!!,"document.getElementById('report')?.hidden") }.getOrNull()=="false" } }
             compose.waitUntil(20000) { instrumentation.runOnMainSync { web=find(window.decorView) }; web!=null && page(web!!,"document.getElementById('status')?.textContent")?.contains("unavailable")==true }
             assertEquals("true",page(web!!,"document.getElementById('report').hidden"))
             val identity=w.raw.getValue("identity").jsonObject

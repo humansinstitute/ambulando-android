@@ -8,6 +8,7 @@ import java.net.URI
 object GenericNapplet {
     val uuid=Regex("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")
     data class Binding(val manifest: JsonObject,val resources: JsonObject,val name: String,val capability: String) {
+        val storage get()=capability=="workspace-aggregate" && version(manifest.getValue("bindings").jsonObject.getValue(name).jsonObject,"version",2)
         val title get()=text(manifest,"title")
         val icon get()=text(manifest,"icon")
         val resource get()=text(resources.getValue(name).jsonObject,if(capability=="private-json-file") "file_id" else "workspace_id")
@@ -36,7 +37,7 @@ object GenericNapplet {
         val bindings=m.getValue("bindings").jsonObject; require(bindings.size==1)
         val name=bindings.keys.single(); require(name.matches(Regex("[a-z][a-z0-9_]{0,31}")))
         val b=bindings.getValue(name).jsonObject; exact(b,"capability","version","operations")
-        val cap=text(b,"capability"); require(version(b,"version",1) && cap in setOf("private-json-file","workspace-aggregate"))
+        val cap=text(b,"capability"); require(cap in setOf("private-json-file","workspace-aggregate") && (version(b,"version",1) || cap=="workspace-aggregate" && version(b,"version",2)))
         val read=JsonArray(listOf(JsonPrimitive("read"))); val write=JsonArray(listOf(JsonPrimitive("read"),JsonPrimitive("save")))
         require(b["operations"]==read || cap=="private-json-file" && b["operations"]==write)
         exact(n,"version","app_id","bindings"); require(version(n,"version",2) && n["app_id"]==m["app_id"])
@@ -75,8 +76,13 @@ object GenericNapplet {
             put("version",2); put("identity",identity); put("codeFileId",code); put("digest",digest); put("manifest",b.manifest); put("resources",b.resources); put("canWrite",canWrite && b.saves)
         }))
     }
+    fun errorCode(binding: Binding,error: Exception): String = when {
+        error is GenericNappletTransport.Conflict -> "conflict"
+        binding.storage && error is studio.otherstuff.ambulando.core.transport.TowerError.Http && error.status==403 -> "forbidden"
+        else -> "unavailable"
+    }
     fun error(session: String,id: String,code: String): JsonObject = buildJsonObject {
         put("type","wingman-napplet-result"); put("version",2); put("session",session); put("requestId",id); put("status","error"); put("code",code)
-        put("message",when(code) { "invalid" -> "Invalid request."; "conflict" -> "A newer version exists."; "unavailable" -> "Operation could not be confirmed."; else -> error("Unknown error") })
+        put("message",when(code) { "forbidden" -> "Workspace management permission required."; "invalid" -> "Invalid request."; "conflict" -> "A newer version exists."; "unavailable" -> "Operation could not be confirmed."; else -> error("Unknown error") })
     }
 }

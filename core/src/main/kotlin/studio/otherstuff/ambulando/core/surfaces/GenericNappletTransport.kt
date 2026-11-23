@@ -58,7 +58,8 @@ class GenericNappletTransport(private val api: TowerAPI,private val workspace: S
     suspend fun read(): Snapshot = withTimeout(45000) { require(binding.capability=="private-json-file"); snapshot().also { delivered=it; uncertain=false } }
     suspend fun aggregate(range: String): JsonObject = withTimeout(45000) {
         require(binding.capability=="workspace-aggregate" && range in WorkspaceReport.ranges)
-        authorize(); val value=query(range); authorize(); WorkspaceReport.model(value,workspace,range)
+        authorize(); val value=query(range); authorize();
+        if(binding.storage) WorkspaceStorage.model(value,workspace,range) else WorkspaceReport.model(value,workspace,range)
     }
     suspend fun save(base: String,value: JsonObject): Snapshot = withTimeout(45000) {
         require(binding.capability=="private-json-file" && binding.saves)

@@ -95,4 +95,38 @@ class GenericNappletTest {
         assertTrue(runCatching { GenericNapplet.parse(html.replace("script id","script\u000bid"),metadata) }.isFailure)
     }
 
+    @Test fun aggregateVersionTwoIsExplicitReadOnlyAndApprovalBound() {
+        val old=binding(v.getValue("aggregateManifest"),v.getValue("aggregateMetadata"))
+        val declaration=old.manifest.getValue("bindings").jsonObject.getValue(old.name).jsonObject
+        fun upgraded(version: Int=2,extra: Pair<String,JsonElement>?=null): JsonObject {
+            var d=JsonObject(declaration+("version" to JsonPrimitive(version)))
+            if(extra!=null) d=JsonObject(d+extra)
+            return JsonObject(old.manifest+("bindings" to buildJsonObject {put(old.name,d)}))
+        }
+        val storage=binding(upgraded(),v.getValue("aggregateMetadata"))
+        assertFalse(old.storage); assertTrue(storage.storage)
+        val denied=studio.otherstuff.ambulando.core.transport.TowerError.Http(403,null,null)
+        assertEquals("unavailable",GenericNapplet.errorCode(old,denied))
+        assertEquals("forbidden",GenericNapplet.errorCode(storage,denied))
+        assertEquals("unavailable",GenericNapplet.errorCode(storage,studio.otherstuff.ambulando.core.transport.TowerError.Http(503,null,null)))
+        val errors=GenericJson.decode(javaClass.getResource("/napplets/workspace-storage-errors-v1.json")!!.readBytes())
+        for(code in listOf("forbidden","unavailable")) assertEquals(errors.getValue(code),GenericNapplet.error("a".repeat(32),"storage1",code))
+        val request=buildJsonObject {put("type","wingman-napplet-data");put("version",2);put("session","0".repeat(32));put("requestId","read");put("operation","read");put("binding",old.name);put("range","30d")}
+        assertEquals(request,GenericNapplet.request(request.toString(),"0".repeat(32),old))
+        assertEquals(request,GenericNapplet.request(request.toString(),"0".repeat(32),storage))
+        listOf("url" to JsonPrimitive("https://other.invalid"),"storage" to JsonPrimitive("workspace"),"sql" to JsonPrimitive("select 1")).forEach { extra ->
+            assertTrue(runCatching {GenericNapplet.request(JsonObject(request+extra).toString(),"0".repeat(32),storage)}.isFailure)
+        }
+        assertTrue(runCatching {binding(upgraded(3),v.getValue("aggregateMetadata"))}.isFailure)
+        assertTrue(runCatching {binding(upgraded(extra="format" to JsonPrimitive("workspace-report-storage-v1")),v.getValue("aggregateMetadata"))}.isFailure)
+        assertTrue(runCatching {binding(upgraded(extra="operations" to JsonArray(listOf(JsonPrimitive("read"),JsonPrimitive("save")))) ,v.getValue("aggregateMetadata"))}.isFailure)
+        val ctx=v.getValue("context").jsonObject; val code=v.getValue("codeFileId").jsonPrimitive.content; val digest=v.getValue("digest").jsonPrimitive.content
+        val a=GenericNapplet.receipt(ctx,code,digest,old,false); val b=GenericNapplet.receipt(ctx,code,digest,storage,false)
+        assertEquals(a.key,b.key); assertNotEquals(a.fingerprint,b.fingerprint)
+        listOf("baseUrl","appNpub","workspaceId","viewer","tower","service").forEach {key ->
+            val changed=JsonObject(ctx+(key to JsonPrimitive(if(key=="baseUrl") "https://different.invalid" else "different")))
+            assertNotEquals(b.key,GenericNapplet.receipt(changed,code,digest,storage,false).key)
+        }
+    }
+
 }

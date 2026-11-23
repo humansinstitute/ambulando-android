@@ -37,3 +37,33 @@ Unavailable aggregate APIs remain unavailable and never fabricate zero counts.
 The portable protocol and golden fixture are shared with the web runtime. Tests
 using synthetic Tower storage are fixture evidence, not a claim of real NStack
 installation or public Android delivery.
+
+`workspace-aggregate@2` adds an explicit administrative storage opt-in on the
+same bound current workspace and unchanged read/range bridge. The host alone
+adds `storage=workspace` to the fixed report route through the workspace sync
+owner. Version 1 continues to use its exact original query and response parser.
+The capability version is part of the remembered approval, so this expansion
+requires review. Consent includes retained private-scope storage totals; no
+message or File content, object keys, database names or provider credentials
+enter the frame. Effective server `workspace.manage` is required for every read.
+
+The common `workspace-storage-v1` fixture defines bounded groups and metrics,
+with safe IDs, units, methods, nonnegative safe integers and explicit unavailable
+nulls. Hosts accept future metric IDs within this structure without a rebuild;
+NStack-loaded cartridge code controls labels and rendering. Storage is current
+at the enclosing report's exact workspace/as-of, independently of activity dates.
+Logical PostgreSQL row estimates and deduplicated retained object metadata are
+not physical database or provider measurements. Missing measurements stay
+unavailable. A denied administrative read returns `forbidden` for version 2;
+version 1 retains its existing unavailable response. Failed reads clear the
+cartridge's displayed data. These source/fixture checks do not establish backend
+activation, publication of a new report revision or Android store delivery.
+
+Administrative totals are re-read on window focus, relevant local access changes,
+and each 30-second foreground authority check. A failed or denied re-read sends
+an error to the cartridge so it clears prior totals. Backgrounding destroys this
+v2 frame; foregrounding verifies access and reconstructs it. The current workspace
+service identity must match the pinned Tower and registered application before
+an administrative request is sent. Aggregates remain transient; no storage count
+cache is persisted. The shared cartridge, complete report and error goldens in
+`core/src/test/resources/napplets/` are also used by native instrumentation.
