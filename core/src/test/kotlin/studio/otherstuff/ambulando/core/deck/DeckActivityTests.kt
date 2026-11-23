@@ -72,11 +72,11 @@ class DeckActivityTests {
 
     @Test fun workingAgentsAndMentionsAreShownAsTheWebDoes() {
         val activity = AgentActivityRecord.parse(obj("id" to Ids.uuid(1, "0008"), "workspace_id" to Ids.workspace, "channel_id" to Ids.channel1,
-            "thread_id" to Ids.uuid(2, "0008"), "activity_id" to "a", "visibility" to "user_visible", "sequence" to 1, "state" to "working"))
+            "thread_id" to Ids.uuid(2, "0008"), "activity_id" to "a", "visibility" to "user_visible", "sequence" to 1, "state" to "working", "lease_expires_at" to "2026-10-25T00:03:00Z"))
         val s = sources().copy(threads = listOf(DeckActivity.ThreadActivity(Ids.uuid(2, "0008"), Ids.channel1, true, null,
             "## Ask @[Ann Lee](mention:person:npub1x) about @[Plan](mention:document:d1)", "ok", "2026-10-25T00:00:00.000Z", 2)),
             activities = listOf(activity))
-        val chat = DeckActivity.inbox(s, WorkContext.HOME).first { it.kind == DeckActivity.Kind.CHAT }
+        val chat = DeckActivity.inbox(s, WorkContext.HOME, java.time.Instant.parse("2026-10-25T00:00:00Z").toEpochMilli()).first { it.kind == DeckActivity.Kind.CHAT }
         assertTrue(chat.isWorking)
         assertEquals("Ask @Ann Lee about Plan", chat.title)
         assertEquals("Conversation", DeckActivity.threadTitle(DeckActivity.ThreadActivity("x", Ids.channel1, false, " ", null, "", "", 1)))

@@ -199,8 +199,11 @@ import studio.otherstuff.ambulando.core.transport.obj
     val activity by remember(w.id, model.context) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.agentActivities(w.id, ids) } }.collectAsState(emptyList())
     LaunchedEffect(w.id, model.context) { model.sync.refreshAgents(model.connection!!, w, ids) }
     val channelNames = channelLabels(model)
-    val live = activity.filter { !it.isTerminal && it.leaseHealth == "live" }
-    val stale = activity.filter { !it.isTerminal && it.leaseHealth != "live" }
+    var activityNow by remember(w.id) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(w.id) { while (true) { kotlinx.coroutines.delay(1000); activityNow = System.currentTimeMillis() } }
+    val current = currentAgentProgress(activity, activityNow)
+    val live = activity.filter { it.id in current && !it.isTerminal && it.progressStatus(activityNow) != "Stopped responding" }
+    val stale = activity.filter { !it.isTerminal && it !in live }
     val recent = activity.filter { it.isTerminal }.take(30)
     val working = live.map { it.agentNpub }.toSet()
     fun agentName(npub: String) = rows?.firstOrNull { it.agentNpub == npub }?.displayName ?: (npub.take(12) + "…")
@@ -225,8 +228,10 @@ import studio.otherstuff.ambulando.core.transport.obj
                     }
                 }
             }
-            activityGroup("Working now", live, null, ::agentName, channelNames, open)
-            activityGroup("Not responding", stale, "These agents stopped reporting before finishing.", ::agentName, channelNames, open)
+            activityGroup("Working now", live, null, ::agentName, channelNames, open) { it.progressStatus(activityNow) }
+            activityGroup("Not responding", stale, "These agents stopped reporting before finishing.", ::agentName, channelNames, open) {
+                if (it.id !in current) "Earlier · status unconfirmed" else it.progressStatus(activityNow)
+            }
             activityGroup("Recently finished", recent, null, ::agentName, channelNames, open)
             item(key = "h:unavailable") { GroupedHeader("Not available on this device") }
             item(key = "unavailable") {
@@ -241,13 +246,14 @@ import studio.otherstuff.ambulando.core.transport.obj
 
 private fun androidx.compose.foundation.lazy.LazyListScope.activityGroup(
     header: String, items: List<AgentActivityRecord>, footer: String?, name: (String) -> String, channels: Map<String, String>, open: (AgentActivityRecord) -> Unit,
+    status: (AgentActivityRecord) -> String = ::activityState,
 ) = groupedSection(header, items, key = { "activity:${it.id}" }, footer = footer) { item, first, last ->
     val amb = Amb.colors
     GroupedRow(first, last, onClick = if (item.threadId != null) ({ open(item) }) else null, tag = "agents.activity") {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(name(item.agentNpub), fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                Text(activityState(item), fontSize = AmbType.caption, fontWeight = FontWeight.SemiBold, color = activityColor(item))
+                Text(status(item), fontSize = AmbType.caption, fontWeight = FontWeight.SemiBold, color = activityColor(item))
                 Spacer(Modifier.weight(1f))
                 Text(ChatTime.label(item.updatedAt), fontSize = AmbType.caption, color = amb.mutedForeground, maxLines = 1)
             }

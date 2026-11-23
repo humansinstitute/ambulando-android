@@ -139,18 +139,38 @@ suspend fun TowerAPI.workspaceAgents(workspaceId: String, appNpub: String): List
     return agents
 }
 
-/** Tower's materialised user-visible activity for one channel: the newest page (no commentary history). */
+/** A bounded page of public activity, optionally scoped to an exact conversation and lifecycle. */
 const val AGENT_ACTIVITY_PAGE = 50
+data class AgentActivityPage(val rows: List<AgentActivityRecord>, val nextCursor: String?)
 
-suspend fun TowerAPI.agentActivities(workspaceId: String, appNpub: String, channelId: String): List<AgentActivityRecord> {
-    val query = listOf("channel_id" to TowerAPI.uuid(channelId), "history_limit" to "0", "limit" to AGENT_ACTIVITY_PAGE.toString())
+suspend fun TowerAPI.agentActivityPage(
+    workspaceId: String, appNpub: String, channelId: String, threadId: String? = null,
+    cursor: String? = null, activityId: String? = null, beforeSequence: Long? = null, afterCommentaryCursor: String? = null,
+): AgentActivityPage {
+    val query = buildList {
+        add("channel_id" to TowerAPI.uuid(channelId)); add("history_limit" to "50"); add("limit" to AGENT_ACTIVITY_PAGE.toString())
+        threadId?.let { add("thread_id" to TowerAPI.uuid(it)) }
+        cursor?.let { add("cursor" to it) }; activityId?.let { add("activity_id" to it) }
+        beforeSequence?.let { require(it >= 0 && activityId != null); add("before_sequence" to it.toString()) }
+        afterCommentaryCursor?.let { require(it.toLongOrNull()?.let { n -> n >= 0 } == true && activityId != null && beforeSequence == null); add("after_commentary_cursor" to it) }
+    }
     val o = obj(client.request(path = TowerAPI.base(workspaceId) + "/agent-activities", query = query, appNpub = appNpub), "agent activity")
     val rows = o.objects("agent_activities") ?: throw TowerError.Malformed("agent activity")
-    // Rows that are not user-visible or lack an activity id are skipped, as on the web.
-    val activities = rows.mapNotNull { runCatching { AgentActivityRecord.parse(it) }.getOrNull() }
-    if (!activities.all { it.workspaceId == workspaceId && it.channelId == channelId.lowercase() }) throw TowerError.Malformed("agent activity")
-    return activities
+    val receivedAt = System.currentTimeMillis()
+    val activities = rows.mapNotNull { raw -> runCatching {
+        AgentActivityRecord.parse(JsonObject((if (afterCommentaryCursor != null) raw - "commentary_next_before_sequence" else raw) + buildMap {
+            if (afterCommentaryCursor != null) (raw.string("commentary_next_cursor") ?: raw.string("commentary_cursor"))?.let { put("android_recovered_cursor", JsonPrimitive(it)) }
+            o["server_time"]?.let { put("android_server_time", it); put("android_received_at", JsonPrimitive(receivedAt)) }
+        }))
+    }.getOrNull() }
+    if (!activities.all { it.workspaceId == workspaceId && it.channelId == channelId.lowercase() &&
+        (threadId == null || it.threadId == threadId.lowercase()) && (activityId == null || it.activityId == activityId) })
+        throw TowerError.Malformed("agent activity association")
+    return AgentActivityPage(activities, o.string("next_cursor")?.takeIf { it.isNotBlank() })
 }
+
+suspend fun TowerAPI.agentActivities(workspaceId: String, appNpub: String, channelId: String): List<AgentActivityRecord> =
+    agentActivityPage(workspaceId, appNpub, channelId).rows
 
 // MARK: Toolbox
 

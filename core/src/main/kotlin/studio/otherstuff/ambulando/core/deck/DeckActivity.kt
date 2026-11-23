@@ -2,6 +2,8 @@ package studio.otherstuff.ambulando.core.deck
 
 import studio.otherstuff.ambulando.core.context.WorkContext
 import studio.otherstuff.ambulando.core.surfaces.AgentActivityRecord
+import studio.otherstuff.ambulando.core.surfaces.currentAgentProgress
+import studio.otherstuff.ambulando.core.surfaces.progressStatus
 
 /**
  * Deck's Inbox and Recent cards, built from stored records with the web app's overview rules (threads, tasks,
@@ -125,10 +127,10 @@ object DeckActivity {
     }
 
     /** Every Deck Inbox item in `context`, newest first. */
-    fun inbox(sources: Sources, context: WorkContext): List<Item> {
+    fun inbox(sources: Sources, context: WorkContext, now: Long = System.currentTimeMillis()): List<Item> {
         val unread = HashMap<String, Boolean>()
         for (v in sources.viewStates) { val key = "${v.resourceType}:${v.resourceId}"; unread[key] = (unread[key] ?: false) || v.unread }
-        val working = workingKeys(sources.activities)
+        val working = workingKeys(sources.activities, now)
         fun scope(scopeId: String?, channelId: String?): String? = scopeId ?: channelId?.let { sources.channelScopes[it] }
         fun matches(scopeId: String?, channelId: String?): Boolean {
             val wanted = context.scopeId ?: return true
@@ -223,8 +225,11 @@ object DeckActivity {
     }
 
     /** Records an agent is working on now (activity not ended): `thread:<id>`. */
-    internal fun workingKeys(activities: List<AgentActivityRecord>): Set<String> =
-        activities.filter { !it.isTerminal }.mapNotNull { a -> a.threadId?.let { "thread:$it" } }.toSet()
+    fun workingKeys(activities: List<AgentActivityRecord>, now: Long = System.currentTimeMillis()): Set<String> {
+        val current = currentAgentProgress(activities, now)
+        return activities.filter { it.id in current && !it.isTerminal && it.progressStatus(now) != "Stopped responding" }
+            .mapNotNull { a -> a.threadId?.let { "thread:$it" } }.toSet()
+    }
 
     // Mention tokens: `@[Label](mention:kind:id)`, shown as `@Label` for people and agents and as the label for records.
     private val mentionToken = Regex("@\\[([^\\]]+)\\]\\(mention:([A-Za-z_][A-Za-z0-9_-]*):([^)\\s]+)\\)")

@@ -4,6 +4,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import studio.otherstuff.ambulando.core.json.JsonFields
+import studio.otherstuff.ambulando.core.nostr.NostrKeys
+import studio.otherstuff.ambulando.core.profiles.PersonNamePolicy
 
 /**
  * The shared data context of the app: workspace → scope → channel, as chosen in the sidebar. Chat, tasks, documents
@@ -167,11 +169,15 @@ object SidebarNavigation {
     fun label(channel: NavChannel, viewerNpub: String?, names: Map<String, String>): String {
         val title = channel.name.trim()
         val direct = isDirectMessageChannel(channel)
-        if (title.isNotEmpty() && (!direct || (!title.equals("dm", ignoreCase = true) && !title.startsWith("dm:", ignoreCase = true) && studio.otherstuff.ambulando.core.profiles.PersonNamePolicy.usable(title) != null))) return title
+        if (title.isNotEmpty() && (!direct || (!title.equals("dm", ignoreCase = true) && !title.startsWith("dm:", ignoreCase = true) && PersonNamePolicy.usable(title) != null))) return title
         val participants = participants(channel)
+        if (participants.any { !NostrKeys.isValidNpub(it) }) return "Direct message · identity unavailable"
         if (direct && participants.size == 1 && participants.first() == viewerNpub) return "Note to self"
         val others = participants.filter { it != viewerNpub }
-        if (others.isNotEmpty()) return others.joinToString(", ") { studio.otherstuff.ambulando.core.profiles.PersonNamePolicy.usable(names[it]) ?: "Unknown person" }
+        if (others.isNotEmpty()) return others.joinToString(", ") { npub ->
+            // PeopleDirectory uses this neutral label for identities with no usable name.
+            PersonNamePolicy.usable(names[npub])?.takeUnless { it == "Unknown person" } ?: npub
+        }
         if (direct) return "Direct message · identity unavailable"
         return title.ifEmpty { channel.id.take(8) }
     }

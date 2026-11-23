@@ -95,11 +95,37 @@ class WorkContextTests {
         assertEquals(emptyList<String>(), ScopeOrdering.decode("oops"))
     }
 
+    @Test fun dmLabelsResolveCachedNonMemberKindZeroDisplayNameBeforeName() {
+        val dm = channel(dmChannel, dmScope, "DM: $other", kind = "dm", participants = listOf(TestKeys.npub, other))
+        fun names(display: String?, name: String?) = studio.otherstuff.ambulando.core.profiles.PeopleDirectory(
+            emptyList(), emptyMap(), listOf(studio.otherstuff.ambulando.core.profiles.ProfileRecord(
+                "ab".repeat(32), other, displayName = display, name = name,
+                status = studio.otherstuff.ambulando.core.profiles.ProfileRecord.Status.FOUND, checkedAt = java.time.Instant.EPOCH))).names
+        assertEquals("Public display", SidebarNavigation.label(dm, TestKeys.npub, names("Public display", "handle")))
+        assertEquals("handle", SidebarNavigation.label(dm, TestKeys.npub, names("  ", "handle")))
+        assertEquals(other, SidebarNavigation.label(dm, TestKeys.npub, names(null, null)))
+        assertEquals("Project chat", SidebarNavigation.label(dm.copy(name = "Project chat"), TestKeys.npub, names("Public display", "handle")))
+    }
+
+    @Test fun dmLabelNeverBorrowsAnUnrelatedNameOrMalformedIdentity() {
+        val wrong = studio.otherstuff.ambulando.core.nostr.NostrKeys.npub("cd".repeat(32))!!
+        val dm = channel(dmChannel, dmScope, "DM: $other", kind = "dm", participants = listOf(TestKeys.npub, other))
+        assertEquals(other, SidebarNavigation.label(dm, TestKeys.npub, mapOf(wrong to "Wrong person", TestKeys.npub to "Viewer")))
+        assertEquals(other, SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "Unknown person")))
+        // Structured participants outrank a different valid key in the stored generated title.
+        assertEquals("Exact participant", SidebarNavigation.label(dm.copy(name = "DM: $wrong"), TestKeys.npub, mapOf(other to "Exact participant", wrong to "Wrong person")))
+        val malformed = channel(dmChannel, dmScope, "DM: npub1truncated", kind = "dm", participants = listOf("npub1truncated"))
+        assertEquals("Direct message · identity unavailable", SidebarNavigation.label(malformed, TestKeys.npub, mapOf("npub1truncated" to "Wrong person")))
+        assertEquals("Direct message · identity unavailable", SidebarNavigation.label(
+            channel(dmChannel, dmScope, "DM", kind = "dm", participants = listOf(TestKeys.npub, "npub1truncated")), TestKeys.npub, emptyMap()))
+        assertEquals("Exact participant", SidebarNavigation.label(NavChannel(dmChannel, dmScope, "DM: $other", "dm"), TestKeys.npub, mapOf(other to "Exact participant")))
+    }
+
     @Test fun directMessageLabelsUseParticipants() {
         val dm = channel(dmChannel, dmScope, "DM", kind = "dm", participants = listOf(TestKeys.npub, other))
         assertEquals("Helper", SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "Helper")))
-        assertEquals("Unknown person", SidebarNavigation.label(dm, TestKeys.npub, emptyMap()))
-        assertEquals("Unknown person", SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "DM: $other")))
+        assertEquals(other, SidebarNavigation.label(dm, TestKeys.npub, emptyMap()))
+        assertEquals(other, SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "DM: $other")))
         assertEquals("Renamed profile", SidebarNavigation.label(dm, TestKeys.npub, mapOf(other to "Renamed profile")))
         assertEquals("Project chat", SidebarNavigation.label(dm.copy(name = "Project chat"), TestKeys.npub, mapOf(other to "Helper")))
         assertEquals(listOf(TestKeys.npub, other).sorted(), SidebarNavigation.participants(dm))

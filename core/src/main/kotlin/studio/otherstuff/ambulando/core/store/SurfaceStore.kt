@@ -197,18 +197,21 @@ suspend fun StoreWriter.replaceWorkspaceAgents(workspaceId: String, records: Lis
     changed
 }
 
-/**
- * Replaces a channel's stored activity with Tower's newest page for it (a rolling window, so older rows leaving the page
- * are removed). `sequence` stands in for a row version. Nothing is written for a flagged channel.
- */
+/** Merge rolling snapshots without losing completed/offline commentary or resurrecting a terminal turn. */
 suspend fun StoreWriter.replaceAgentActivities(workspaceId: String, channelId: String, records: List<AgentActivityRecord>): Int = write {
     if (channelId in db.removedChannelIds(workspaceId)) return@write 0
-    val rows = records.filter { it.workspaceId == workspaceId && it.channelId == channelId }
-    val changed = replace(
-        "agent_activities", listOf("id", "activity_id", "scope_id", "channel_id", "thread_id", "agent_npub", "state", "row_version", "updated_at", "raw"),
-        rows.map { listOf(it.id, it.activityId, it.scopeId, it.channelId, it.threadId, it.agentNpub, it.state, it.sequence, it.updatedAt, canonical(it.raw)) },
-        rows.map { it.id }, workspaceId, partition = "channel_id" to channelId, missing = Missing.DELETE,
-    )
+    var changed = 0
+    for (incoming in records.filter { it.workspaceId == workspaceId && it.channelId == channelId }) {
+        val current = db.first("SELECT raw FROM agent_activities WHERE workspace_id = ? AND id = ?", workspaceId, incoming.id) {
+            runCatching { AgentActivityRecord.parse(parseRaw(it.text(0))) }.getOrNull()
+        }
+        val row = studio.otherstuff.ambulando.core.surfaces.mergeAgentProgress(current, incoming)
+        if (current?.raw == row.raw) continue
+        changed += db.run("""INSERT INTO agent_activities(workspace_id,id,activity_id,scope_id,channel_id,thread_id,agent_npub,state,row_version,updated_at,raw)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET
+            state=excluded.state,row_version=excluded.row_version,updated_at=excluded.updated_at,raw=excluded.raw""",
+            workspaceId, row.id, row.activityId, row.scopeId, row.channelId, row.threadId, row.agentNpub, row.state, row.sequence, row.updatedAt, canonical(row.raw))
+    }
     if (changed > 0) emit(StoreTable.AGENTS, workspaceId)
     changed
 }
@@ -437,4 +440,10 @@ suspend fun StoreReader.canvasSourceChoices(workspaceId: String, excludingCanvas
         workspaceId,
     ) { CanvasSourceChoices.FileRow(it.text(0)!!, it.text(1)!!, it.text(2)) }
     CanvasSourceChoices.build(canvases, docs, channels, threads, files, excludingCanvas)
+}
+
+/** Exact thread restriction is in SQL so a busy neighbouring thread cannot crowd this conversation out. */
+suspend fun StoreReader.conversationAgentActivities(workspaceId: String, channelId: String, threadId: String?): List<AgentActivityRecord> = read {
+    query("SELECT raw FROM agent_activities WHERE workspace_id = ? AND channel_id = ? AND (? IS NULL OR thread_id = ?) ORDER BY updated_at, id",
+        workspaceId, channelId, threadId, threadId) { runCatching { AgentActivityRecord.parse(parseRaw(it.text(0))) }.getOrNull() }.filterNotNull()
 }

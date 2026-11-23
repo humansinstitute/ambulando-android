@@ -489,7 +489,11 @@ class SampleSurfaceTower(
                 val channel = url.query("channel_id")
                 if (channel.isNullOrEmpty()) return errorReply(400, "validation_error")
                 if (channel in state.list("denied_channels")) return errorReply(403, "permission_denied")
-                val rows = state.rows("activities").filter { it["channel_id"] == channel }.sortedByDescending { it["created_at"] as? String ?: "" }
+                val thread = url.query("thread_id")
+                val activity = url.query("activity_id")
+                val rows = state.rows("activities").filter { it["channel_id"] == channel &&
+                    (thread == null || it["thread_id"] == thread) && (activity == null || it["activity_id"] == activity) }
+                    .sortedByDescending { it["created_at"] as? String ?: "" }
                 indexPage(rows, "agent_activities", url, hasMore = false)
             }
             method == "GET" && n == 2 && head == "me" && p[1] == "autopilot-agents" -> {

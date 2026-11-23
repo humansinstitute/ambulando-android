@@ -27,7 +27,13 @@ class DeckChatBackTest {
             val app = context.applicationContext as AmbulandoApplication
             compose.waitUntil(30_000) { app.activeModel?.workspaces?.any { it.id == SampleIds.STUDIO } == true }
             val model = app.activeModel!!
+            compose.runOnIdle { model.entries.forEach { model.setWorkspaceEnabled(it, true) } }
+            compose.waitUntil(30_000) { model.enabledEntries.size == 2 && model.enabledEntries.all { it.runtime?.canSend == true } }
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
+            compose.waitUntil(30_000) { model.workspace?.id == SampleIds.STUDIO && model.channels.any { it.id == SampleIds.GENERAL } }
+            compose.runOnIdle { model.section = AppSection.DECK }
+            compose.waitUntil(30_000) { compose.onAllNodesWithTag("deck.page.inbox").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("deck.page.inbox").performClick()
             compose.waitUntil(30_000) { compose.onAllNodesWithTag("deck.inbox.search").fetchSemanticsNodes().isNotEmpty() }
             val original = model.context
             compose.onNodeWithTag("deck.inbox.type.task").performClick().assertIsNotSelected()

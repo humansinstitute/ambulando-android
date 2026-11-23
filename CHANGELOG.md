@@ -1,3 +1,11 @@
+## 0.9.42 (70)
+
+- Show current conversation agent status, latest public updates and expandable ordered history beside the triggering message.
+- Retain completed public history and recover missed updates after reconnect, with exact conversation/turn isolation and server lease expiry.
+- Keep Agents and Deck working badges tied to the current live turn; expire cached Deck badges offline without a new database event.
+- Clarify the composer’s coloured destination marker as “Workspace:” independently of agent status.
+- Resolve direct-message names from exact participant profiles across conversation headers, the composer, Deck cards and pins while preserving targets and drafts.
+
 ## 0.9.41 (69)
 
 - Give whiteboards, ordinary HTML and System Flows a compact toolbar with an ellipsis menu for versions, imported-source details and original-source access.

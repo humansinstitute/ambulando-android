@@ -105,7 +105,16 @@ import studio.otherstuff.ambulando.core.store.LocalStore
     var search by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var readMenu by remember(screen, navigation.context) { mutableStateOf(false) }
     val channel = navigation.channel(navigation.context.channelId)
-    val snapshot = query.value
+    var activityTick by remember(screen) { mutableLongStateOf(0) }
+    LaunchedEffect(visible, query.value) {
+        while (visible && query.value.itemsAt(System.currentTimeMillis()).any { it.isWorking }) {
+            kotlinx.coroutines.delay(1000)
+            activityTick++
+        }
+    }
+    val snapshot = remember(query.value, activityTick, visible) {
+        query.value.copy(items = query.value.itemsAt(System.currentTimeMillis()))
+    }
     fun markAll(label: String, of: Set<DeckActivity.Kind>) {
         val states = snapshot.items.filter { it.isUnread && it.kind in of && it.kind in kinds && attention.includes(it.kind.name.lowercase()) && (search.isBlank() || it.searchText.contains(search.trim().lowercase())) }.mapNotNull { snapshot.viewState(it) }
         if (states.isNotEmpty()) intents.markRead(states)
@@ -172,7 +181,7 @@ import studio.otherstuff.ambulando.core.store.LocalStore
     }
 }
 
-@Composable internal fun DeckPinnedCard(screen: ScreenScope, pins: PinsSnapshot, intents: DeckIntents) {
+@Composable internal fun DeckPinnedCard(screen: ScreenScope, pins: PinsSnapshot, intents: DeckIntents, channelLabels: Map<String, String>) {
     val services = LocalAppServices.current
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
@@ -203,6 +212,8 @@ import studio.otherstuff.ambulando.core.store.LocalStore
             TextButton(onClick = { intents.discardPinWrite(write.id) }) { Text("Discard move") }
         } }
         items(preview, key = { it.id }) { row ->
+            val title = if (row.pin.resourceType == studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.CHANNEL && row.title != null)
+                channelLabels[row.pin.resourceId] ?: row.title else row.title
             var distance by remember(row.id) { mutableFloatStateOf(0f) }
             val contentTop = remember(row.id) { floatArrayOf(0f) }
             fun moveBy(offset: Int): Boolean {
@@ -303,13 +314,13 @@ import studio.otherstuff.ambulando.core.store.LocalStore
                         }, null, Modifier.size(20.dp), tint = amb.mutedForeground,
                     )
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(row.title ?: unavailablePin(row.pin.resourceType.wire), fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.subheadline, color = if (row.title == null) amb.mutedForeground else amb.foreground, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Text(title ?: unavailablePin(row.pin.resourceType.wire), fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.subheadline, color = if (row.title == null) amb.mutedForeground else amb.foreground, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         if (row.accessRemoved) AccessRemovedNote()
                     }
                     if (pins.isSaving(row.pin.resourceType, row.pin.resourceId)) androidx.compose.material3.CircularProgressIndicator(
                         Modifier.size(14.dp).semantics { contentDescription = "Saving pin" }, strokeWidth = 1.5.dp)
                 }
-                PinButton(row.pin.resourceType, row.pin.resourceId, row.title ?: unavailablePin(row.pin.resourceType.wire), pins,
+                PinButton(row.pin.resourceType, row.pin.resourceId, title ?: unavailablePin(row.pin.resourceType.wire), pins,
                     onSetPinned = { intents.setPinned(it, row.pin.resourceType, row.pin.resourceId) })
             }
         }

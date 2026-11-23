@@ -179,7 +179,7 @@ fun WorkspaceComposerContext(model: AppModel, entry: WorkspaceEntry? = model.act
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp).testTag("composer.workspace"), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.size(7.dp).background(WorkspaceTint.navigation(entry.colour, dark), CircleShape))
-        Text("Working in ${entry.workspace.label}", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground, maxLines = 1,
+        Text("Workspace: ${entry.workspace.label}", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground, maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }

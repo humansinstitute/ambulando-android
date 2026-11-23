@@ -2,6 +2,15 @@
 
 package studio.otherstuff.ambulando.app
 
+import studio.otherstuff.ambulando.core.store.conversationAgentActivities
+import studio.otherstuff.ambulando.core.surfaces.refreshAgentActivity
+import studio.otherstuff.ambulando.core.surfaces.triggerMessageId
+import studio.otherstuff.ambulando.core.surfaces.historyBefore
+import studio.otherstuff.ambulando.core.surfaces.currentAgentProgress
+import studio.otherstuff.ambulando.core.surfaces.progressStatus
+import studio.otherstuff.ambulando.core.surfaces.commentary
+import studio.otherstuff.ambulando.core.surfaces.belongsToTrigger
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.content.*
@@ -61,6 +70,24 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         } }; return
     }
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
+    val agentProgress by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
+        model.store.reader.conversationAgentActivities(w.id, channel, threadId).filter { activity ->
+            activity.triggerMessageId?.let { model.store.reader.message(w.id, it) }?.let { activity.belongsToTrigger(it, threadId) } == true
+        }
+    } }.collectAsState(emptyList())
+    var agentNow by remember(target) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(target, composeOnly) {
+        var first = true
+        if (composeOnly == null) while (true) {
+            model.sync.refreshAgentActivity(c, w, channel, force = first, threadId = threadId)
+            first = false
+            repeat(20) { kotlinx.coroutines.delay(1000); agentNow = System.currentTimeMillis() }
+        }
+    }
+    val progressSync by model.engine.status.collectAsState()
+    val progressPrefix = WorkspaceSync.agentActivityKey(w.id, channel) + (threadId?.let { ":$it:" } ?: "")
+    val progressError = (progressSync.errors.keys + progressSync.connectionFailures).any { it.startsWith(progressPrefix) }
+    val currentProgress = currentAgentProgress(agentProgress, agentNow)
     val uploads = remember(c.id, w.id) { model.uploads }
     val services = LocalAppServices.current
     val scopedTextAttachments = remember(c.id, c.origin, c.signerNpub, w.id) { model.textAttachments(c, w.id) }
@@ -74,7 +101,16 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     } }.collectAsState(null)
     val posts = feed ?: emptyList()
     val messages = posts.map { it.message }
+    val agentDirectory by remember(w.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.workspaceAgents(w.id) } }.collectAsState(emptyList())
+    var fullPublicUpdate by remember(target) { mutableStateOf<String?>(null) }
     val people by remember(c.id, w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == StoreTable.PROFILES }) { model.store.reader.people(c.id, w.id) } }.collectAsState(null)
+    fun progressAgentName(npub: String): String = agentDirectory.firstOrNull { it.agentNpub == npub }?.displayName
+        ?: people?.person(npub)?.takeIf { it.nameSource != studio.otherstuff.ambulando.core.profiles.PersonDisplay.NameSource.NPUB }?.name ?: "Agent"
+    fullPublicUpdate?.let { update ->
+        AlertDialog(onDismissRequest = { fullPublicUpdate = null }, title = { Text("Public update") },
+            text = { Column(Modifier.heightIn(max = 400.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) { Text(update) } },
+            confirmButton = { TextButton(onClick = { fullPublicUpdate = null }) { Text("Close") } })
+    }
     val dayStarts = remember(posts) { studio.otherstuff.ambulando.app.ui.chat.ChatDay.breaks(posts, { it.id }, { it.message.createdAt }).first }
     val pending by remember(target) { model.store.liveQuery({ it.table == StoreTable.OUTBOX }) { model.store.reader.outbox(target) } }.collectAsState(emptyList())
     val field = remember(target) { ComposerField() }
@@ -228,7 +264,21 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         model.chatPositions[target.draftKey] = it
     }
     studio.otherstuff.ambulando.app.ui.chat.ChatComposerLayout(
-        header = { if (threadId != null && !family) ThreadHeader(model, threadId, !removed) },
+        header = {
+            Column {
+                if (threadId != null && !family) ThreadHeader(model, threadId, !removed)
+                if (progressError && composeOnly == null) Text("Activity updates unavailable · retrying", style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("chat.agent.recoveryError"))
+                if (threadId != null && composeOnly == null) agentProgress.filter { it.id in currentProgress && !it.isTerminal }.forEach { activity ->
+                    Text("${progressAgentName(activity.agentNpub)} · ${activity.progressStatus(agentNow)}", style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("chat.agent.current.${activity.id}"))
+                    (activity.commentary.lastOrNull()?.body ?: activity.body ?: activity.summary)?.takeIf { it.isNotBlank() }?.let { update ->
+                        Text(update, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp).clickable(onClickLabel = "Read full public update") { fullPublicUpdate = update }.testTag("chat.agent.latest.${activity.id}"))
+                    }
+                }
+            }
+        },
         messages = {
         if (composeOnly != null) Spacer(Modifier.fillMaxSize())
         else if (feed == null) Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
@@ -285,6 +335,13 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                         modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).offset(x = (-4).dp, y = (-4).dp))
                 }
                 ChatMessageEditStatus(model, message)
+                if (!message.inherited && !message.deleted) agentProgress.filter { it.belongsToTrigger(message, threadId) }.forEach { activity ->
+                    AgentProgressCard(activity, agentNow, activity.id in currentProgress, progressAgentName(activity.agentNpub)) {
+                        draftScope.launch { model.sync.refreshAgentActivity(c, w, channel, force = true,
+                            threadId = threadId, activityId = activity.activityId, beforeSequence = activity.historyBefore) }
+                    }
+                }
+
                 }
             }
             items(pending, key = { it.id }) { item ->

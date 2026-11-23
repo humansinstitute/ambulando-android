@@ -12,6 +12,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import studio.otherstuff.ambulando.core.context.NavChannel
+import studio.otherstuff.ambulando.core.context.SidebarNavigation
 import studio.otherstuff.ambulando.core.context.WorkContext
 import studio.otherstuff.ambulando.core.deck.DeckActivity
 import studio.otherstuff.ambulando.core.deck.PersonalAgentLauncher
@@ -105,7 +107,15 @@ data class DeckInboxSnapshot(
     val channelLabels: Map<String, String> = emptyMap(),
     /** Item ids (`kind:recordId`) of records this identity can no longer see (kept readable, labelled). */
     val removed: Set<String> = emptySet(),
+    val activities: List<studio.otherstuff.ambulando.core.surfaces.AgentActivityRecord> = emptyList(),
 ) {
+    /** Re-project cached leases without network or store events, including when reopening an offline card. */
+    fun itemsAt(now: Long): List<DeckActivity.Item> {
+        val working = DeckActivity.workingKeys(activities, now)
+        return items.map { item -> if (item.kind == DeckActivity.Kind.CHAT)
+            item.copy(isWorking = item.isThread && "thread:${item.recordId}" in working) else item }
+    }
+
     /** The view state Mark read acts on (chats: the thread; files have none). */
     fun viewState(item: DeckActivity.Item): ViewStateRecord? {
         val type = when (item.kind) {
@@ -131,10 +141,10 @@ object DeckInbox {
 
     /** Tables whose changes re-read the Inbox (as the iOS card). */
     fun matches(workspaceId: String): (ChangeKey) -> Boolean = { key ->
-        key.workspaceId == workspaceId && key.table in setOf(
-            StoreTable.THREADS, StoreTable.MESSAGES, StoreTable.TASKS, StoreTable.DOCS, StoreTable.FILES, StoreTable.VIEW_STATES,
+        key.table == StoreTable.PROFILES || (key.workspaceId == workspaceId && key.table in setOf(
+            StoreTable.MEMBERS, StoreTable.THREADS, StoreTable.MESSAGES, StoreTable.TASKS, StoreTable.DOCS, StoreTable.FILES, StoreTable.VIEW_STATES,
             StoreTable.COMMENTS, StoreTable.CHANNELS, StoreTable.AGENTS, StoreTable.ACCESS,
-        )
+        ))
     }
 
     /**
@@ -146,6 +156,7 @@ object DeckInbox {
             val r = store.reader
             val w = workspaceId
             val channels = async { r.channels(w) }
+            val people = async { r.people(w) }
             val threads = async { r.deckThreads(w, channelIds) }
             val tasks = async { r.tasks(w, context) }
             val docs = async { r.docs(w, context) }
@@ -185,8 +196,11 @@ object DeckInbox {
             }
             DeckInboxSnapshot(
                 items = items,
+                activities = sources.activities,
                 viewStates = stateRows.associateBy { it.id },
-                channelLabels = channelRows.associate { it.id to it.name },
+                channelLabels = people.await().names.let { names -> channelRows.associate { row ->
+                    row.id to SidebarNavigation.label(NavChannel(row.id, row.scopeId, row.name, row.kind, row.position, row.raw), viewerNpub, names)
+                } },
                 removed = removed,
             )
         }

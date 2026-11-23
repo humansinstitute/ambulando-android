@@ -140,7 +140,7 @@ fun DeckScreen(
                     when (card) {
                         DeckCard.HELLO -> DeckHelloCard(store, screen, navigation, intents, status, visible)
                         DeckCard.INBOX -> DeckInboxCard(store, screen, navigation, pins, intents, status, visible, onNewThread = newThread?.let { { composing = true } }, onChannelOptions = onChannelOptions)
-                        DeckCard.PINNED -> DeckPinnedCard(screen, pins, intents)
+                        DeckCard.PINNED -> DeckPinnedCard(screen, pins, intents, navigation.labels)
                         DeckCard.CANVAS -> DeckCanvasCard(store, screen, intents, status, visible)
                         DeckCard.FEED -> DeckFeedCard()
                         DeckCard.RECENT -> DeckRecentCard(store, screen, navigation, intents, visible)

@@ -17,7 +17,7 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
     val services = LocalAppServices.current
     val scope = rememberCoroutineScope()
     val screen = ScreenScope(c.id, w.id, w.appNpub, c.signerNpub, model.context.scopeId, model.context.channelId)
-    val navigation = WorkNavigation(model.scopes.map { s -> SidebarGroup(NavScope(s.id, s.name, s.kind), model.channels.filter { it.scopeId == s.id }.map { NavChannel(it.id, it.scopeId, it.name, it.kind) }, SidebarNavigation.isDirectMessageScope(NavScope(s.id, s.name, s.kind))) }, model.channels.associate { it.id to it.name }, model.context)
+    val navigation = WorkNavigation(model.scopes.map { s -> SidebarGroup(NavScope(s.id, s.name, s.kind), model.channels.filter { it.scopeId == s.id }.map { NavChannel(it.id, it.scopeId, it.name, it.kind, it.position, it.raw) }, SidebarNavigation.isDirectMessageScope(NavScope(s.id, s.name, s.kind))) }, channelLabels(model), model.context)
     val pinsState = remember(c.id, w.id) { PinsState(model.store, c.id, w.id, scope) }
     DisposableEffect(pinsState) { pinsState.start(); onDispose { pinsState.stop() } }
     val pins by pinsState.state.collectAsState()

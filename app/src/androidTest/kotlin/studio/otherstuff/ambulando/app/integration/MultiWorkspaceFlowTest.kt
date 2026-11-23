@@ -128,7 +128,7 @@ class MultiWorkspaceFlowTest {
         compose.runOnIdle { model.section = AppSection.CHAT }
         compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("composer.workspace").assertExists()
-        compose.onNodeWithText("Working in Sample Lab").assertIsDisplayed()
+        compose.onNodeWithText("Workspace: Sample Lab").assertIsDisplayed()
         shot("working-in-lab")
     }
 

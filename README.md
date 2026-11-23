@@ -18,7 +18,8 @@ See [Garmin recorder setup, protocol and build instructions](docs/garmin-recorde
 - Several workspaces (on one or more Towers) enabled at once, each with its own runtime and storage; workspace → scope → channel selection across chat, tasks, documents and files; independent section navigation per workspace.
 - Chat conversations, replies, mentions, reactions, signed edits/deletes, privacy-stripped image and file uploads,
   per-conversation drafts and a durable retrying outbox. Large pasted text becomes a `.txt` attachment with a paged
-  editor, offline recovery and sent-file version history.
+  editor, offline recovery and sent-file version history. [Public agent progress](docs/agent-progress.md) includes current
+  status, latest updates, expandable ordered history and reconnect recovery.
 - Task lists/boards, creation, state/priority/assignee changes, comments and conflict handling.
 - Native rich-document reading, bundled lossless editing with edit leases and durable drafts, comments, preserved drafts with reviewable three-way merges, explicit takeover, saved versions, and `[[` wiki linking with create-and-link ([reconciliation](docs/document-reconciliation.md), [wiki links](docs/wiki-links.md)).
 - Files and folders, uploads, hash-verified downloads, explicit Save to Files through Android’s document picker, local previews and Android sharing.

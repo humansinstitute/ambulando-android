@@ -168,10 +168,42 @@ class SurfacesAPITests {
         val activities = api.agentActivities(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB, Fixtures.CHANNEL_1)
         assertEquals(listOf("a1"), activities.map { it.activityId })
         assertTrue(activities[0].isTerminal)
-        assertEquals(mapOf("channel_id" to Fixtures.CHANNEL_1, "history_limit" to "0", "limit" to "50"), queryOf(transport.recorded[1].url))
+        assertEquals(mapOf("channel_id" to Fixtures.CHANNEL_1, "history_limit" to "50", "limit" to "50"), queryOf(transport.recorded[1].url))
         val wapps = api.personalWapps(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB)
         assertEquals("WApp", wapps.items.single().title)
         assertFalse("a continuation means the list may be incomplete", wapps.complete)
+    }
+
+    @Test fun activityHistoryPagingUsesExistingExactThreadAndLifecycleContract() = runBlocking {
+        val thread = Fixtures.newId()
+        val transport = StubTransport { request ->
+            val query = queryOf(request.url)
+            200 to mapOf("agent_activities" to listOf(mapOf(
+                "id" to Fixtures.newId(), "workspace_id" to Fixtures.WORKSPACE_ID, "channel_id" to Fixtures.CHANNEL_1,
+                "thread_id" to thread, "activity_id" to "activity", "turn_id" to "turn", "visibility" to "user_visible", "sequence" to 9,
+                "commentary_history" to listOf(mapOf("activity_id" to "activity", "turn_id" to "turn", "sequence" to 2, "body" to "Public update")),
+                "commentary_next_before_sequence" to null
+            )), "next_cursor" to if (query["cursor"] == null) "older" else null, "server_time" to "2026-10-01T00:00:00Z")
+        }
+        val api = api(transport)
+        val first = api.agentActivityPage(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB, Fixtures.CHANNEL_1, thread)
+        assertEquals("older", first.nextCursor)
+        val next = api.agentActivityPage(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB, Fixtures.CHANNEL_1, thread, first.nextCursor, "activity", 3)
+        assertNull(next.nextCursor)
+        assertEquals(listOf("Public update"), next.rows.single().commentary.map { it.body })
+        assertEquals(mapOf("channel_id" to Fixtures.CHANNEL_1, "thread_id" to thread, "history_limit" to "50", "limit" to "50",
+            "cursor" to "older", "activity_id" to "activity", "before_sequence" to "3"), queryOf(transport.recorded[1].url))
+    }
+
+    @Test fun exactActivityPageRefusesForeignThread() = runBlocking {
+        val transport = StubTransport { 200 to mapOf("agent_activities" to listOf(mapOf(
+            "id" to Fixtures.newId(), "workspace_id" to Fixtures.WORKSPACE_ID, "channel_id" to Fixtures.CHANNEL_1,
+            "thread_id" to Fixtures.newId(), "activity_id" to "activity", "visibility" to "user_visible", "sequence" to 1
+        ))) }
+        try {
+            api(transport).agentActivityPage(Fixtures.WORKSPACE_ID, Fixtures.APP_NPUB, Fixtures.CHANNEL_1, Fixtures.newId())
+            fail("foreign thread accepted")
+        } catch (_: TowerError.Malformed) { }
     }
 
     @Test fun pinDisplayOrderPutsUnpositionedNewestFirst() {
