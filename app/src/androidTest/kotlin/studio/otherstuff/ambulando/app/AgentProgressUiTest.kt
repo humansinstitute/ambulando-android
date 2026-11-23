@@ -34,38 +34,43 @@ class AgentProgressUiTest {
         val activity = mutableStateOf(row("queued"))
         val now = mutableStateOf(Instant.parse("2026-10-01T00:00:00Z").toEpochMilli())
         compose.setContent { MaterialTheme { AgentProgressCard(activity.value, now.value, true) {} } }
-        compose.onNodeWithText("Agent · Queued").assertIsDisplayed()
+        compose.onNodeWithText("Queued").assertIsDisplayed()
         compose.runOnIdle { activity.value = row("accepted") }
-        compose.onNodeWithText("Agent · Message received").assertIsDisplayed()
+        compose.onNodeWithText("Message received").assertIsDisplayed()
         compose.runOnIdle { activity.value = row("waiting") }
-        compose.onNodeWithText("Agent · Waiting for you").assertIsDisplayed()
+        compose.onNodeWithText("Waiting for you").assertIsDisplayed()
         compose.runOnIdle { now.value += 196_000 }
-        compose.onNodeWithText("Agent · Stopped responding").assertIsDisplayed()
+        compose.onNodeWithText("Stopped responding").assertIsDisplayed()
         compose.runOnIdle { activity.value = row("failed") }
-        compose.onNodeWithText("Agent · Failed").assertIsDisplayed()
+        compose.onNodeWithText("Earlier activity · failed").assertIsDisplayed()
     }
 
     @Test fun workingLatestExpandOrderedHistoryCompleteAndReopen() {
         val activity = mutableStateOf(row())
         val visible = mutableStateOf(true)
         var loads = 0
+        val disclosure = AgentProgressDisclosure()
         compose.setContent { MaterialTheme {
-            if (visible.value) AgentProgressCard(activity.value, Instant.parse("2026-10-01T00:00:00Z").toEpochMilli(), true) { loads++ }
+            if (visible.value) AgentProgressCard(activity.value, Instant.parse("2026-10-01T00:00:00Z").toEpochMilli(), true, disclosure = disclosure) { loads++ }
         } }
-        compose.onNodeWithText("Agent · Working").assertIsDisplayed()
+        compose.onNodeWithText("Working").assertIsDisplayed()
         compose.onNodeWithText("Latest public update").assertIsDisplayed()
         compose.onNodeWithText("First public update").assertDoesNotExist()
         compose.onNodeWithText("Unrelated update").assertDoesNotExist()
         compose.onNodeWithTag("chat.agent.history.$id").performClick()
         compose.onNodeWithTag("chat.agent.update.$id.2").assertIsDisplayed()
-        compose.onNodeWithText("Load earlier updates").performClick()
-        compose.runOnIdle { assertEquals(1, loads); activity.value = row("completed") }
-        compose.onNodeWithText("Agent · Completed").assertIsDisplayed()
-        compose.onNodeWithTag("chat.agent.update.$id.2").assertIsDisplayed()
         compose.runOnIdle { visible.value = false }
         compose.runOnIdle { visible.value = true }
-        compose.onNodeWithText("Agent · Completed").assertIsDisplayed()
-        compose.onNodeWithText("Latest public update").assertIsDisplayed()
+        compose.onNodeWithTag("chat.agent.update.$id.2").assertIsDisplayed()
+        compose.onNodeWithText("Earlier updates").performClick()
+        compose.runOnIdle { assertEquals(1, loads); activity.value = row("completed") }
+        compose.onNodeWithText("Earlier activity · completed").assertIsDisplayed()
+        compose.onNodeWithTag("chat.agent.update.$id.2").assertDoesNotExist()
+        compose.onNodeWithText("Latest public update").assertDoesNotExist()
+        compose.runOnIdle { visible.value = false }
+        compose.runOnIdle { visible.value = true }
+        compose.onNodeWithText("Earlier activity · completed").assertIsDisplayed()
+        compose.onNodeWithText("Latest public update").assertDoesNotExist()
         compose.onNodeWithTag("chat.agent.history.$id").performClick()
         compose.onNodeWithTag("chat.agent.update.$id.2").assertIsDisplayed()
     }

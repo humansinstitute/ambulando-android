@@ -120,6 +120,39 @@ class OvernightFeedbackTest {
         compose.onNodeWithTag("row.m61").assertIsNotDisplayed()
     }
 
+    @Test fun activityTailFollowsUpdatesButExpansionAndEarlierReadingKeepTheirPosition() {
+        var update by mutableStateOf(1)
+        var interaction by mutableStateOf(0L)
+        var expanded by mutableStateOf(false)
+        lateinit var state: LazyListState
+        val rows = (0 until 40).map { "m$it" } + "activity"
+        compose.setContent {
+            AmbulandoTheme {
+                state = remember { LazyListState() }
+                ChatFollowsNewest(state, target, true, rows, null, activityTail = update, activityInteraction = interaction) {}
+                LazyColumn(Modifier.height(300.dp).testTag("activity.list"), state = state) {
+                    items(rows, key = { it }) {
+                        Text(if (it == "activity") "Update $update" else it,
+                            Modifier.fillMaxWidth().height(if (it == "activity") (if (expanded) 600 else 40 * update).dp else 40.dp).testTag("activity.$it"))
+                    }
+                }
+            }
+        }
+        compose.runOnIdle { update = 2 }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue(!state.canScrollForward) }
+        compose.onNodeWithTag("activity.list").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        val reading = state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset
+        compose.runOnIdle { update = 3 }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(reading, state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset) }
+        // Explicit expansion can grow the tail without pulling it to the end.
+        compose.runOnIdle { interaction++; expanded = true }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(reading, state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset) }
+    }
+
     @Test fun returningToAConversationRestoresWhereTheReaderWas() {
         val rows = (0 until 60).map { "m$it" }
         compose.setContent {

@@ -1,18 +1,24 @@
 # Public agent updates in conversations
 
-An open conversation shows the current agent's status and latest public update. Tap a truncated header update to read
-its full text. Updates attached to the triggering message offer ordered history and an explicit load-earlier action.
-Completed, failed and cancelled runs remain readable locally, including after the conversation or app is reopened.
-These are producer-published public updates, not private model reasoning. The composer’s coloured workspace marker
-is labelled “Workspace:” and indicates the reply destination, independently of agent status.
+An open conversation shows compact agent activity after the newest replies, using native caption text and a small
+chevron disclosure. Live work shows its status and at most two lines of the latest public update. Expand the row to
+read ordered public history and load earlier entries. Finished turns default to “Earlier activity” with no preview or
+body; completion resets an open disclosure. Expiry also collapses the body and says “Stopped responding”, never
+“Completed”. Disclosure survives row recycling while the conversation is open; revisiting starts collapsed.
+These are producer-published public updates, not private model reasoning. Ordinary final replies remain messages.
+The composer’s coloured “Workspace:” marker indicates the reply destination, independently of agent status.
 
 Activity must match the workspace, channel, owning thread and triggering message. An inherited message does not import
-its parent conversation's active agent status into a fork. The conversation header selects the latest non-queued turn
-per agent plus live queued turns; a queued request cannot displace the turn ahead of it, and an older working snapshot
-cannot replace a newer completed turn. Earlier unconfirmed runs are labelled as earlier activity. Agents and Deck
+its parent conversation's active agent status into a fork. The tail projects at most three current lifecycles and only
+the newest finished turn with retained content. Older rows stay stored rather than being rendered between historical
+messages. Current selection takes the latest non-queued turn per agent plus live queued turns; queued requests cannot
+displace the turn ahead of them, and older working snapshots cannot replace newer completed turns. Agents and Deck
 use the same current-turn and lease rules, so retained history cannot keep an old working badge alive. A visible Deck
-Inbox reprojects cached lease deadlines once a second while working, and on reopen, without needing a network or
-database event.
+Inbox reprojects cached lease deadlines once a second while working, and on reopen, without a network or database event.
+
+Activity updates follow the newest message only while the reader is at the bottom. Expanding history pauses automatic
+following; reading earlier messages preserves the viewport. The activity strip uses the conversation list rather than
+a duplicate fixed header. Composer drafts, keyboard resizing and navigation keep the existing conversation behavior.
 
 Liveness follows the server lease deadline, calibrated using the authenticated response's server time. Missing leases
 and explicit expirations never prove that an agent is working. Deadline expiry has the same 15-second grace and

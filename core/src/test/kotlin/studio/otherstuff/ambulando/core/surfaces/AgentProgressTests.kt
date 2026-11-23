@@ -22,6 +22,18 @@ class AgentProgressTests {
         "visibility" to "user_visible", "state" to "working"
     ) + extra
 
+    @Test fun compactTailKeepsCurrentWorkAndOnlyNewestFinishedHistory() {
+        fun run(id: String, state: String, created: String, agent: String) = row(state = state, extras = mapOf(
+            "id" to java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString(), "activity_id" to id, "agent_npub" to agent, "created_at" to created, "body" to "Public update"))
+        val old = run("old", "completed", "2026-09-30T23:00:00Z", "old-agent")
+        val newest = run("new", "completed", "2026-10-01T00:00:00Z", "new-agent")
+        val working = run("live", "working", "2026-10-01T00:01:00Z", "live-agent")
+        assertEquals(listOf("live", "new"), compactAgentProgress(listOf(old, newest, working), now).map { it.activityId })
+        assertEquals(listOf("new"), compactAgentProgress(listOf(old, newest), now).map { it.activityId })
+        assertEquals(listOf("new"), compactAgentProgress(listOf(old, newest, working), now + 900_000).map { it.activityId })
+        assertEquals(3, compactAgentProgress((1..5).map { run("live$it", "working", "2026-10-01T00:01:00Z", "agent$it") }, now).size)
+    }
+
     @Test fun publicHistoryRequiresMatchingTurnAndActivityAndOrdersDeduplicatedSequences() {
         val activity = row(extras = mapOf("commentary_history" to listOf(entry(4), entry(2), entry(4),
             entry(1, mapOf("visibility" to "internal")), entry(3, mapOf("turn_id" to "other")),

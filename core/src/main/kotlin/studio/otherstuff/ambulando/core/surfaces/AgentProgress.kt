@@ -105,3 +105,17 @@ private fun AgentActivityRecord.inStoppedWindow(localNow: Long): Boolean {
 fun AgentActivityRecord.belongsToTrigger(message: studio.otherstuff.ambulando.core.transport.MessageRecord, effectiveThreadId: String?): Boolean =
     triggerMessageId == message.id && workspaceId == message.workspaceId && channelId == message.channelId &&
         threadId == message.threadId && (effectiveThreadId == null || threadId == effectiveThreadId) && !message.deleted && !message.inherited
+
+/** Small newest-tail projection; durable rows and pagination stay untouched. */
+fun compactAgentProgress(rows: List<AgentActivityRecord>, now: Long): List<AgentActivityRecord> {
+    val current = currentAgentProgress(rows, now)
+    var finished = false
+    return rows.filter { it.id in current }
+        .sortedWith(compareByDescending<AgentActivityRecord> { it.createdAt }.thenByDescending { it.activityId })
+        .filter { row ->
+            if (!row.isTerminal) true
+            else if (!finished && (row.commentary.isNotEmpty() || row.historyBefore != null ||
+                    !row.body.isNullOrBlank() || !row.summary.isNullOrBlank())) { finished = true; true }
+            else false
+        }.take(3)
+}

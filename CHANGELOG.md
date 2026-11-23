@@ -1,3 +1,9 @@
+## 0.9.44 (72)
+
+- Show agent activity as a compact disclosure after the newest replies, with a bounded live preview.
+- Hide completed commentary by default and reset expanded history on completion while preserving retained updates.
+- Keep activity scrolling tied to the reader’s position and preserve explicit history expansion during row recycling.
+
 ## 0.9.43 (71)
 
 - Pause app discovery and host authority checks while hidden or backgrounded.
