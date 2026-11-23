@@ -54,6 +54,7 @@ import studio.otherstuff.ambulando.app.ui.nav.*
         if(model.activeBoundaryId==boundary) installed=result
     }
     Column(Modifier.fillMaxWidth().padding(horizontal=16.dp)) {
+        NappletRuntimeApps(model)
         TextButton(enabled=services.unlocked && !w.accessRemoved,onClick={adding=true},modifier=Modifier.testTag("apps.addNapplet")) { Text("Add napplet") }
         installed.forEach { (file,b) -> Row(Modifier.fillMaxWidth()) {
             TextButton(onClick={services.open(WorkRoute.File(w.id,file.id))},modifier=Modifier.weight(1f).testTag("apps.generic")) { Text(b.icon+" "+b.title) }

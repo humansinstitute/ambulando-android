@@ -118,6 +118,7 @@ class SampleTower(
 
     /** Called with every request before this tower handles it; a test suspends a chosen one here and releases it later. */
     /** Explicit fixture response only; never computed from sample rows or used by release mode. */
+    @Volatile var nappletRuntimeFixture: NappletRuntimeFixture? = null
     @Volatile var workspaceReportFixture: ((String, String) -> kotlinx.serialization.json.JsonObject)? = null
     @Volatile var requestGate: (suspend (HttpRequest) -> Unit)? = null
 
@@ -291,6 +292,7 @@ class SampleTower(
             val value=workspaceReportFixture?.invoke(w,range) ?: return errorReply(404,"not_found")
             return 200 to value.toString().toByteArray()
         }
+        nappletRuntimeFixture?.handle(request,signer)?.let { return it.status to it.body }
         administration.scopeLease(request, url.path)?.let { return it }
         // Surface routes first: their ownership is exact (board versions live under `/files/:f/versions/:v/object`).
         val handled = notifications.handle(request) ?: boards.handle(request) ?: surfaces.handle(request) ?: labSurfaces.handle(request) ?: work.handle(request) ?: labWork.handle(request)
@@ -312,7 +314,7 @@ class SampleTower(
         val (name, slug, avatar) = administration.profile(id)
         val label = name ?: defaultLabel
         return linkedMapOf(
-            "identity" to linkedMapOf("workspace_id" to id, "app_npub" to SampleIds.APP, "workspace_owner_npub" to SampleIds.ANA), "label" to label,
+            "identity" to linkedMapOf("workspace_id" to id, "app_npub" to SampleIds.APP, "workspace_owner_npub" to SampleIds.ANA, "tower_service_npub" to SampleIds.APP, "workspace_service_npub" to if(id==SampleIds.STUDIO) SampleIds.ORBIT else SampleIds.RELAY), "label" to label,
             "slug" to (slug ?: label.lowercase().replace(' ', '-')), "tower_base_url" to origin.url,
             "membership" to mapOf("role" to if (administration.viewer == SampleViewer.ADMIN) "admin" else "member"),
         ).also { row -> if (avatar != null) row["avatar_url"] = avatar }
