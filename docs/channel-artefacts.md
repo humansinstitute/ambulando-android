@@ -14,7 +14,13 @@ HTML opens through the authenticated `/files/:id/html` projection in the isolate
 signer or host bridge. Approved manifest image assets are fetched through exact private File-version routes, checked
 for type, size and SHA-256, and supplied in memory. Unavailable assets do not receive bytes.
 
-HTML's Versions menu browses saved revisions. Edit source saves an immutable version against the base that was read;
+Rich artefacts opened from Files or Artefacts use one focused toolbar with Back, a single-line title and an ellipsis menu.
+Version history, imported-source provenance and the original-source link live in that menu, without a permanent secondary
+strip. Whiteboards retain their drawing tools and primary Save; System Flows keep Save in the title row. Dirty, read-only,
+loading and conflict information remains available when relevant. Ordinary HTML uses its own toolbar instead of the outer
+app navigation and duplicate viewer title; pinning and source editing are in its overflow.
+
+HTML's overflow menu browses saved revisions. Edit source saves an immutable version against the base that was read;
 a stale base leaves the draft intact. Restore source starts from historical bytes and saves against the current base.
 Unsaved source and its base are preserved within the workspace's private draft directory; closing the source dialog
 keeps the draft, and reopening restores it. Source editing is limited to ordinary HTML bytes; manifest JSON is edited
@@ -27,6 +33,8 @@ For synthetic device tests, build with `-PisolatedArtefactTest=true`. This chang
 `studio.otherstuff.ambulando.android.artefacttest` and omits Firebase configuration for that disposable package, so an
 installed signed release can remain in place for upgrade validation. Production package and Firebase configuration
 are unchanged. `ChannelArtefactsFlowTest` exercises direct whiteboard navigation and HTML create/edit/version browsing.
+`CompactArtefactToolbarFlowTest` checks imported-source overflow and read-only controls for whiteboard, HTML and System Flow
+fixtures through both Files and Artefacts, recording compact-phone screenshots.
 
 Daily tracker Files can run the shared inline HTML bundle through a deliberately narrow File data host. The
 Apps → Daily Metrics → Set up Daily Metrics action explicitly creates an empty JSON File and a separate HTML File in the signed-in viewer's

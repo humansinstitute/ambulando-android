@@ -28,7 +28,7 @@ import studio.otherstuff.ambulando.core.transport.obj
 import java.io.File
 import java.util.UUID
 
-@Composable internal fun RecordPin(model: AppModel, type: PinRecord.ResourceType, id: String, enabled: Boolean = true) {
+@Composable internal fun RecordPin(model: AppModel, type: PinRecord.ResourceType, id: String, enabled: Boolean = true, inMenu: Boolean = false) {
     val c = model.connection ?: return; val w = model.workspace ?: return
     val current by remember(c.id, w.id, type, id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == StoreTable.WRITES }) {
         val saved = model.store.reader.pin(c.id, w.id, type, id)
@@ -41,12 +41,17 @@ import java.util.UUID
     } }.collectAsState(false)
     var showFailure by remember(type, id) { mutableStateOf(false) }
     val failure = current.second?.takeIf { !it.isPending }
-    androidx.compose.material3.IconButton(modifier = androidx.compose.ui.Modifier.testTag("pin.toggle"), enabled = enabled && !removed && !w.accessRemoved, onClick = {
+    val label = if (failure != null) "Pin not saved" else if (current.third) "Unpin" else "Pin"
+    val icon = when { failure != null -> Icons.Outlined.WarningAmber; current.third -> Icons.Filled.PushPin; else -> Icons.Outlined.PushPin }
+    val toggle = {
         if (failure != null) showFailure = true else model.submit(WriteIntent(WriteKind.PIN_SET, id, buildJsonObject {
-        put("resource_type", type.wire); put("pinned", !current.third); put("expected_row_version", current.first?.rowVersion ?: 0); put("mutation_id", UUID.randomUUID().toString())
-    })) }) {
-        Icon(when { failure != null -> androidx.compose.material.icons.Icons.Outlined.WarningAmber; current.third -> androidx.compose.material.icons.Icons.Filled.PushPin; else -> androidx.compose.material.icons.Icons.Outlined.PushPin },
-            if (failure != null) "Pin not saved" else if (current.third) "Unpin" else "Pin")
+            put("resource_type", type.wire); put("pinned", !current.third); put("expected_row_version", current.first?.rowVersion ?: 0); put("mutation_id", UUID.randomUUID().toString())
+        }))
+    }
+    if (inMenu) DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) },
+        modifier = Modifier.testTag("pin.toggle"), enabled = enabled && !removed && !w.accessRemoved, onClick = { toggle() })
+    else IconButton(modifier = Modifier.testTag("pin.toggle"), enabled = enabled && !removed && !w.accessRemoved, onClick = { toggle() }) {
+        Icon(icon, label)
     }
     if (showFailure && failure != null) AlertDialog(onDismissRequest = { showFailure = false }, title = { Text("Pin not saved") }, text = { Text(failure.lastError ?: "Try again or discard this change.") },
         confirmButton = { TextButton(onClick = { showFailure = false; model.act { model.writes.retry(failure.id, c) } }) { Text("Retry") } },

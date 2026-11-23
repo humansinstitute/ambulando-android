@@ -1,3 +1,9 @@
+## 0.9.41 (69)
+
+- Give whiteboards, ordinary HTML and System Flows a compact toolbar with an ellipsis menu for versions, imported-source details and original-source access.
+- Remove permanent secondary action/source strips and clean whiteboard version chips, retaining primary editing/save controls, drafts and contextual read-only/conflict information.
+- Use the same focused editors from Files and Artefacts, with Back returning to the originating list.
+
 ## 0.9.38 (66)
 
 - Add controlled document/working-brief, whiteboard, interactive HTML and System Flow starters, with maintained styles for rich artefacts.

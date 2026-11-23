@@ -1,6 +1,8 @@
 package studio.otherstuff.ambulando.app
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.foundation.Canvas
@@ -78,27 +80,33 @@ import java.util.UUID
     var from by remember { mutableStateOf("") }; var to by remember { mutableStateOf("") }
     val flow = state.flow
     val editable = state.canWrite && state.viewing == null && !state.busy
+    val cleanSaved = !state.busy && !state.dirty && state.canWrite && state.viewing == null && state.message.startsWith("Saved version ")
     // Back uses the normal File route. Every accepted field edit already has a durable draft.
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.testTag("flow.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back (keep draft)") }
-            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).testTag("flow.title"))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            TextButton(enabled = editable && state.dirty, onClick = { act { it.save() } }, modifier = Modifier.testTag("flow.save")) { Text("Save version") }
-            TextButton(enabled = !state.busy, onClick = { versions = !versions }, modifier = Modifier.testTag("flow.versions")) { Text("Versions") }
-            if (state.dirty) TextButton(enabled = !state.busy, onClick = { discard = true }, modifier = Modifier.testTag("flow.discard")) { Text("Discard draft") }
-        }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(state.message.ifBlank { "Loading System Flow…" }, modifier = Modifier.testTag("flow.status"))
-        provenance()
-        Text("Typed node and relationship editing. Linked whiteboard scenes and feedback stay intact; use the original for those edits.")
-        if (versions) {
-            TextButton(enabled = !state.busy, onClick = { diagram = 0; act { it.open() } }, modifier = Modifier.testTag("flow.latest")) { Text("Latest / resume draft") }
-            state.versions.reversed().forEach { v ->
-                TextButton(enabled = !state.busy, onClick = { diagram = 0; act { it.open(v.id) } }, modifier = Modifier.testTag("flow.version.${v.versionNumber}")) { Text("Version ${v.versionNumber} · read-only") }
+            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).testTag("flow.title"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TextButton(enabled = editable && state.dirty, onClick = { act { it.save() } }, modifier = Modifier.testTag("flow.save")) { Text("Save") }
+            Box {
+                IconButton(onClick = { versions = true }, modifier = Modifier.testTag("flow.versions")) { Icon(Icons.Outlined.MoreHoriz, "Flow options") }
+                DropdownMenu(versions, { versions = false }) {
+                    provenance()
+                    if (cleanSaved) Text(state.message, Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("flow.status"))
+                    Text("Typed node and relationship editing. Linked whiteboard scenes and feedback stay intact; use the original for those edits.",
+                        Modifier.widthIn(max = 320.dp).padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
+                    DropdownMenuItem(text = { Text("Latest / resume draft") }, enabled = !state.busy,
+                        onClick = { versions = false; diagram = 0; act { it.open() } }, modifier = Modifier.testTag("flow.latest"))
+                    state.versions.reversed().forEach { v ->
+                        DropdownMenuItem(text = { Text("Version ${v.versionNumber} · read-only") }, enabled = !state.busy,
+                            onClick = { versions = false; diagram = 0; act { it.open(v.id) } }, modifier = Modifier.testTag("flow.version.${v.versionNumber}"))
+                    }
+                    if (state.dirty) DropdownMenuItem(text = { Text("Discard draft") }, enabled = !state.busy,
+                        onClick = { versions = false; discard = true }, modifier = Modifier.testTag("flow.discard"))
+                }
             }
         }
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!cleanSaved) Text(state.message.ifBlank { "Loading System Flow…" }, modifier = Modifier.testTag("flow.status"))
         if (flow != null) {
             val diagrams = SystemFlow.diagrams(flow)
             diagrams.forEachIndexed { index, d ->

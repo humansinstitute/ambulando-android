@@ -151,10 +151,12 @@ class ChannelArtefactsFlowTest {
             val saved = versions().let { list -> list.versions.single { it.id == list.currentVersionId } }
             val bytes = runBlocking { api.fileVersionBytes(SampleIds.STUDIO, model.workspace!!.appNpub, file.id, saved) }
             assertEquals(1, org.json.JSONObject(String(bytes)).getJSONArray("elements").length())
+            captureSettledBoard(window, "board-drawn-saved")
             compose.onNodeWithTag("board.back").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("artefacts.new")).fetchSemanticsNodes().isNotEmpty() }
             open()
             assertBoardVisible(window)
+            captureSettledBoard(window, "board-drawn-reopened")
             compose.onNodeWithTag("board.menu").performClick()
             compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag("board.version") and hasText("v$before", substring = true)).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasTestTag("board.version") and hasText("v$before", substring = true)).performClick()
@@ -163,7 +165,9 @@ class ChannelArtefactsFlowTest {
             compose.waitUntil(10_000) { page(history, "document.querySelector('#board-root').dataset.boardReadonly") == "true" }
             org.junit.Assert.assertEquals("0", page(history, "document.querySelector('#board-root').dataset.boardElementCount"))
             compose.onNodeWithTag("board.latest").performClick()
+            compose.waitUntil(20_000) { page(history, "document.querySelector('#board-root').dataset.boardElementCount") == "1" && page(history, "document.querySelector('#board-root').dataset.boardReadonly") == "false" }
             assertBoardVisible(window)
+            captureSettledBoard(window, "board-drawn-latest")
         }
     }
 
@@ -188,15 +192,18 @@ class ChannelArtefactsFlowTest {
             compose.onNodeWithTag("artefacts.filter.html").performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.row") and hasAnyDescendant(hasText("$name.html")), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasTestTag("artefacts.row") and hasAnyDescendant(hasText("$name.html")), useUnmergedTree = true).performClick()
-            compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.editSource")).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.menu")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("artefacts.menu").performClick()
             compose.onNodeWithTag("artefacts.editSource").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("artefacts.source")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("artefacts.source").performTextReplacement("<h1>Saved on Android</h1>")
             compose.onNodeWithTag("artefacts.saveSource").performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("artefacts.source")).fetchSemanticsNodes().isEmpty() }
-            compose.onNodeWithTag("artefacts.history").performClick()
+            compose.onNodeWithTag("artefacts.menu").performClick()
             compose.onNodeWithText("v2").assertIsDisplayed()
             compose.onNodeWithText("v1").performClick()
+            compose.onNodeWithTag("artefacts.readOnly").assertIsDisplayed()
+            compose.onNodeWithTag("artefacts.menu").performClick()
             compose.onNodeWithTag("artefacts.editSource").assertTextContains("Restore source")
         }
     }
@@ -256,6 +263,18 @@ class ChannelArtefactsFlowTest {
             assertEquals(1, runBlocking { api.channelFiles(SampleIds.STUDIO, model.workspace!!.appNpub, SampleIds.GENERAL).items.count { it.displayName == "$boardName.excalidraw" } })
             assertTrue(runBlocking { model.store.reader.workspaceWrites(model.connection!!.id, SampleIds.STUDIO).none { it.id == pending.id } })
         }
+    }
+
+    private fun captureSettledBoard(window: android.view.Window, name: String) {
+        awaitBoardPage(window)
+        compose.waitForIdle()
+        Thread.sleep(3500) // Capture the presented scene and native toolbar, not a transitional Chromium frame.
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val screenshot = instrumentation.uiAutomation.takeScreenshot()
+        java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "$name.png").outputStream().use {
+            screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        screenshot.recycle()
     }
 
     /** DOM readiness alone misses zero-height pages: verify geometry and actual screen pixels. */

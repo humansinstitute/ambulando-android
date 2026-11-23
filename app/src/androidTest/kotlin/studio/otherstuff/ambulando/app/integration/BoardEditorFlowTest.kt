@@ -31,11 +31,12 @@ class BoardEditorFlowTest {
             compose.runOnIdle { model.editorBoard = BoardReference(SampleIds.BOARD_FILE, SampleIds.BOARD_VERSION, 2, "", 0, null, canWrite = true) to "Architecture sketch" }
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.title")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("board.title").assertTextContains("Architecture sketch")
-            // A clean, loaded board shows its version in the status pill.
+            // Clean version status belongs inside the overflow, leaving the title row compact.
+            compose.onNodeWithTag("board.status").assertDoesNotExist()
+            compose.onNodeWithTag("board.menu").performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.status")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("board.status").assertTextContains("v1")
-            // The gear menu lists the versions (loaded on open), Reload latest and Rename; Save with a note waits for a change.
-            compose.onNodeWithTag("board.menu").performClick()
+            // The overflow menu lists the versions (loaded on open), Reload latest and Rename; Save with a note waits for a change.
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("board.version")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("board.saveNote").assertIsNotEnabled()
             compose.onNodeWithTag("board.reload").assertIsDisplayed()

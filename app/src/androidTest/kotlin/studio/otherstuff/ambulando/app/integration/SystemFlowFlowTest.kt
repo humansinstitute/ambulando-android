@@ -46,7 +46,7 @@ class SystemFlowFlowTest {
     private fun present(tag: String) = compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
     private fun tap(tag: String) {
         val node = compose.onNodeWithTag(tag)
-        if (tag !in setOf("artefacts.create", "flow.save", "flow.versions", "flow.discard", "flow.back")) node.performScrollTo()
+        if (tag !in setOf("artefacts.create", "flow.save", "flow.versions", "flow.discard", "flow.back", "flow.latest", "flow.version.1")) node.performScrollTo()
         node.performClick()
     }
     private fun screen(name: String): android.graphics.Bitmap {
@@ -87,12 +87,13 @@ class SystemFlowFlowTest {
         compose.waitUntil(30_000) { present("flow.node.start.label") }
         compose.onNodeWithTag("flow.node.start.label").assertTextContains("Edited on Android")
         tap("flow.save")
+        tap("flow.versions")
         compose.waitUntil(30_000) { compose.onNodeWithTag("flow.status").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].any { it.text.contains("Saved version 2") } }
-        tap("flow.versions"); tap("flow.version.1")
+        tap("flow.version.1")
         compose.waitUntil(20_000) { compose.onNodeWithTag("flow.node.start.label").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) }
         compose.waitUntil(20_000) { compose.onNodeWithTag("flow.node.start.label").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text == "Start" }
         compose.onNodeWithTag("flow.node.start.label").assertIsNotEnabled().assertTextContains("Start")
-        tap("flow.latest")
+        tap("flow.versions"); tap("flow.latest")
         compose.waitUntil(20_000) { compose.onNodeWithTag("flow.node.start.label").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text == "Edited on Android" }
         val api = model.towerAPI(model.connection!!); val w = model.workspace!!
         val file = runBlocking { api.channelFiles(w.id, w.appNpub, SampleIds.GENERAL).items.single { it.displayName == "$name.flow.json" } }
@@ -126,7 +127,8 @@ class SystemFlowFlowTest {
         compose.runOnIdle { model.refresh() }
         compose.waitUntil(30_000) { runBlocking { runCatching { model.towerAPI(model.connection!!).artefactFile(SampleIds.STUDIO, model.workspace!!.appNpub, id); true }.getOrDefault(false) } }
         openName(name)
-        compose.waitUntil(30_000) { present("artefacts.editSource") }
+        compose.waitUntil(30_000) { present("artefacts.menu") }
+        compose.onNodeWithTag("artefacts.menu").performClick()
         compose.onNodeWithTag("artefacts.editSource").assertIsNotEnabled()
         compose.onNodeWithTag("artefacts.original").assertExists()
         var web: android.webkit.WebView? = null
@@ -143,6 +145,7 @@ class SystemFlowFlowTest {
         }
         compose.waitUntil(30_000) { evaluate("[...document.images].filter(i=>i.complete&&i.naturalWidth>0).length") == "33" }
         assertEquals("undefined", evaluate("typeof window.nostr")?.trim('"'))
+        androidx.test.espresso.Espresso.pressBack()
         screen("pilot-brand-html-images")
         assertTrue(studio.otherstuff.ambulando.app.web.HtmlArtefactDocument.CSP.contains("form-action 'none'"))
     }
@@ -171,7 +174,10 @@ class SystemFlowFlowTest {
         openName(flowName)
         compose.waitUntil(30_000) { present("flow.node.${SystemFlow.items(originalFlow, 0, "nodes").first().string("id")}.label") }
         assertEquals(5, SystemFlow.diagrams(originalFlow).size)
+        compose.onNodeWithTag("artefacts.provenance").assertDoesNotExist()
+        tap("flow.versions")
         compose.onNodeWithTag("artefacts.original").assertExists()
+        androidx.test.espresso.Espresso.pressBack()
         compose.onNodeWithTag("flow.save").assertIsNotEnabled()
         screen("pilot-flow-clone")
         androidx.test.espresso.Espresso.pressBack()

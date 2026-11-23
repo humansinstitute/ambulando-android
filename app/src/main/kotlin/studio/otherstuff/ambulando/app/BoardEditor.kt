@@ -87,14 +87,16 @@ import java.util.UUID
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             IconButton(onClick = ::close, modifier = Modifier.testTag("board.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
             Text(state.title.ifBlank { title }, Modifier.weight(1f).testTag("board.title"), fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.body, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            BoardStatusPill(state)
+            if (state.dirty || state.save == BoardState.Save.STALE || state.newerAvailable) BoardStatusPill(state)
             Box {
-                IconButton(onClick = { menu = true }, modifier = Modifier.testTag("board.menu")) { Icon(Icons.Outlined.Settings, "Board options") }
+                IconButton(onClick = { menu = true }, modifier = Modifier.testTag("board.menu")) { Icon(Icons.Outlined.MoreHoriz, "Board options") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     state.saveAction?.let { action ->
                         DropdownMenuItem(text = { Text("Save with a note…") }, leadingIcon = { Icon(Icons.Outlined.Save, null) }, enabled = action.enabled,
                             modifier = Modifier.testTag("board.saveNote"), onClick = { menu = false; noting = true })
                     }
+                    BoardStatusPill(state)
+                    provenance()
                     Text("Versions", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                     if (state.versions.isEmpty()) DropdownMenuItem(text = { Text(if (state.versionsLoading) "Loading versions…" else "Show versions") }, onClick = { scope.launch { controller.loadVersions() } })
                     state.versions.take(30).forEach { version ->
@@ -110,7 +112,6 @@ import java.util.UUID
                 }
             }
         }
-        provenance()
         BoardNotices(state, scope, controller, onDiscard = { discarding = true })
         error?.let { Notice(NoticeTone.WARNING, it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         page?.failure?.let { Notice(NoticeTone.ERROR, it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }

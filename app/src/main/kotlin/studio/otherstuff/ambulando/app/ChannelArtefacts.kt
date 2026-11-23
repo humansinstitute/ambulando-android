@@ -1,5 +1,8 @@
 package studio.otherstuff.ambulando.app
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -230,38 +233,47 @@ import java.util.UUID
             else "This tracker is invalid or unavailable. No replacement was created.", Modifier.padding(16.dp))
         return
     }
-    Column(Modifier.fillMaxSize()) {
-        ArtefactProvenance(file)
-        Row(Modifier.fillMaxWidth()) {
-            RecordPin(model, PinRecord.ResourceType.FILE, file.id)
-            var menu by remember { mutableStateOf(false) }
-            Box { TextButton(onClick = { menu = true }, modifier = Modifier.testTag("artefacts.history")) { Text("Versions") }
+    studio.otherstuff.ambulando.app.ui.shell.OwnEditorNavigation()
+    val exit = studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current
+    BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current && source == null) { exit?.invoke() }
+    var menu by remember(file.id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            IconButton(onClick = { exit?.invoke() }, modifier = Modifier.testTag("artefacts.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
+            Text(file.displayName, Modifier.weight(1f).testTag("artefacts.fileTitle"), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (selected != null || file.raw.bool("can_write") != true) Text("Read-only", style = MaterialTheme.typography.labelSmall, modifier = Modifier.testTag("artefacts.readOnly"))
+            Box {
+                IconButton(onClick = { menu = true }, modifier = Modifier.testTag("artefacts.menu")) { Icon(Icons.Outlined.MoreHoriz, "Artefact options") }
                 DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(text = { Text("Latest") }, onClick = { selected = null; menu = false })
-                    versions?.versions?.asReversed()?.forEach { v -> DropdownMenuItem(text = { Text("v${v.versionNumber}") }, onClick = { selected = v.id; menu = false }) }
+                    ArtefactProvenance(file)
+                    RecordPin(model, PinRecord.ResourceType.FILE, file.id, inMenu = true)
+                    Text("Versions", Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("artefacts.history"), style = MaterialTheme.typography.labelMedium)
+                    DropdownMenuItem(text = { Text("Latest") }, enabled = !saving, onClick = { selected = null; menu = false })
+                    versions?.versions?.asReversed()?.forEach { v -> DropdownMenuItem(text = { Text("v${v.versionNumber}") }, enabled = !saving, onClick = { selected = v.id; menu = false }) }
+                    DropdownMenuItem(text = { Text(if (selected == null) "Edit source" else "Restore source") }, enabled = file.raw.bool("can_write") == true && !saving, onClick = {
+                        menu = false
+                        model.act {
+                            try {
+                                val restored = withContext(Dispatchers.IO) { if (draftFile.isFile) runCatching { Json.parseToJsonElement(draftFile.readText()).jsonObject }.getOrNull() else null }
+                                if (restored != null) {
+                                    base = restored["base_version_id"]?.jsonPrimitive?.content
+                                    source = restored["source"]?.jsonPrimitive?.content
+                                    error = "Restored your unsaved source. Saving still checks the version it started from."
+                                    return@act
+                                }
+                                val list = model.towerAPI(c).fileVersions(w.id, w.appNpub, file.id)
+                                val version = list.versions.first { it.id == (selected ?: list.currentVersionId) }
+                                require(version.contentType?.substringBefore(';') == "text/html") { "This HTML manifest must be edited by its authoring tool." }
+                                source = model.towerAPI(c).fileVersionBytes(w.id, w.appNpub, file.id, version).toString(Charsets.UTF_8); base = list.currentVersionId
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (e: Exception) { error = e.message }
+                        }
+                    }, modifier = Modifier.testTag("artefacts.editSource"))
                 }
             }
-            TextButton(enabled = file.raw.bool("can_write") == true && !saving, onClick = {
-                model.act {
-                    try {
-                        val restored = withContext(Dispatchers.IO) { if (draftFile.isFile) runCatching { Json.parseToJsonElement(draftFile.readText()).jsonObject }.getOrNull() else null }
-                        if (restored != null) {
-                            base = restored["base_version_id"]?.jsonPrimitive?.content
-                            source = restored["source"]?.jsonPrimitive?.content
-                            error = "Restored your unsaved source. Saving still checks the version it started from."
-                            return@act
-                        }
-                        val list = model.towerAPI(c).fileVersions(w.id, w.appNpub, file.id)
-                        val version = list.versions.first { it.id == (selected ?: list.currentVersionId) }
-                        require(version.contentType?.substringBefore(';') == "text/html") { "This HTML manifest must be edited by its authoring tool." }
-                        source = model.towerAPI(c).fileVersionBytes(w.id, w.appNpub, file.id, version).toString(Charsets.UTF_8); base = list.currentVersionId
-                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                    catch (e: Exception) { error = e.message }
-                }
-            }, modifier = Modifier.testTag("artefacts.editSource")) { Text(if (selected == null) "Edit source" else "Restore source") }
         }
         error?.let { Text(it, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error) }
-        html?.let { key(file.id, selected, it) { studio.otherstuff.ambulando.app.web.SandboxedHtmlScreen(it, file.displayName) } }
+        html?.let { key(file.id, selected, it) { studio.otherstuff.ambulando.app.web.SandboxedHtmlScreen(it, file.displayName, showLabel = false) } }
         if (html == null && error == null) Text("Loading HTML…")
     }
     source?.let { text -> AlertDialog(onDismissRequest = { if (!saving) source = null }, title = { Text("Edit HTML source") }, text = {

@@ -120,14 +120,14 @@ fun createSandboxedHtmlView(context: Context, html: String, beforeLoad: (WebView
  * The label names where the content comes from and says it is a sandboxed web document.
  */
 @Composable
-fun SandboxedHtmlScreen(html: String, label: String, modifier: Modifier = Modifier) {
+fun SandboxedHtmlScreen(html: String, label: String, modifier: Modifier = Modifier, showLabel: Boolean = true) {
     val amb = Amb.colors
     val context = LocalContext.current
     val stopped = remember(html) { androidx.compose.runtime.mutableStateOf(false) }
     val view = remember(html) { createSandboxedHtmlView(context, html) { stopped.value = true } }
     DisposableEffect(view) { onDispose { view.getOrNull()?.destroy() } }
     Column(modifier.fillMaxSize()) {
-        Row(
+        if (showLabel) Row(
             Modifier.fillMaxWidth().background(amb.warningBackground).padding(horizontal = 12.dp, vertical = 6.dp).testTag("web.label"),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
