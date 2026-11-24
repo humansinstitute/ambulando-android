@@ -78,7 +78,7 @@ class ComposerMenuFlowTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("chat.mentions").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("chat.attach").assertIsDisplayed()
         compose.onNodeWithTag("chat.mention").assertIsDisplayed()
-        compose.onNodeWithTag("chat.composer.area").assertHeightIsAtLeast(96.dp)
+        compose.onNodeWithTag("chat.composer.area").assertHeightIsAtLeast(64.dp)
         capture("keyboard")
         assertTrue("Real IME is shown", shell("dumpsys input_method").contains("mInputShown=true"))
         compose.onNodeWithText("Ana sample", useUnmergedTree = true).performClick()

@@ -151,13 +151,13 @@ fun MentionLookahead(candidates: List<MentionCandidate>, onPick: (Mention) -> Un
     }
 }
 
-/** Two accessible controls share the left column and set the initial field height. */
+/** Keep every control accessible while empty and short messages occupy one row. */
 private val ComposerToolHeight = 48.dp
 
-/** The text box starts two tools tall (iOS: the box is as tall as the tool column), so it opens at two lines, not one. */
-val ComposerMinHeight = ComposerToolHeight * 2
+/** The field grows with its text, starting at a single accessible control height. */
+val ComposerMinHeight = ComposerToolHeight
 
-/** Explicit 48dp targets keep the stacked controls accessible without an extra idle row. */
+/** Explicit 48dp targets retain accessible controls in the compact row. */
 @Composable
 private fun ComposerTool(enabled: Boolean, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, onClick: () -> Unit) {
     val amb = Amb.colors
@@ -169,13 +169,13 @@ private fun ComposerTool(enabled: Boolean, label: String, icon: androidx.compose
 }
 
 /**
- * The composer's controls stacked at its left (attach above mention) so the text field takes the width. Attach offers
+ * The composer's controls share one row at its left. Attach offers
  * the photo/file picker, microphone and pasting an attachment from the clipboard.
  */
 @Composable
 fun ComposerControls(enabled: Boolean, onPick: () -> Unit, onPaste: () -> Unit, onMention: () -> Unit, onRecord: () -> Unit, recordEnabled: Boolean) {
     var menu by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         Box {
             ComposerTool(enabled, "Attachments and voice", Icons.Outlined.Add, "chat.attach") { menu = true }
             DropdownMenu(expanded = menu && enabled, onDismissRequest = { menu = false }) {

@@ -231,7 +231,11 @@ fun WorkspaceShell(
                 }
                 // A full-screen record (a canvas) replaces the global section bar with its own bottom controls; the
                 // sidebar remains available beside the same strip on a wide window.
-                val chatKeyboardOpen = chrome.section == AppSection.CHAT &&
+                // Conversations keep their originating section (for example Deck). Its bar must not
+                // reserve height below a chat that already applies the IME inset.
+                val activeRoute = stacks.of(chrome.section).lastOrNull()
+                val chatVisible = chrome.section == AppSection.CHAT || activeRoute is WorkRoute.Thread || activeRoute is WorkRoute.Channel
+                val chatKeyboardOpen = chatVisible &&
                     androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
                 if (!focusedEditor && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
                     SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect,
