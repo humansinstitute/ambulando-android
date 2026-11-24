@@ -199,7 +199,11 @@ suspend fun StoreWriter.replaceWorkspaceAgents(workspaceId: String, records: Lis
 
 /** Merge rolling snapshots without losing completed/offline commentary or resurrecting a terminal turn. */
 suspend fun StoreWriter.replaceAgentActivities(workspaceId: String, channelId: String, records: List<AgentActivityRecord>): Int = write {
-    if (channelId in db.removedChannelIds(workspaceId)) return@write 0
+    mergeAgentActivities(workspaceId, channelId, records)
+}
+
+internal fun WriteTx.mergeAgentActivities(workspaceId: String, channelId: String, records: List<AgentActivityRecord>): Int {
+    if (channelId in db.removedChannelIds(workspaceId)) return 0
     var changed = 0
     for (incoming in records.filter { it.workspaceId == workspaceId && it.channelId == channelId }) {
         val current = db.first("SELECT raw FROM agent_activities WHERE workspace_id = ? AND id = ?", workspaceId, incoming.id) {
@@ -213,7 +217,7 @@ suspend fun StoreWriter.replaceAgentActivities(workspaceId: String, channelId: S
             workspaceId, row.id, row.activityId, row.scopeId, row.channelId, row.threadId, row.agentNpub, row.state, row.sequence, row.updatedAt, canonical(row.raw))
     }
     if (changed > 0) emit(StoreTable.AGENTS, workspaceId)
-    changed
+    return changed
 }
 
 // MARK: Writer — Toolbox and pins
@@ -446,4 +450,14 @@ suspend fun StoreReader.canvasSourceChoices(workspaceId: String, excludingCanvas
 suspend fun StoreReader.conversationAgentActivities(workspaceId: String, channelId: String, threadId: String?): List<AgentActivityRecord> = read {
     query("SELECT raw FROM agent_activities WHERE workspace_id = ? AND channel_id = ? AND (? IS NULL OR thread_id = ?) ORDER BY updated_at, id",
         workspaceId, channelId, threadId, threadId) { runCatching { AgentActivityRecord.parse(parseRaw(it.text(0))) }.getOrNull() }.filterNotNull()
+}
+
+/** Bounded activity lookup for page merge/recovery; backfill must not reread the entire retained channel per page. */
+suspend fun StoreReader.agentActivitiesById(workspaceId: String, channelId: String, ids: List<String>): List<AgentActivityRecord> = read {
+    if (ids.isEmpty()) emptyList() else {
+        require(ids.size <= 50)
+        val placeholders = ids.joinToString(",") { "?" }
+        query("SELECT raw FROM agent_activities WHERE workspace_id = ? AND channel_id = ? AND id IN ($placeholders)",
+            workspaceId, channelId, *ids.toTypedArray()) { AgentActivityRecord.parse(parseRaw(it.text(0))) }
+    }
 }

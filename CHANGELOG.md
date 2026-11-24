@@ -1,3 +1,8 @@
+## 0.9.45 (73)
+
+- Load busy-channel agent history in resumable background pages without treating a valid backlog as a malformed server response.
+- Keep current activity responsive while older lifecycle and missed commentary pages catch up, retaining offline history across interruptions.
+
 ## 0.9.44 (72)
 
 - Show agent activity as a compact disclosure after the newest replies, with a bounded live preview.

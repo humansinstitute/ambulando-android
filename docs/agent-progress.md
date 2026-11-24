@@ -42,3 +42,14 @@ Regression coverage lives in `AgentProgressTests`, `AgentProgressSyncTests`, `Su
 `AgentProgressUiTest` and `AgentProgressConversationTest`. The latter uses the labelled synthetic app mode and tests the
 conversation, history, completion, reopen and draft-preservation flow. Production member/device verification is separate
 from these synthetic tests.
+
+Lifecycle refresh reads one head page at foreground priority. An independent background job reads one continuation
+page at a time, yielding its scheduler slot after each page. The exact connection/query checkpoint commits atomically
+with that page's rows. A fresh head cannot reset unfinished traversal, and only a terminal cursor marks that query
+complete; a thread-filtered read does not mark an entire channel complete. A failed page or cancellation resumes the
+last committed cursor after reopening. Invalidated cursors allow one fresh pass per traversal. Repeated/nonadvancing
+cursors remain protocol errors: a bounded recent window and constant-space cycle anchor detect loops across jobs and
+process recreation without growing the checkpoint with history length. No fixed total-page budget limits valid history. Routine head polls reuse a recently completed pass; forced refreshes
+and sweeps after five minutes recover late changes beyond the head without rewriting the last completion time.
+Commentary delivery recovery is separately keyed to the exact lifecycle and turn, with one page per background job;
+its existing recovered cursor advances only with persisted content. New head content can remain visible during a gap.

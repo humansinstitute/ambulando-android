@@ -290,6 +290,12 @@ class SampleSurfaceTower(
         return id
     }
 
+    /** Bulk synthetic lifecycle snapshots for repeatable large-channel and replay fixtures. */
+    fun seedActivityRecords(records: List<AgentActivityRecord>) = mutate {
+        require(records.all { it.workspaceId == workspaceId })
+        records.forEach { state.put("activities", it.id, it.raw.mapValues { (_, value) -> SampleJson.value(value) }) }
+    }
+
     fun seedActivity(
         channel: String, scope: String, thread: String, agent: String, state: String, label: String, summary: String? = null, sequence: Int = 1,
         visibility: String = "user_visible",

@@ -16,8 +16,10 @@ import org.junit.runner.RunWith
 import studio.otherstuff.ambulando.app.ui.shell.AppSection
 import studio.otherstuff.ambulando.core.sample.SampleIds
 import studio.otherstuff.ambulando.core.store.conversationAgentActivities
-import studio.otherstuff.ambulando.core.store.replaceAgentActivities
 import studio.otherstuff.ambulando.core.surfaces.AgentActivityRecord
+import studio.otherstuff.ambulando.core.surfaces.refreshAgentActivity
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.*
 import java.time.Instant
 
 /** Full synthetic conversation flow; uses no personal account or production activity. */
@@ -64,7 +66,29 @@ class AgentProgressConversationTest {
                 model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.CHAT
             }
             compose.waitUntil(30_000) { compose.onAllNodesWithTag("chat.messages").fetchSemanticsNodes().isNotEmpty() }
-            runBlocking { model.store.writer.replaceAgentActivities(SampleIds.STUDIO, SampleIds.GENERAL, listOf(activity("working", 3))) }
+            val tower = model.sampleTower!!.surfaces
+            val runtime = model.active!!
+            val history = (0 until 1050).map { index ->
+                val raw = activity("completed", 1).raw.toMutableMap()
+                raw["id"] = JsonPrimitive(java.util.UUID.nameUUIDFromBytes("history-$index".toByteArray()).toString())
+                raw["activity_id"] = JsonPrimitive("history-$index"); raw["turn_id"] = JsonPrimitive("history-turn-$index")
+                raw["created_at"] = JsonPrimitive("2020-01-01T00:00:00Z")
+                AgentActivityRecord.parse(JsonObject(raw))
+            }
+            tower.seedActivityRecords(history + activity("working", 3))
+            fun refresh() = runBlocking {
+                runtime.sync.refreshAgentActivity(runtime.connection, runtime.workspace, SampleIds.GENERAL, force = true)
+                withTimeout(30_000) { runtime.engine.waitUntilIdle() }
+                assertTrue(runtime.engine.status.value.errors.toString(), runtime.engine.status.value.errors.isEmpty())
+                assertTrue(runtime.engine.status.value.connectionFailures.isEmpty())
+            }
+            refresh()
+            runBlocking {
+                val rows = model.store.reader.conversationAgentActivities(SampleIds.STUDIO, SampleIds.GENERAL, SampleIds.thread(39))
+                assertTrue(rows.map { it.id }.containsAll(history.map { it.id }))
+            }
+            assertTrue(tower.requestLog.count { "agent-activities" in it } >= 22)
+            compose.onNodeWithText("Activity updates unavailable · retrying").assertDoesNotExist()
             fun openThread() {
                 compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${SampleIds.message(39)}"))
                 compose.onNodeWithTag("chat.message.${SampleIds.message(39)}").performClick()
@@ -74,7 +98,8 @@ class AgentProgressConversationTest {
             compose.onNodeWithTag("chat.agent.current.$id", useUnmergedTree = true).assertTextContains("Working", substring = true)
             compose.onNodeWithTag("chat.agent.latest.$id").assertTextContains("Latest public update")
             capture("working")
-            runBlocking { model.store.writer.replaceAgentActivities(SampleIds.STUDIO, SampleIds.GENERAL, listOf(activity("working", 4, "New public update while working"))) }
+            tower.seedActivityRecords(listOf(activity("working", 4, "New public update while working")))
+            refresh()
             compose.waitUntil(10_000) { compose.onAllNodesWithText("New public update while working").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("chat.agent.latest.$id").assertIsDisplayed()
             capture("updated")
@@ -84,7 +109,8 @@ class AgentProgressConversationTest {
             compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.agent.update.$id.1"))
             compose.onNodeWithTag("chat.agent.update.$id.1").assertTextContains("Earlier public update")
             capture("history")
-            runBlocking { model.store.writer.replaceAgentActivities(SampleIds.STUDIO, SampleIds.GENERAL, listOf(activity("completed", 5))) }
+            tower.seedActivityRecords(listOf(activity("completed", 5)))
+            refresh()
             compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.agent.history.$id"))
             runBlocking { org.junit.Assert.assertEquals("completed", model.store.reader.conversationAgentActivities(SampleIds.STUDIO, SampleIds.GENERAL, SampleIds.thread(39)).single { it.id == id }.state) }
             compose.waitUntil(10_000) { compose.onAllNodesWithText("Earlier activity · completed", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }

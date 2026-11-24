@@ -1,7 +1,5 @@
 package studio.otherstuff.ambulando.core.surfaces
 
-import studio.otherstuff.ambulando.core.store.conversationAgentActivities
-import studio.otherstuff.ambulando.core.transport.string
 import studio.otherstuff.ambulando.core.store.isAccessRemoved
 import studio.otherstuff.ambulando.core.store.FlaggedTable
 
@@ -17,7 +15,6 @@ import studio.otherstuff.ambulando.core.store.markAccessRemoved
 import studio.otherstuff.ambulando.core.store.removeCanvas
 import studio.otherstuff.ambulando.core.store.removeContextComponent
 import studio.otherstuff.ambulando.core.store.removeContextTree
-import studio.otherstuff.ambulando.core.store.replaceAgentActivities
 import studio.otherstuff.ambulando.core.store.replaceCanvases
 import studio.otherstuff.ambulando.core.store.replaceContextReferences
 import studio.otherstuff.ambulando.core.store.replacePersonalWapps
@@ -155,61 +152,6 @@ suspend fun WorkspaceSync.refreshAgents(
     }
     channelIds.forEachIndexed { index, channel ->
         refreshAgentActivity(connection, workspace, channel, if (index < WorkspaceSync.AGENT_ACTIVITY_CHANNEL_LIMIT) priority else SyncPriority.BACKGROUND, force)
-    }
-}
-
-suspend fun WorkspaceSync.refreshAgentActivity(
-    connection: ConnectionRecord, workspace: WorkspaceRecord, channelId: String, priority: SyncPriority = SyncPriority.VISIBLE, force: Boolean = false,
-    threadId: String? = null, activityId: String? = null, beforeSequence: Long? = null,
-) {
-    val key = WorkspaceSync.agentActivityKey(workspace.id, channelId) +
-        if (threadId == null && activityId == null && beforeSequence == null) "" else ":" + listOf(threadId, activityId, beforeSequence).joinToString(":")
-    engine.enqueueRead(key, priority, force) {
-        identity.requireReader(connection.signerNpub)
-        if (store.reader.isChannelAccessRemoved(workspace.id, channelId)) return@enqueueRead
-        val api = api(connection)
-        try {
-            val retained = store.reader.conversationAgentActivities(workspace.id, channelId, threadId).associateBy { it.id }
-            suspend fun recover(previous: AgentActivityRecord) {
-                    var after = previous.raw.string("android_recovered_cursor") ?: previous.raw.string("commentary_cursor") ?: "0"
-                    var recoveryPages = 0
-                    do {
-                        val recovery = api.agentActivityPage(workspace.id, workspace.appNpub, channelId, previous.threadId,
-                            activityId = previous.activityId, afterCommentaryCursor = after)
-                        checkCancelled()
-                        val sameTurn = recovery.rows.filter { it.turnId == previous.turnId }
-                        store.writer.replaceAgentActivities(workspace.id, channelId, sameTurn)
-                        val next = sameTurn.singleOrNull()?.raw?.string("commentary_next_cursor")
-                        if (next == null) break
-                        if ((next.toLongOrNull() ?: -1) <= (after.toLongOrNull() ?: -1)) throw TowerError.Malformed("agent commentary cursor repeated")
-                        after = next
-                        recoveryPages++
-                    } while (recoveryPages < 20)
-                    if (recoveryPages >= 20) throw TowerError.Malformed("agent commentary page limit")
-            }
-            var cursor: String? = null
-            val seen = mutableSetOf<String>()
-            var pages = 0
-            do {
-                val page = api.agentActivityPage(workspace.id, workspace.appNpub, channelId, threadId, cursor, activityId, beforeSequence)
-                checkCancelled()
-                if (beforeSequence == null) for (latest in page.rows) {
-                    val previous = retained[latest.id] ?: continue
-                    val known = previous.raw.string("android_recovered_cursor") ?: previous.raw.string("commentary_cursor") ?: "0"
-                    if (latest.turnId == previous.turnId && (latest.raw.string("commentary_cursor")?.toLongOrNull() ?: 0) > (known.toLongOrNull() ?: 0)) recover(previous)
-                }
-                store.writer.replaceAgentActivities(workspace.id, channelId, page.rows)
-                cursor = page.nextCursor
-                if (cursor != null && !seen.add(cursor)) throw TowerError.Malformed("agent activity cursor repeated")
-                pages++
-            } while (cursor != null && pages < 20)
-            if (cursor != null) throw TowerError.Malformed("agent activity page limit")
-            store.writer.saveListSync(workspace.id, WorkspaceSync.agentActivityKey(workspace.id, channelId), complete = true)
-        } catch (e: TowerError.Http) {
-            if (!WorkspaceSync.lost(e)) throw e
-            // No channel.read any more: that channel's activity is flagged (kept readable, no longer refreshed).
-            store.writer.markAccessRemoved(workspace.id, AccessTarget.AgentActivity(channelId))
-        }
     }
 }
 

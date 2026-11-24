@@ -85,7 +85,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         }
     }
     val progressSync by model.engine.status.collectAsState()
-    val progressPrefix = WorkspaceSync.agentActivityKey(w.id, channel) + (threadId?.let { ":$it:" } ?: "")
+    val progressPrefix = studio.otherstuff.ambulando.core.surfaces.agentActivitySyncPrefix(c.id, w.id, channel, threadId)
     val progressError = (progressSync.errors.keys + progressSync.connectionFailures).any { it.startsWith(progressPrefix) }
     val visibleProgress = compactAgentProgress(agentProgress, agentNow)
     val uploads = remember(c.id, w.id) { model.uploads }
