@@ -1,3 +1,8 @@
+## 0.9.50 (78)
+
+- Place small navigation icons beside their names in a compact single-line row.
+- Keep full labels at larger text sizes, horizontal access on narrow phones, and comfortable touch targets.
+
 ## 0.9.49 (77)
 
 - Choose an Android microphone or System default before recording; see the requested input and actual Android route separately.

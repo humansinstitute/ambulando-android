@@ -62,7 +62,7 @@ class ShellChromeTest {
         } }
         val width = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot.width
         val strip = compose.onNodeWithTag("section.scroll").fetchSemanticsNode().boundsInRoot.width
-        assertEquals(96f, width / compose.density.density, 1f)
+        org.junit.Assert.assertTrue(width / compose.density.density in 48f..110f)
         org.junit.Assert.assertTrue(strip > width * 7)
         compose.onNodeWithTag("section.home").assertIsSelected()
         compose.onNodeWithTag("section.toolbox").assertIsDisplayed()
@@ -100,6 +100,39 @@ class ShellChromeTest {
         compose.onNodeWithTag("section.home").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus) { it() }
         compose.onNodeWithTag("section.home").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Enter) }
         assertEquals(1, homes)
+    }
+
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test fun largeTextRemainsInlineAndEveryDestinationIsReachable() {
+        compose.setContent {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(1f, 2f)
+            ) { AmbulandoTheme { Box(Modifier.width(320.dp)) {
+                SectionBar(AppSection.entries.toList(), AppSection.TASKS, {}, {})
+            } } }
+        }
+        for (key in listOf("home") + AppSection.entries.map { it.key }) {
+            val tag = "section.$key"
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            val button = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            val icon = compose.onNodeWithTag("$tag.icon", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val label = compose.onNodeWithTag("$tag.label", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            org.junit.Assert.assertTrue(button.height >= 48f && button.width >= 48f)
+            org.junit.Assert.assertTrue(icon.right <= label.left)
+            assertEquals(icon.center.y, label.center.y, 1f)
+            compose.onNodeWithTag("$tag.label", useUnmergedTree = true)
+                .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { action ->
+                    val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                    action(results)
+                    org.junit.Assert.assertTrue(results.isNotEmpty())
+                    // Text metrics are fractional, while measured bounds round to whole pixels.
+                    results.forEach {
+                        org.junit.Assert.assertTrue(it.lineCount == 1 && !it.isLineEllipsized(0))
+                        org.junit.Assert.assertEquals(it.layoutInput.text.length, it.getLineEnd(0))
+                        org.junit.Assert.assertTrue(it.getLineRight(0) - it.getLineLeft(0) <= it.size.width + 1f)
+                    }
+                }
+        }
     }
 
 }

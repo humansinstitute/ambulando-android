@@ -6,15 +6,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -86,13 +84,12 @@ fun SectionBar(
     val scroll = key(navigationIdentity) { remember { ScrollState(0) } }
     Column(Modifier.fillMaxWidth().background(amb.card).navigationBarsPadding().testTag("section.bar")) {
         HorizontalDivider(thickness = 0.5.dp, color = amb.border)
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 2.dp)) {
-            val buttonWidth = (maxWidth / 4.5f).coerceIn(72.dp, 96.dp)
+        Box(Modifier.fillMaxWidth().padding(top = 2.dp)) {
             Row(Modifier.fillMaxWidth().horizontalScroll(scroll).testTag("section.scroll")) {
-                SectionButton("Home", Icons.Outlined.Public, homeSelected, "section.home", buttonWidth, onHome)
+                SectionButton("Home", Icons.Outlined.Public, homeSelected, "section.home", onHome)
                 sections.forEach { section ->
                     val active = section == current
-                    SectionButton(section.title, section.icon, active, "section.${section.key}", buttonWidth) {
+                    SectionButton(section.title, section.icon, active, "section.${section.key}") {
                         if (active) onReselect(section) else onSelect(section)
                     }
                 }
@@ -103,17 +100,17 @@ fun SectionBar(
 
 @Composable
 private fun SectionButton(title: String, icon: ImageVector, active: Boolean, tag: String,
-                          width: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+                          onClick: () -> Unit) {
     val amb = Amb.colors
-    Column(
-        Modifier.width(width).heightIn(min = 56.dp)
+    Row(
+        Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .clickable(role = Role.Tab, onClick = onClick)
             .semantics { selected = active; contentDescription = if (tag == "section.home") "Workspace Home" else title }
-            .testTag(tag).padding(horizontal = 2.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+            .testTag(tag).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Icon(icon, null, tint = if (active) amb.primary else amb.mutedForeground, modifier = Modifier.size(24.dp))
-        Text(title, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        Icon(icon, null, tint = if (active) amb.primary else amb.mutedForeground, modifier = Modifier.size(18.dp).testTag("$tag.icon"))
+        Text(title, modifier = Modifier.testTag("$tag.label"), fontSize = 13.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
             color = if (active) amb.primary else amb.mutedForeground)
     }

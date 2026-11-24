@@ -42,12 +42,36 @@ class NavigationStripTest {
             compose.onNodeWithTag("section.home").assertIsNotSelected()
             val home = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot
             val strip = compose.onNodeWithTag("section.scroll").fetchSemanticsNode().boundsInRoot
-            assertEquals(strip.width / 4.5f, home.width, 2f)
+            assertTrue(home.height >= 48f * context.resources.displayMetrics.density)
+            assertTrue(home.width < strip.width / 2)
             compose.runOnIdle { model.viewLocked = true }
             compose.onNodeWithTag("section.home").performTouchInput { click() }
             compose.waitUntil(30_000) { model.context.isHome && model.section == AppSection.DECK }
             compose.onNodeWithTag("section.home").assertIsSelected()
             compose.runOnIdle { assertFalse(model.viewLocked); assertEquals(SampleIds.STUDIO, model.workspace?.id) }
+            for (key in listOf("home") + AppSection.visible(false, false).map { it.key }) {
+                val tag = "section.$key"
+                compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+                val icon = compose.onNodeWithTag("$tag.icon", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+                val label = compose.onNodeWithTag("$tag.label", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+                assertTrue(icon.right <= label.left)
+                assertEquals(icon.center.y, label.center.y, 2f)
+                compose.onNodeWithTag("$tag.label", useUnmergedTree = true)
+                    .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { action ->
+                        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                        action(results)
+                        assertTrue(results.isNotEmpty() && results.all {
+                            it.lineCount == 1 && !it.isLineEllipsized(0) &&
+                                it.getLineEnd(0) == it.layoutInput.text.length && it.getLineRight(0) - it.getLineLeft(0) <= it.size.width + 1f
+                        })
+                    }
+            }
+            compose.onNodeWithTag("section.home").performScrollTo()
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
+                context.getExternalFilesDir(null)!!.resolve("inline-navigation.png").outputStream().use {
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+            }
             // Swipe must move Home offscreen without accidentally opening any section.
             compose.onNodeWithTag("section.scroll").performTouchInput { swipeLeft() }
             compose.waitForIdle()
@@ -90,7 +114,7 @@ class NavigationStripTest {
             val home = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot
             val strip = compose.onNodeWithTag("section.scroll").fetchSemanticsNode().boundsInRoot
             val density = context.resources.displayMetrics.density
-            assertEquals(96f, home.width / density, 1f)
+            assertTrue(home.width / density in 48f..110f)
             assertTrue(strip.width > home.width * 7)
             compose.onNodeWithTag("section.home").performTouchInput { click() }
             compose.waitUntil(30_000) { app.activeModel?.context?.isHome == true && app.activeModel?.section == AppSection.DECK }
