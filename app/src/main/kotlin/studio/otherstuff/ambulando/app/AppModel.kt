@@ -332,6 +332,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var editorDoc by mutableStateOf<String?>(null)
     /** A record the document editor asked to open on leaving (kind, id), consumed by the connected screen. */
     var pendingRecordOpen by mutableStateOf<Pair<String, String>?>(null)
+    var showChat by mutableStateOf(false)
     var showAgents by mutableStateOf(false)
     /** Set by the Activity at each start: whether the saved open section and record stacks are put back (see [AppEnvironment.restoresNavigation]). */
     var restoreNavigation = true
@@ -703,6 +704,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     private var restoredPreferences = false
 
     private suspend fun restore() {
+        showChat = catalog.reader.state("settings.chat") == "true"
         showAgents = catalog.reader.state("settings.agents") == "true"
         showContext = catalog.reader.state("settings.context") == "true"
         documentOpensInEdit = catalog.reader.state("settings.documentOpening") == "edit"

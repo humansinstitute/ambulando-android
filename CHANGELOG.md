@@ -1,3 +1,8 @@
+## 0.9.47 (75)
+
+- Hide Chat from navigation by default; restore its existing position with Settings › Sections › Show Chat in navigation.
+- Keep Deck, open conversations and explicit conversation links working, and save the choice on this device across restarts and updates.
+
 ## 0.9.46 (74)
 
 - Scroll the entire bottom navigation strip, including a leftmost globe that opens Home across accessible scopes and channels in the current workspace.

@@ -65,6 +65,7 @@ data class SettingsState(
     val liveLabel: String,
     /** "Updated · 10:42 · 3 changes" style summary of the last background refresh, if any ran. */
     val lastBackgroundRefresh: String?,
+    val showChat: Boolean,
     val showAgents: Boolean,
     val showContext: Boolean,
     val appearance: AppearancePreference,
@@ -82,6 +83,7 @@ interface SettingsActions {
     suspend fun setPublicProfiles(on: Boolean)
     fun refreshProfiles()
     suspend fun setBackgroundRefresh(on: Boolean)
+    fun setShowChat(on: Boolean)
     fun setShowAgents(on: Boolean)
     fun setShowContext(on: Boolean)
     fun setAppearance(value: AppearancePreference)
@@ -154,7 +156,8 @@ fun SettingsScreen(state: SettingsState, actions: SettingsActions) {
                     style = MaterialTheme.typography.labelSmall, color = amb.destructive, modifier = Modifier.padding(12.dp),
                 )
             }
-            Section("Sections", footer = "Agents and Context are optional sections, off unless you turn them on, as in the web app. They appear in the bar at the bottom.") {
+            Section("Sections", footer = "Chat, Agents and Context are hidden from navigation unless you turn them on. Conversations still open from Deck and notifications.") {
+                Toggle("Show Chat in navigation", state.showChat, "settings.sections.chat") { actions.setShowChat(it) }
                 Toggle("Agents", state.showAgents, "settings.sections.agents") { actions.setShowAgents(it) }
                 Toggle("Context", state.showContext, "settings.sections.context") { actions.setShowContext(it) }
             }

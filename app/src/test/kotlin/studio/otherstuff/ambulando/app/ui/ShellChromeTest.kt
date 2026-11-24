@@ -26,11 +26,28 @@ import studio.otherstuff.ambulando.app.ui.theme.AmbulandoTheme
 class ShellChromeTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun chatVisibilityOnlyChangesTheButtonAndRestoresOrder() {
+        val showChat = mutableStateOf(false)
+        val selected = AppSection.CHAT
+        compose.setContent { AmbulandoTheme {
+            SectionBar(AppSection.visible(false, false, showChat.value), selected, {}, {})
+        } }
+        compose.onNodeWithTag("section.chat").assertDoesNotExist()
+        assertEquals(listOf(AppSection.DECK, AppSection.TASKS, AppSection.DOCS, AppSection.FILES, AppSection.TOOLBOX),
+            AppSection.visible(false, false))
+        compose.runOnIdle { showChat.value = true }
+        compose.onNodeWithTag("section.chat").assertIsSelected()
+        assertEquals(AppSection.entries.toList(), AppSection.visible(true, true, true))
+        compose.runOnIdle { showChat.value = false }
+        compose.onNodeWithTag("section.chat").assertDoesNotExist()
+        assertEquals(AppSection.CHAT, AppSection.fromKey("chat"))
+    }
+
     @Test fun sectionBarSelectsAndReselects() {
         val events = mutableListOf<String>()
         compose.setContent {
             AmbulandoTheme {
-                SectionBar(AppSection.visible(showAgents = false, showContext = false), AppSection.CHAT,
+                SectionBar(AppSection.visible(showAgents = false, showContext = false, showChat = true), AppSection.CHAT,
                     onSelect = { events += "select:${it.key}" }, onReselect = { events += "reselect:${it.key}" })
             }
         }

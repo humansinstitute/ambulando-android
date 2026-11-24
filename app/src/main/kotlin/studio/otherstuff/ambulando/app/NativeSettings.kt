@@ -98,7 +98,9 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
                     background = on
                 } }
             }
-            FormGroup("Sections", "Agents and Context are optional sections, off unless you turn them on, as in the web app. They appear in the bar at the bottom.") {
+            FormGroup("Sections", "Chat, Agents and Context are hidden from navigation unless you turn them on. Conversations still open from Deck and notifications.") {
+                SettingsToggle("Show Chat in navigation", model.showChat, "settings.sections.chat") { model.showChat = it; model.act { model.catalog.writer.setState("settings.chat", it.toString()) } }
+                FormDivider()
                 SettingsToggle("Agents", model.showAgents, "settings.sections.agents") { model.showAgents = it; model.act { model.catalog.writer.setState("settings.agents", it.toString()) } }
                 FormDivider()
                 SettingsToggle("Context", model.showContext, "settings.sections.context") { model.showContext = it; model.act { model.catalog.writer.setState("settings.context", it.toString()) } }

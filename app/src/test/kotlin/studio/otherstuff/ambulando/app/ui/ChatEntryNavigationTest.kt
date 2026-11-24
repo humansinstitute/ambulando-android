@@ -9,6 +9,17 @@ import studio.otherstuff.ambulando.app.ui.shell.*
 class ChatEntryNavigationTest {
     private val thread = WorkRoute.Thread("workspace", "channel", "thread")
 
+    @Test fun hiddenChatStillRestoresItsConversationAndExplicitEntry() {
+        val saved = RouteState.decode(RouteState.encode("chat", mapOf("chat" to listOf(thread))), "workspace")!!
+        val stacks = SectionStacks().apply { restore(saved.stacks) }
+        assertFalse(AppSection.CHAT in AppSection.visible(false, false))
+        assertEquals(AppSection.CHAT, AppSection.fromKey(saved.section))
+        assertEquals(listOf(thread), stacks.of(AppSection.CHAT).toList())
+        assertEquals(AppSection.CHAT, chatEntrySection(AppSection.TASKS, overlay = true))
+        assertEquals(AppSection.DECK, chatEntrySection(AppSection.DECK))
+        assertEquals(listOf(thread), stacks.of(AppSection.CHAT).toList())
+    }
+
     @Test fun deckEntryLeavesExistingChatStackAloneAndCannotLoop() {
         val stacks = SectionStacks()
         val prior = thread.copy(threadId = "prior")
