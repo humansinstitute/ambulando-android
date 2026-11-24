@@ -62,7 +62,7 @@ class ShellChromeTest {
         } }
         val width = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot.width
         val strip = compose.onNodeWithTag("section.scroll").fetchSemanticsNode().boundsInRoot.width
-        org.junit.Assert.assertTrue(width / compose.density.density in 48f..110f)
+        assertEquals(96f, width / compose.density.density, 1f)
         org.junit.Assert.assertTrue(strip > width * 7)
         compose.onNodeWithTag("section.home").assertIsSelected()
         compose.onNodeWithTag("section.toolbox").assertIsDisplayed()
@@ -102,8 +102,24 @@ class ShellChromeTest {
         assertEquals(1, homes)
     }
 
+    @Test fun narrowControlsKeepOriginalMinimumWidthAndIconSize() {
+        compose.setContent { AmbulandoTheme { Box(Modifier.width(300.dp)) {
+            SectionBar(AppSection.entries.toList(), AppSection.TASKS, {}, {})
+        } } }
+        val density = compose.density.density
+        val home = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot
+        val icon = compose.onNodeWithTag("section.home.icon", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val label = compose.onNodeWithTag("section.home.label", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertEquals(72f, home.width / density, 1f)
+        org.junit.Assert.assertTrue(home.height / density >= 56f)
+        assertEquals(24f, icon.width / density, 1f)
+        assertEquals(24f, icon.height / density, 1f)
+        org.junit.Assert.assertTrue(icon.bottom <= label.top)
+        assertEquals(icon.center.x, label.center.x, 1f)
+    }
+
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
-    @Test fun largeTextRemainsInlineAndEveryDestinationIsReachable() {
+    @Test fun largeTextRemainsStackedAndEveryDestinationIsReachable() {
         compose.setContent {
             androidx.compose.runtime.CompositionLocalProvider(
                 androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(1f, 2f)
@@ -117,9 +133,9 @@ class ShellChromeTest {
             val button = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
             val icon = compose.onNodeWithTag("$tag.icon", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             val label = compose.onNodeWithTag("$tag.label", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-            org.junit.Assert.assertTrue(button.height >= 48f && button.width >= 48f)
-            org.junit.Assert.assertTrue(icon.right <= label.left)
-            assertEquals(icon.center.y, label.center.y, 1f)
+            org.junit.Assert.assertTrue(button.height >= 56f && button.width in 72f..96f)
+            org.junit.Assert.assertTrue(icon.bottom <= label.top)
+            assertEquals(icon.center.x, label.center.x, 1f)
             compose.onNodeWithTag("$tag.label", useUnmergedTree = true)
                 .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { action ->
                     val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
@@ -127,9 +143,9 @@ class ShellChromeTest {
                     org.junit.Assert.assertTrue(results.isNotEmpty())
                     // Text metrics are fractional, while measured bounds round to whole pixels.
                     results.forEach {
-                        org.junit.Assert.assertTrue(it.lineCount == 1 && !it.isLineEllipsized(0))
-                        org.junit.Assert.assertEquals(it.layoutInput.text.length, it.getLineEnd(0))
-                        org.junit.Assert.assertTrue(it.getLineRight(0) - it.getLineLeft(0) <= it.size.width + 1f)
+                        org.junit.Assert.assertTrue(it.lineCount == 1)
+                        // Original fixed-width labels may ellipsize at accessibility text sizes.
+                        org.junit.Assert.assertTrue(label.left >= button.left && label.right <= button.right)
                     }
                 }
         }

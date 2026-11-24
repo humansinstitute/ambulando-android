@@ -43,8 +43,9 @@ class NavigationStripTest {
             compose.onNodeWithTag("section.home").assertIsNotSelected()
             val home = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot
             val strip = compose.onNodeWithTag("section.scroll").fetchSemanticsNode().boundsInRoot
-            assertTrue(home.height >= 48f * context.resources.displayMetrics.density)
-            assertTrue(home.width < strip.width / 2)
+            val density = context.resources.displayMetrics.density
+            assertTrue(home.height >= 56f * density)
+            assertEquals((strip.width / density / 4.5f).coerceIn(72f, 96f), home.width / density, 1f)
             compose.runOnIdle { model.viewLocked = true }
             compose.onNodeWithTag("section.home").performTouchInput { click() }
             compose.waitUntil(30_000) { model.context.isHome && model.section == AppSection.DECK }
@@ -55,21 +56,21 @@ class NavigationStripTest {
                 compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
                 val icon = compose.onNodeWithTag("$tag.icon", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
                 val label = compose.onNodeWithTag("$tag.label", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-                assertTrue(icon.right <= label.left)
-                assertEquals(icon.center.y, label.center.y, 2f)
+                assertTrue(icon.bottom <= label.top)
+                assertEquals(icon.center.x, label.center.x, 2f)
                 compose.onNodeWithTag("$tag.label", useUnmergedTree = true)
                     .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { action ->
                         val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
                         action(results)
                         assertTrue(results.isNotEmpty() && results.all {
-                            it.lineCount == 1 && !it.isLineEllipsized(0) &&
-                                it.getLineEnd(0) == it.layoutInput.text.length && it.getLineRight(0) - it.getLineLeft(0) <= it.size.width + 1f
+                            it.lineCount == 1 && it.layoutInput.style.fontSize.value == 11f &&
+                                it.getLineRight(0) - it.getLineLeft(0) <= it.size.width + 1f
                         })
                     }
             }
             compose.onNodeWithTag("section.home").performScrollTo()
             InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
-                context.getExternalFilesDir(null)!!.resolve("inline-navigation.png").outputStream().use {
+                context.getExternalFilesDir(null)!!.resolve("stacked-navigation.png").outputStream().use {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                 }
             }
@@ -115,10 +116,10 @@ class NavigationStripTest {
             val home = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot
             val strip = compose.onNodeWithTag("section.scroll").fetchSemanticsNode().boundsInRoot
             val density = context.resources.displayMetrics.density
-            assertTrue(home.width / density in 48f..110f)
+            assertEquals(96f, home.width / density, 1f)
             assertTrue(strip.width > home.width * 7)
             InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
-                context.getExternalFilesDir(null)!!.resolve("inline-navigation-wide.png").outputStream().use {
+                context.getExternalFilesDir(null)!!.resolve("stacked-navigation-wide.png").outputStream().use {
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                 }
             }

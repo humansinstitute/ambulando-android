@@ -1,3 +1,8 @@
+## 0.9.51 (79)
+
+- Restore the previously approved Android navigation: icons above labels, original sizing and responsive button widths.
+- Correct the unintended inline Android navigation in 0.9.50; retain Home, selection, routing and horizontal scrolling.
+
 ## 0.9.50 (78)
 
 - Place small navigation icons beside their names in a compact single-line row.
