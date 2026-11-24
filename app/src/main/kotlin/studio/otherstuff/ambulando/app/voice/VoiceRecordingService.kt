@@ -17,6 +17,9 @@ import studio.otherstuff.ambulando.app.*
 class VoiceRecordingService : Service() {
     private var owner: VoiceRecorder? = null
     private var recorder: MediaRecorder? = null
+    private var inputSample: Runnable? = null
+    private var inputMonitoring = false
+    private var inputRoutingListener: android.media.AudioRouting.OnRoutingChangedListener? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var startElapsed = 0L
     private var route: HeadsetRoute? = null
@@ -77,10 +80,40 @@ class VoiceRecordingService : Service() {
                     route = HeadsetRoute(this@VoiceRecordingService) { finish("Audio focus lost. Recording kept for review.") }
                     route!!.acquire(capture)
                 }
+                if (!draft.headsetOnly) {
+                    val requested = voice.input.value.requested
+                    val device = getSystemService(android.media.AudioManager::class.java)
+                        .getDevices(android.media.AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.id == requested?.id }
+                    val accepted = capture.setPreferredDevice(device)
+                    val warning = when {
+                        requested != null && device == null -> "Requested microphone disconnected. Android will choose an input."
+                        !accepted -> "Android refused the microphone preference. Using system routing."
+                        else -> null
+                    }
+                    voice.input.value = voice.input.value.copy(warning = warning)
+                }
                 capture.prepare()
                 wakeLock = getSystemService(android.os.PowerManager::class.java).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Ambulando:VoiceRecording").apply { acquire(65L * 60 * 1000) }
                 capture.start()
                 startElapsed = SystemClock.elapsedRealtime()
+                fun updateInput(sample: Boolean) {
+                    if (recorder !== capture || closing) return
+                    val previous = voice.input.value
+                    val actual = runCatching { capture.routedDevice?.takeIf { it.isSource }?.voiceInput() }.getOrNull()
+                    val silenced = runCatching { capture.activeRecordingConfiguration?.isClientSilenced == true }.getOrDefault(false)
+                    val amplitude = if (sample) runCatching { capture.maxAmplitude }.getOrNull() else null
+                    voice.input.value = previous.copy(actual = actual, silenced = silenced,
+                        level = if (silenced) 0f else if (sample) amplitude?.let(::microphoneLevel) ?: 0f else previous.level,
+                        samples = previous.samples + if (amplitude != null) 1 else 0)
+                }
+                inputRoutingListener = android.media.AudioRouting.OnRoutingChangedListener { updateInput(false) }
+                fun meter() {
+                    if (recorder !== capture || closing || !inputMonitoring) return
+                    updateInput(true)
+                    inputSample?.let { handler.postDelayed(it, 150) }
+                }
+                inputSample = Runnable { meter() }
+                setInputObserved(voice.inputObservers > 0)
                 if (draft.headsetOnly) {
                     // Selection alone is not proof of the active input. Never acknowledge recording until routed.
                     val deadline = SystemClock.elapsedRealtime() + 3000
@@ -113,9 +146,28 @@ class VoiceRecordingService : Service() {
         }
         return START_NOT_STICKY
     }
+    /** Display observation never owns capture. Hidden/background panels consume no meter callbacks. */
+    internal fun setInputObserved(observed: Boolean) {
+        val capture = recorder ?: return
+        val sample = inputSample ?: return
+        if (closing || inputMonitoring == observed) return
+        inputMonitoring = observed
+        handler.removeCallbacks(sample)
+        if (observed) {
+            inputRoutingListener?.let { capture.addOnRoutingChangedListener(it, handler) }
+            // Discard the peak accumulated while hidden: the next sample represents visible capture.
+            runCatching { capture.maxAmplitude }
+            handler.post(sample)
+        } else {
+            inputRoutingListener?.let { capture.removeOnRoutingChangedListener(it) }
+            owner?.let { it.input.value = it.input.value.copy(level = 0f, actual = null) }
+        }
+    }
     fun finish(error: String? = null) {
         if (closing) return
         closing = true
+        inputMonitoring = false
+        inputSample = null
         handler.removeCallbacksAndMessages(null)
         scope.cancel()
         val capture = recorder
@@ -128,7 +180,11 @@ class VoiceRecordingService : Service() {
         }
         if (capture != null) {
             try { if (startElapsed > 0) capture.stop() } catch (_: RuntimeException) { if (failure == null) failure = "Recording was too short or interrupted. Cancel and record again if playback fails." }
-            finally { runCatching { capture.release() } }
+            finally {
+                inputRoutingListener?.let { listener -> runCatching { capture.removeOnRoutingChangedListener(listener) } }
+                inputRoutingListener = null
+                runCatching { capture.release() }
+            }
         }
         runCatching { route?.release() }; route = null
         wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null
@@ -139,6 +195,7 @@ class VoiceRecordingService : Service() {
                     elapsedMillis = if (startElapsed > 0) SystemClock.elapsedRealtime() - startElapsed else 0, error = failure,
                 ))
             }
+            voice.input.value = voice.input.value.copy(level = 0f)
             voice.service = null
         }
         stopForeground(STOP_FOREGROUND_REMOVE)

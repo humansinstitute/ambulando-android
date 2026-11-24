@@ -131,7 +131,8 @@ class ChatDeckInteractionTest {
         compose.onNodeWithTag("deck.fab.new").performClick()
         compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         // The context's channel is chosen already; nothing else in Deck answers while the composer is open.
-        compose.onNode(hasText("#${general.name}") and hasAnyAncestor(hasTestTag("deck.compose.channel")), useUnmergedTree = true).assertExists()
+        compose.onNode(hasText("in #${general.name}") and hasTestTag("deck.compose.destination"), useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("deck.compose.channel").assertDoesNotExist()
         compose.onNodeWithTag("deck.fab.new").assertDoesNotExist()
         val text = "New thread ${System.nanoTime()}"
         compose.onNodeWithTag("chat.composer").performTextReplacement(text)

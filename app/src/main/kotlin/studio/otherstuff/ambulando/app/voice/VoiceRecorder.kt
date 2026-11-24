@@ -11,11 +11,28 @@ import java.io.File
 class VoiceRecorder(private val context: Context, directory: File, private val sample: Boolean) {
     val drafts = VoiceDraftStore(directory)
     val state get() = drafts.state
+    val input = kotlinx.coroutines.flow.MutableStateFlow(VoiceInputStatus())
+    internal var inputObservers = 0
+        private set
+    internal fun observeInput(): () -> Unit {
+        inputObservers++
+        service?.setInputObserved(true)
+        var observing = true
+        return {
+            if (observing) {
+                observing = false
+                inputObservers--
+                if (inputObservers == 0) service?.setInputObserved(false)
+            }
+        }
+    }
     internal var service: VoiceRecordingService? = null
-    fun start(destination: VoiceDestination, id: String = java.util.UUID.randomUUID().toString(), headsetOnly: Boolean = false, prompt: String = "") {
+    fun start(destination: VoiceDestination, id: String = java.util.UUID.randomUUID().toString(), headsetOnly: Boolean = false, prompt: String = "", input: VoiceInput? = null) {
         check(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "Microphone permission is required. You can enable it in Android settings." }
         // Require notifications for a reliably visible Stop action, including on Android 13+.
         check(androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) { "Enable Ambulando notifications in Android settings to record with a visible Stop action." }
+        check(state.value == null) { "Review or cancel the existing recording first." }
+        this.input.value = VoiceInputStatus(requested = input)
         val draft = drafts.begin(destination, id, headsetOnly, prompt)
         try {
             ContextCompat.startForegroundService(context, Intent(context, VoiceRecordingService::class.java).putExtra("sample", sample).putExtra("recording", draft.id))
@@ -34,6 +51,7 @@ class VoiceRecorder(private val context: Context, directory: File, private val s
         check(state.value?.phase != VoicePhase.SENDING) { "Wait for Send to finish; queued messages can be removed in the conversation." }
         service?.finish()
         drafts.clear()
+        input.value = VoiceInputStatus()
     }
     fun fail(message: String) { state.value?.let { drafts.save(it.copy(phase = VoicePhase.REVIEW, error = message)) } }
 }

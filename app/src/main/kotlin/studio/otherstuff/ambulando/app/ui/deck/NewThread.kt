@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import studio.otherstuff.ambulando.app.ui.chat.readingWidth
 import studio.otherstuff.ambulando.app.ui.nav.ScreenScope
+import studio.otherstuff.ambulando.app.ui.shell.ConversationKeyboardOwner
 import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import studio.otherstuff.ambulando.core.deck.DeckCompose
@@ -80,6 +81,8 @@ internal fun DeckNewThread(
     val eligible = navigation.channels().map { it.id }
     // Saved across a rotation or window resize (the activity is recreated): a started thread is still followed afterwards.
     var channelId by rememberSaveable { mutableStateOf(DeckCompose.initialChannel(navigation.context, eligible)) }
+    // Asked for only when no channel is known on entry; once true it stays, so the choice can be changed.
+    var needsDestination by rememberSaveable { mutableStateOf(channelId == null) }
     var choosing by rememberSaveable { mutableStateOf(false) }
     var requestId by rememberSaveable { mutableStateOf<String?>(null) }
     var openedRequest by rememberSaveable { mutableStateOf<String?>(null) }
@@ -87,6 +90,7 @@ internal fun DeckNewThread(
     // A scope change while open asks again; a chosen channel within the same scope is kept. Nothing moves once a send is saved.
     LaunchedEffect(navigation.context, eligible) {
         if (requestId == null) channelId = DeckCompose.reconcile(channelId, from, navigation.context, eligible)
+        if (channelId == null) needsDestination = true
         from = navigation.context
     }
     val workspaceId = opened.second
@@ -106,32 +110,44 @@ internal fun DeckNewThread(
         onClose()
     }
     BackHandler(onBack = onClose)
+    // The composer applies its own keyboard inset, so the shell's section bar must not reserve height under it.
+    ConversationKeyboardOwner()
     // Covers Deck and swallows touches, so nothing underneath answers while the composer is open.
     Column(
         Modifier.fillMaxSize().background(amb.background).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}.testTag("deck.compose"),
     ) {
+        val channels = navigation.channels()
+        val selected = channels.firstOrNull { it.id == channelId }
         Row(Modifier.fillMaxWidth().background(amb.card).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("New thread", Modifier.weight(1f).semantics { heading() }, fontSize = AmbType.body, fontWeight = FontWeight.SemiBold, color = amb.foreground)
+            Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                Text("New thread", Modifier.semantics { heading() }, fontSize = AmbType.body, fontWeight = FontWeight.SemiBold, color = amb.foreground)
+                // The channel is already known (the Deck's context, or the only one): shown as the destination, never asked for.
+                if (!needsDestination && selected != null) {
+                    Text("in #" + navigation.label(selected), Modifier.testTag("deck.compose.destination"), fontSize = AmbType.subheadline, color = amb.mutedForeground)
+                }
+            }
             TextButton(onClick = onClose, modifier = Modifier.heightIn(min = Amb.touchTarget).testTag("deck.compose.cancel")) { Text(if (requestId == null) "Cancel" else "Close") }
         }
         HorizontalDivider(thickness = 1.dp, color = amb.border)
-        Column(Modifier.readingWidth().align(Alignment.CenterHorizontally).weight(1f).padding(top = 8.dp)) {
-            val channels = navigation.channels()
-            val selected = channels.firstOrNull { it.id == channelId }
-            Row(
-                Modifier.padding(horizontal = 16.dp).heightIn(min = Amb.touchTarget)
-                    .clickable(enabled = requestId == null) { choosing = true }
-                    .semantics { contentDescription = "Channel" }.testTag("deck.compose.channel"),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(selected?.let { "#" + navigation.label(it) } ?: "Choose channel", fontSize = AmbType.body, color = amb.primary)
-                Icon(Icons.Outlined.UnfoldMore, null, tint = amb.primary)
+        Column(Modifier.readingWidth().align(Alignment.CenterHorizontally).weight(1f)) {
+            // Only when the entry context names no channel: the destination is genuinely a choice.
+            if (needsDestination) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp).heightIn(min = Amb.touchTarget)
+                        .clickable(enabled = requestId == null) { choosing = true }
+                        .semantics { contentDescription = "Channel" }.testTag("deck.compose.channel"),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("To", fontSize = AmbType.subheadline, color = amb.mutedForeground)
+                    Text(selected?.let { "#" + navigation.label(it) } ?: "Choose channel", fontSize = AmbType.body, color = amb.primary)
+                    Icon(Icons.Outlined.UnfoldMore, null, tint = amb.primary)
+                }
+                HorizontalDivider(thickness = 0.5.dp, color = amb.border)
             }
             val id = channelId
             if (id != null && !choosing) {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text("New conversation", fontSize = AmbType.body, fontWeight = FontWeight.SemiBold, color = amb.foreground)
-                    Text("Write the first message to start a thread.", fontSize = AmbType.subheadline, color = amb.mutedForeground)
+                if (requestId == null) {
+                    Text("Write the first message to start a thread.", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), fontSize = AmbType.subheadline, color = amb.mutedForeground)
                 }
                 val request = requestId
                 if (request == null) {

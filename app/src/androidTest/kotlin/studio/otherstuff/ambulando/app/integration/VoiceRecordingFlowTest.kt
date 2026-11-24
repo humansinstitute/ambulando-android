@@ -28,6 +28,84 @@ class VoiceRecordingFlowTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private fun shell(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+    @Test fun microphoneChoiceReportsActualRouteSamplesAndKeepsClipOnFallback() {
+        val context = instrumentation.targetContext
+        shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
+        shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
+        val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+            val app = context.applicationContext as AmbulandoApplication
+            compose.waitUntil(30_000) { app.activeModel?.workspaces?.size == 2 }
+            val model = app.activeModel!!
+            compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
+            compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
+            compose.runOnIdle { model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.CHAT; model.voice.cancel() }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.attach") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chat.attach").performClick()
+            compose.onNodeWithTag("voice.record").performClick()
+            compose.onNodeWithText("System default").assertExists()
+            assertNull("Chooser must not open capture", model.voice.state.value)
+            val device = context.getSystemService(android.media.AudioManager::class.java).getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)
+                .first { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC }
+            val choice = device.voiceInput()
+            compose.onAllNodesWithText(choice.label, substring = true).onFirst().performScrollTo().performClick()
+            shell("screencap -p /sdcard/Download/ambulando-input-chooser.png")
+            compose.onNodeWithTag("voice.start").performClick()
+            compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING && model.voice.input.value.samples >= 4 && model.voice.input.value.actual != null }
+            assertEquals(choice, model.voice.input.value.requested)
+            assertEquals(choice.id, model.voice.input.value.actual!!.id)
+            compose.onNodeWithTag("voice.input.route").assertTextContains(choice.label, substring = true)
+            compose.onNodeWithTag("voice.input.level").assertExists()
+            assertTrue(model.voice.input.value.level in 0f..1f)
+            if (InstrumentationRegistry.getArguments().getString("injectedAudio") == "true") {
+                val levels = (1..40).map { Thread.sleep(100); model.voice.input.value.level }
+                println("VOICE_INPUT injected silence/tone min=${levels.min()} max=${levels.max()}")
+                assertEquals("Digital silence must stay still", 0f, levels.min())
+                assertTrue("Injected audio must drive captured input level", levels.max() > 0.5f)
+            }
+            val draft = model.voice.state.value!!
+            compose.runOnIdle { model.section = AppSection.DECK }
+            compose.waitUntil(5_000) { model.voice.inputObservers == 0 }
+            val hiddenSamples = model.voice.input.value.samples
+            Thread.sleep(500)
+            assertEquals(hiddenSamples, model.voice.input.value.samples)
+            assertEquals(VoicePhase.RECORDING, model.voice.state.value!!.phase)
+            compose.runOnIdle { model.section = AppSection.CHAT }
+            compose.waitUntil(5_000) { model.voice.input.value.samples > hiddenSamples && model.voice.input.value.actual != null }
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+            compose.waitUntil(5_000) { model.voice.inputObservers == 0 }
+            val pausedSamples = model.voice.input.value.samples
+            Thread.sleep(500)
+            assertEquals(pausedSamples, model.voice.input.value.samples)
+            assertEquals(VoicePhase.RECORDING, model.voice.state.value!!.phase)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            compose.waitUntil(5_000) { model.voice.input.value.samples > pausedSamples }
+            scenario.recreate()
+            compose.waitUntil(5_000) { model.voice.input.value.actual != null }
+            assertEquals(choice, model.voice.input.value.requested)
+            shell("screencap -p /sdcard/Download/ambulando-input-recording.png")
+            compose.runOnIdle { model.voice.stop() }
+            compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.REVIEW }
+            val samples = model.voice.input.value.samples
+            Thread.sleep(500)
+            assertEquals("Meter callbacks released", samples, model.voice.input.value.samples)
+            assertEquals(0f, model.voice.input.value.level)
+            assertTrue(model.voice.drafts.audio(draft).length() > 0)
+            compose.runOnIdle { model.voice.cancel(); model.voice.start(draft.destination, input = VoiceInput(-123, "Disconnected test input")) }
+            compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING && model.voice.input.value.actual != null }
+            assertTrue(model.voice.input.value.warning!!.contains("disconnected"))
+            assertTrue(model.voice.input.value.routeText.contains("different input"))
+            assertEquals(-123, model.voice.input.value.requested!!.id)
+            assertNotEquals(-123, model.voice.input.value.actual!!.id)
+            Thread.sleep(1200)
+            compose.runOnIdle { model.voice.stop() }
+            assertEquals(VoicePhase.REVIEW, model.voice.state.value!!.phase)
+            assertTrue(model.voice.drafts.audio(model.voice.state.value!!).length() > 0)
+            compose.runOnIdle { model.voice.cancel() }
+            assertEquals(VoiceInputStatus(), model.voice.input.value)
+        }
+    }
+
     @Test fun newThreadRetainsUploadedAudioAfter409AndOffersSafeRetryAfterReopen() {
         val context = instrumentation.targetContext
         shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
@@ -48,6 +126,7 @@ class VoiceRecordingFlowTest {
             compose.onNodeWithTag("chat.composer").performTextReplacement("Keep typing beside the recording")
             compose.onNodeWithTag("chat.attach").performClick()
             compose.onNodeWithTag("voice.record").performClick()
+            compose.onNodeWithTag("voice.start").performClick()
             compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
             val draft = model.voice.state.value!!
             Thread.sleep(1500)
@@ -103,6 +182,7 @@ class VoiceRecordingFlowTest {
             compose.onNodeWithTag("chat.composer").performTextReplacement("Preserve the typed draft")
             compose.onNodeWithTag("chat.attach").performClick()
             compose.onNodeWithTag("voice.record").performClick()
+            compose.onNodeWithTag("voice.start").performClick()
             compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
             val draft = model.voice.state.value!!
             shell("screencap -p /sdcard/Download/ambulando-voice-recording.png")
@@ -156,6 +236,7 @@ class VoiceRecordingFlowTest {
             compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("chat.attach") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("chat.attach").performClick()
             compose.onNodeWithTag("voice.record").performClick()
+            compose.onNodeWithTag("voice.start").performClick()
             compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
             val cancelled = model.voice.state.value!!
             Thread.sleep(1100)

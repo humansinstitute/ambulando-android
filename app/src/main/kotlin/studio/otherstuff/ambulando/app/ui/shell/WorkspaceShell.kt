@@ -194,7 +194,9 @@ fun WorkspaceShell(
     val opened = remember { mutableStateListOf<AppSection>() }
     val editors = remember { AppSection.entries.associateWith { EditorNavigationState() } }
     val focusedEditor = editors.getValue(chrome.section).owner != null
+    val keyboardOwners = remember { androidx.compose.runtime.mutableIntStateOf(0) }
     if (chrome.section !in opened) opened.add(chrome.section)
+    CompositionLocalProvider(LocalConversationKeyboardOwners provides keyboardOwners) {
     Box(Modifier.fillMaxSize().background(amb.background)) {
         // As on the iPad (`TabletNavigation`): a window this wide keeps the navigation beside the content; the menu button
         // then folds it away instead of opening the drawer. Resizing only moves the sidebar in or out of the Row, so the
@@ -234,7 +236,8 @@ fun WorkspaceShell(
                 // Conversations keep their originating section (for example Deck). Its bar must not
                 // reserve height below a chat that already applies the IME inset.
                 val activeRoute = stacks.of(chrome.section).lastOrNull()
-                val chatVisible = chrome.section == AppSection.CHAT || activeRoute is WorkRoute.Thread || activeRoute is WorkRoute.Channel
+                val chatVisible = chrome.section == AppSection.CHAT || activeRoute is WorkRoute.Thread || activeRoute is WorkRoute.Channel ||
+                    (chrome.section == AppSection.DECK && keyboardOwners.intValue > 0)
                 val chatKeyboardOpen = chatVisible &&
                     androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
                 if (!focusedEditor && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
@@ -257,6 +260,20 @@ fun WorkspaceShell(
             }
         }
         BackHandler(enabled = chrome.sidebarOpen && !tablet && !focusedEditor) { actions.closeSidebar() }
+    }
+    }
+}
+
+/** Counts overlays (Deck's New thread) that apply their own keyboard inset; the shell then hides its section bar with the keyboard up. */
+private val LocalConversationKeyboardOwners = staticCompositionLocalOf<androidx.compose.runtime.MutableIntState?> { null }
+
+/** Marks the calling composition as a conversation that owns the keyboard inset, for as long as it stays composed. */
+@Composable
+fun ConversationKeyboardOwner() {
+    val owners = LocalConversationKeyboardOwners.current ?: return
+    androidx.compose.runtime.DisposableEffect(owners) {
+        owners.intValue++
+        onDispose { owners.intValue-- }
     }
 }
 

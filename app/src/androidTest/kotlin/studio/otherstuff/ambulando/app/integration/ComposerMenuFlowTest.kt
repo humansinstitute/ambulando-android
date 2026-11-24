@@ -55,6 +55,9 @@ class ComposerMenuFlowTest {
     }
     private fun openMenu() {
         compose.onNodeWithTag("chat.attach").performClick()
+        // Popup composition can precede its first visible frame, especially while the real IME resizes.
+        // Wait for visibility without clicking again; a dismissed/missing popup still fails this check.
+        compose.waitUntil(5_000) { runCatching { compose.onNodeWithTag("voice.record").assertIsDisplayed() }.isSuccess }
         compose.onNodeWithTag("voice.record").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithTag("chat.attach.pick").assertIsDisplayed()
         compose.onNodeWithTag("chat.mention").assertIsDisplayed()
@@ -107,6 +110,7 @@ class ComposerMenuFlowTest {
         openMenu()
         capture("reply-menu")
         compose.onNodeWithTag("voice.record").performClick()
+        compose.onNodeWithTag("voice.start").performClick()
         compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
         assertEquals(post.message.threadId, model.voice.state.value!!.destination.threadId)
         compose.onNodeWithTag("voice.record").assertDoesNotExist()
@@ -132,6 +136,7 @@ class ComposerMenuFlowTest {
         openMenu()
         capture("new-thread-menu")
         compose.onNodeWithTag("voice.record").performClick()
+        compose.onNodeWithTag("voice.start").performClick()
         compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
         assertEquals(SampleIds.GENERAL, model.voice.state.value!!.destination.channelId)
         assertNull(model.voice.state.value!!.destination.threadId)
@@ -144,6 +149,7 @@ class ComposerMenuFlowTest {
         compose.onNodeWithTag("chat.composer").performTextReplacement("Permission draft")
         openMenu()
         compose.onNodeWithTag("voice.record").performClick()
+        compose.onNodeWithTag("voice.start").performClick()
         fun deny(node: AccessibilityNodeInfo?): Boolean {
             if (node == null) return false
             if (node.viewIdResourceName?.endsWith(":id/permission_deny_button") == true) return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)

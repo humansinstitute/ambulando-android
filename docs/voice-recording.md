@@ -5,7 +5,7 @@ The same menu holds **Photo or file…** and **Paste attachment**. **@** stays o
 Menu selection, Back and tapping outside dismiss the popup. The idle recorder adds no separate row or empty panel.
 The controls have at least 48dp touch targets and work in channel chat, new conversations and replies.
 On short screens, the editor keeps its space above the keyboard and supplementary controls scroll; the section
-bar returns when the Chat keyboard closes. Android asks for microphone and notification permissions. Recording starts
+bar returns when the Chat keyboard closes. Choose **System default** or an Android-reported microphone, then **Start recording**. Android asks for microphone and notification permissions. Recording starts
 only while Ambulando is visible. A foreground microphone service owns the recorder, so rotation, navigation,
 backgrounding and a locked/off screen do not transfer ownership to a composable or activity. A private recording
 notification shows elapsed time and **Stop**. Return to channel chat to review, play, send or cancel the recording.
@@ -90,3 +90,28 @@ that text into the durable VoiceDraft at Record. Send places the pinned instruct
 message. Editing the default cannot change a retained recording or retry; its object checkpoint, message request ID
 and original destination remain unchanged. Older retained drafts and ordinary phone recordings keep their existing
 attachment-only content. The watch's Stop sends; discard abandons the unsent recording.
+
+
+## Microphone choice and live input level
+
+The pre-record chooser lists Android-reported built-in, wired, USB and Bluetooth microphone devices and **System default**. Telephony, FM and remote-submix sources are excluded. Opening it does not capture
+sound. Device callbacks refresh that list while it is open and are unregistered on dismissal. Device IDs are session
+values, never saved across app restarts. A disconnected preference falls back to system routing with a warning.
+Android can refuse or override a preferred device; **Requested** names the choice and **Active microphone** uses only
+`MediaRecorder.routedDevice` evidence during capture. An unknown route remains explicitly unknown. Bluetooth input
+availability and acceptance depend on the OS/headset; the ordinary chooser does not force a communication route.
+The existing watch recorder retains its separate strict verified-Bluetooth requirement.
+
+The level bar reads `maxAmplitude` from the same recording MediaRecorder every 150 ms, mapped across a 60 dB display
+range. It starts at zero, has no decorative pulse, interpolation or animated history, and stays still in silence.
+Its accessible progress semantics name the microphone input level. Android-reported client silencing produces a zero
+bar and a privacy/other-app warning. The route is refreshed on routing callbacks and sample ticks; a different route
+is labelled honestly while recording continues, preserving the clip. Meter ticks and routing callbacks stop and are
+removed when capture stops, cancels, errors or the service is destroyed. They also detach when the recording panel is hidden or the activity pauses, and resume only for a visible resumed panel; capture continues through navigation as above.
+Microphone choice is locked during recording, with an explanation to stop/review and choose for the next clip.
+
+`VoiceInputTest` covers silence, bounded monotonic level mapping and requested-versus-actual wording.
+`VoiceRecordingFlowTest` additionally covers choosing a real OS-listed built-in input, observed route, live sample
+updates, rotation, callback cleanup, retained audio and a deliberately absent device ID falling back to an observed
+route. The absent-ID test is a simulation, not a physical unplug test. Physical USB/Bluetooth selection, unplugging,
+speech/silence response, privacy switching and live authenticated upload/transcription require intended-device review.

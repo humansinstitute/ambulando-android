@@ -1,3 +1,9 @@
+## 0.9.49 (77)
+
+- Choose an Android microphone or System default before recording; see the requested input and actual Android route separately.
+- Show a live captured-input level with a calm silence state and microphone privacy warning.
+- Keep the microphone choice locked during capture so choosing another device cannot discard the current clip.
+
 ## 0.9.47 (75)
 
 - Hide Chat from navigation by default; restore its existing position with Settings › Sections › Show Chat in navigation.
