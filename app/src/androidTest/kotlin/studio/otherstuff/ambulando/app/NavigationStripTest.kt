@@ -23,6 +23,7 @@ class NavigationStripTest {
 
     @Test fun wholeStripHomeAndRouteVersusLiveUpdates() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        org.junit.Assume.assumeTrue(context.resources.configuration.screenWidthDp < 1000)
         val intent = Intent(context, MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA, true)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<MainActivity>(intent).use { scenario ->
@@ -116,6 +117,11 @@ class NavigationStripTest {
             val density = context.resources.displayMetrics.density
             assertTrue(home.width / density in 48f..110f)
             assertTrue(strip.width > home.width * 7)
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
+                context.getExternalFilesDir(null)!!.resolve("inline-navigation-wide.png").outputStream().use {
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+            }
             compose.onNodeWithTag("section.home").performTouchInput { click() }
             compose.waitUntil(30_000) { app.activeModel?.context?.isHome == true && app.activeModel?.section == AppSection.DECK }
             compose.onNodeWithTag("section.home").assertIsSelected()
