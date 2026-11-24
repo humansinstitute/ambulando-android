@@ -9,17 +9,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,6 +28,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Handyman
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.ViewCarousel
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +36,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -75,42 +74,48 @@ enum class AppSection(val title: String, val icon: ImageVector, val contextBound
     }
 }
 
-/**
- * Bottom section bar (the web's `.mobile-section-switcher`). Tapping the current section returns it to its first
- * screen; buttons fill the width when they fit and scroll sideways otherwise.
- */
+/** Whole-strip scrolling, including Home. Route identity resets position; live content never does. */
 @Composable
-fun SectionBar(sections: List<AppSection>, current: AppSection, onSelect: (AppSection) -> Unit, onReselect: (AppSection) -> Unit) {
+fun SectionBar(
+    sections: List<AppSection>, current: AppSection,
+    onSelect: (AppSection) -> Unit, onReselect: (AppSection) -> Unit,
+    homeSelected: Boolean = false, onHome: () -> Unit = {}, navigationIdentity: Any? = current,
+) {
     val amb = Amb.colors
+    // Deliberately not saveable: reload starts at the left, even when record navigation is restored.
+    val scroll = key(navigationIdentity) { remember { ScrollState(0) } }
     Column(Modifier.fillMaxWidth().background(amb.card).navigationBarsPadding().testTag("section.bar")) {
         HorizontalDivider(thickness = 0.5.dp, color = amb.border)
         BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 2.dp)) {
-            val fits = maxWidth / sections.size >= 56.dp
-            val content: @Composable RowScope.() -> Unit = {
+            val buttonWidth = (maxWidth / 4.5f).coerceIn(72.dp, 96.dp)
+            Row(Modifier.fillMaxWidth().horizontalScroll(scroll).testTag("section.scroll")) {
+                SectionButton("Home", Icons.Outlined.Public, homeSelected, "section.home", buttonWidth, onHome)
                 sections.forEach { section ->
                     val active = section == current
-                    Column(
-                        Modifier
-                            .then(if (fits) Modifier.weight(1f) else Modifier.widthIn(min = 60.dp))
-                            .heightIn(min = 50.dp)
-                            .clickable(role = Role.Tab) { if (active) onReselect(section) else onSelect(section) }
-                            .semantics { selected = active; contentDescription = section.title }
-                            .testTag("section.${section.key}")
-                            .padding(horizontal = 2.dp, vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(section.icon, contentDescription = null, tint = if (active) amb.primary else amb.mutedForeground, modifier = Modifier.size(22.dp))
-                        Text(
-                            section.title, fontSize = 10.sp, maxLines = 1,
-                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (active) amb.primary else amb.mutedForeground,
-                        )
+                    SectionButton(section.title, section.icon, active, "section.${section.key}", buttonWidth) {
+                        if (active) onReselect(section) else onSelect(section)
                     }
                 }
             }
-            if (fits) Row(Modifier.fillMaxWidth(), content = content)
-            else Row(Modifier.horizontalScroll(rememberScrollState()), content = content)
         }
+    }
+}
+
+@Composable
+private fun SectionButton(title: String, icon: ImageVector, active: Boolean, tag: String,
+                          width: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+    val amb = Amb.colors
+    Column(
+        Modifier.width(width).heightIn(min = 56.dp)
+            .clickable(role = Role.Tab, onClick = onClick)
+            .semantics { selected = active; contentDescription = if (tag == "section.home") "Workspace Home" else title }
+            .testTag(tag).padding(horizontal = 2.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, null, tint = if (active) amb.primary else amb.mutedForeground, modifier = Modifier.size(24.dp))
+        Text(title, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (active) amb.primary else amb.mutedForeground)
     }
 }
 

@@ -1,3 +1,10 @@
+## 0.9.46 (74)
+
+- Scroll the entire bottom navigation strip, including a leftmost globe that opens Home across accessible scopes and channels in the current workspace.
+- Use larger controls with a partial next button on phones and comfortable fixed widths on wider screens.
+- Reset navigation strip position when changing screens or reloading, while retaining it during live updates and optional-section changes.
+- Highlight workspace Home at the unfiltered Deck root; explicitly leave a locked scoped view when using the globe.
+
 ## 0.9.45 (73)
 
 - Load busy-channel agent history in resumable background pages without treating a valid backlog as a malformed server response.

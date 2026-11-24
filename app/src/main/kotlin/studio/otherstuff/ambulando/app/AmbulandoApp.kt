@@ -231,6 +231,11 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             override fun reselect(section: AppSection) { stacks.popToRoot(section) }
             override fun openSidebar() { focusManager.clearFocus(force = true); keyboard?.hide(); sidebar = true }
             override fun closeSidebar() { sidebar = false }
+            override fun workspaceHome() {
+                focusManager.clearFocus(force = true); keyboard?.hide()
+                model.viewLocked = false
+                choose(null, null)
+            }
             override fun chooseHome() { choose(null, null) }
             override fun toggleViewLock() { model.viewLocked = !model.viewLocked }
             override fun search() { focusManager.clearFocus(force = true); keyboard?.hide(); search = true }
@@ -242,7 +247,8 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         val chrome = ShellChromeState(model.section, AppSection.visible(model.showAgents, model.showContext), w?.label ?: "Workspaces",
             model.scopes.firstOrNull { it.id == model.context.scopeId }?.name, labels[model.context.channelId],
             model.context.isHome, model.viewLocked, !syncStatus.isIdle, browser.tabs.size, people?.person(c.signerNpub), false, model.environment.isSample, sidebar, syncStatus.errors.values.firstOrNull()?.let { "Stored content is available. Update failed: $it" }, studio.otherstuff.ambulando.core.notifications.NotificationInboxLogic.badge(notificationUnread),
-            if (model.enabledEntries.size > 1) model.activeEntry?.let { studio.otherstuff.ambulando.app.ui.shell.WorkspaceTint.swatch(it.colour) } else null)
+            if (model.enabledEntries.size > 1) model.activeEntry?.let { studio.otherstuff.ambulando.app.ui.shell.WorkspaceTint.swatch(it.colour) } else null,
+            listOf(model.activeBoundaryId, model.context.scopeId, model.context.channelId))
         val screen = w?.let { ScreenScope(c.id, it.id, it.appNpub, c.signerNpub, model.context.scopeId, model.context.channelId) }
         val intents = remember(screen) { object : TasksIntents {
             override fun submit(intent: WriteIntent) = model.submit(intent)

@@ -154,6 +154,8 @@ data class ShellChromeState(
     val notificationBadge: String? = null,
     /** Saved colour of the workspace in front; set only while several workspaces are enabled (a faint 12% header tint). */
     val workspaceTint: Color? = null,
+    /** Stable workspace/boundary and context IDs, independent of live labels and records. */
+    val navigationContext: Any? = null,
 )
 
 interface ShellActions {
@@ -161,6 +163,7 @@ interface ShellActions {
     fun reselect(section: AppSection)
     fun openSidebar()
     fun closeSidebar()
+    fun workspaceHome() = chooseHome()
     fun chooseHome()
     fun toggleViewLock()
     fun search()
@@ -227,11 +230,14 @@ fun WorkspaceShell(
                     }
                 }
                 // A full-screen record (a canvas) replaces the global section bar with its own bottom controls; the
-                // permanent sidebar takes the bar's place on a wide window.
+                // sidebar remains available beside the same strip on a wide window.
                 val chatKeyboardOpen = chrome.section == AppSection.CHAT &&
                     androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
-                if (!focusedEditor && !sidebarShown && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
-                    SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect)
+                if (!focusedEditor && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
+                    SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect,
+                        homeSelected = chrome.isHome && chrome.section == AppSection.DECK && stacks.of(AppSection.DECK).isEmpty(),
+                        onHome = actions::workspaceHome,
+                        navigationIdentity = listOf(chrome.navigationContext, chrome.section, stacks.of(chrome.section).toList()))
                 }
             }
         }
