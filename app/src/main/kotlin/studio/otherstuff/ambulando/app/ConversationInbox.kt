@@ -44,7 +44,7 @@ import studio.otherstuff.ambulando.core.store.*
     var composing by rememberSaveable(c.id, w.id) { mutableStateOf(false) }
     val parsed = remember(query) { ConversationQuery.parse(query) }
     val rows by key(c.id, w.id, ids, query, filter) {
-        remember(store, c.id, w.id, ids, query, filter) { store.liveQuery({ it.workspaceId == w.id }) {
+        remember(store, c.id, w.id, ids, query, filter) { store.liveQuery({ it.workspaceId == w.id && it.table in ConversationInvalidation.rows }) {
             store.reader.conversations(w.id, ids, c.signerNpub, query, filter)
         } }.collectAsState(null)
     }
@@ -52,7 +52,7 @@ import studio.otherstuff.ambulando.core.store.*
         store.reader.people(c.id, w.id)
     } }.collectAsState(studio.otherstuff.ambulando.core.profiles.PeopleDirectory())
     var coverageDetails by remember { mutableStateOf(false) }
-    val coverage by remember(w.id, ids) { store.liveQuery({ it.workspaceId == w.id }) {
+    val coverage by remember(w.id, ids) { store.liveQuery({ it.workspaceId == w.id && it.table in ConversationInvalidation.coverage }) {
         ids.count { store.reader.channelSync(w.id, it)?.complete == true } to store.reader.cachedConversationMessageCount(w.id, ids)
     } }.collectAsState(0 to 0L)
     val sync by model.engine.status.collectAsState()

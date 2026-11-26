@@ -21,12 +21,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.semantics.contentDescription
 import studio.otherstuff.ambulando.app.ui.chat.ConversationCard
+import studio.otherstuff.ambulando.app.ui.chat.ThreadReplySurface
 import studio.otherstuff.ambulando.app.ui.chat.DaySeparator
 import studio.otherstuff.ambulando.app.ui.chat.MessageRowLayout
 import studio.otherstuff.ambulando.app.ui.chat.RepliesBar
 import studio.otherstuff.ambulando.app.ui.chat.readingWidth
 import studio.otherstuff.ambulando.app.ui.nav.PersonAvatar
 import studio.otherstuff.ambulando.app.ui.theme.AmbType
+import studio.otherstuff.ambulando.app.ui.theme.Amb
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.foundation.border
@@ -57,6 +59,14 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
 
 /** Only local database reads occur in these native surfaces. */
 @Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null, family: Boolean = false, writeAllowed: Boolean = true, channelOverride: String? = null, hitMessageId: String? = null) {
+    // This full-screen route has no Material Surface ancestor. Supply the established theme ink to
+    // header/pin/menu controls as well as body content; the default LocalContentColor is black.
+    CompositionLocalProvider(LocalContentColor provides Amb.colors.foreground) {
+        ConnectedChatContent(model, threadId, composeOnly, family, writeAllowed, channelOverride, hitMessageId)
+    }
+}
+
+@Composable private fun ConnectedChatContent(model: AppModel, threadId: String?, composeOnly: ComposeOnly?, family: Boolean, writeAllowed: Boolean, channelOverride: String?, hitMessageId: String?) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
     val labels = channelLabels(model)
@@ -270,11 +280,15 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         model.chatPositions[target.draftKey] = it
     }
     studio.otherstuff.ambulando.app.ui.chat.ChatComposerLayout(
+        ownsNavigationBar = threadId != null,
         header = {
             Column {
                 if (threadId != null && !family) ThreadHeader(model, threadId, !removed)
-                if (progressError && composeOnly == null) Text("Activity updates unavailable · retrying", style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("chat.agent.recoveryError"))
+                if (progressError && composeOnly == null) {
+                    Text("Activity updates unavailable · retrying", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground,
+                        modifier = Modifier.fillMaxWidth().background(amb.muted).padding(horizontal = 16.dp, vertical = 6.dp).testTag("chat.agent.recoveryError"))
+                    HorizontalDivider(color = amb.border)
+                }
 
             }
         },
@@ -297,7 +311,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                     ?: studio.otherstuff.ambulando.core.profiles.PersonDisplay.unknown(message.senderNpub ?: "")
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.senderNpub == c.signerNpub) androidx.compose.ui.Alignment.End else androidx.compose.ui.Alignment.Start) {
                 dayStarts[post.id]?.let { DaySeparator(it.label) }
-                ConversationCard(Modifier.padding(start = if (threadId != null && message.senderNpub == c.signerNpub) 28.dp else 0.dp,
+                MessageSurface(threadId != null, message.senderNpub == c.signerNpub, Modifier.padding(start = if (threadId != null && message.senderNpub == c.signerNpub) 28.dp else 0.dp,
                     end = if (threadId != null && message.senderNpub != c.signerNpub) 20.dp else 0.dp)
                     .then(if (message.id == hitMessageId) Modifier.background(amb.primary.copy(alpha = 0.12f)) else Modifier).testTag("chat.message.${message.id}").clickable(enabled = threadId == null && message.threadId != null, onClickLabel = "Open conversation") {
                     message.threadId?.let { services.open(WorkRoute.Thread(w.id, channel, it)) }
@@ -330,10 +344,10 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                     }
                         }
                         if (threadId == null && message.threadId != null && post.replyCount > 0) RepliesBar(post.replyCount, post.lastReplyAt, Modifier.testTag("chat.thread.${message.threadId}"))
-                        if (!family && !message.deleted) ChatMessageReactions(model, message, !removed, Modifier.padding(start = studio.otherstuff.ambulando.app.ui.chat.MessageTextInset, end = 16.dp))
+                        if (!family && !message.deleted) ChatMessageReactions(model, message, !removed, Modifier.padding(start = if (threadId != null && message.senderNpub == c.signerNpub) 16.dp else studio.otherstuff.ambulando.app.ui.chat.MessageTextInset, end = 16.dp), showActions = threadId == null)
                     }
                     if (!family) ChatMessageControls(model, message, !removed, onEdit = { beginEdit(it); composerFocus.requestFocus(); keyboard?.show() }, onDelete = { deleting = it },
-                        modifier = Modifier.align(if (threadId != null && message.senderNpub == c.signerNpub) androidx.compose.ui.Alignment.TopStart else androidx.compose.ui.Alignment.TopEnd).offset(x = (-4).dp, y = (-4).dp))
+                        modifier = Modifier.align(if (threadId != null && message.senderNpub == c.signerNpub) androidx.compose.ui.Alignment.TopStart else androidx.compose.ui.Alignment.TopEnd).padding(horizontal = 4.dp))
                 }
                 ChatMessageEditStatus(model, message)
                 }
@@ -665,4 +679,8 @@ internal fun uploadPhase(phase: ComposerUpload.Phase): String = when (phase) {
             Text("Checked ${found.checked} saved page" + (if (found.checked == 1) "" else "s") + " on this device.", fontSize = AmbType.caption, color = amb.mutedForeground)
         }
     }
+}
+
+@Composable private fun MessageSurface(thread: Boolean, own: Boolean, modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
+    if (thread) ThreadReplySurface(own, modifier, content) else ConversationCard(modifier, content)
 }

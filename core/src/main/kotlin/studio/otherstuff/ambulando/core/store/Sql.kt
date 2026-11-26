@@ -25,6 +25,8 @@ class SqlRow internal constructor(private val s: SQLiteStatement) {
  * Bind values: null, Int, Long, Boolean, Double, String, ByteArray.
  */
 class SqlConnection private constructor(private val conn: SQLiteConnection, val readOnly: Boolean) : AutoCloseable {
+    /** Opt-in test work counter: statement text and row count only; never bindings or row contents. */
+    internal var queryWorkObserver: ((String, Int) -> Unit)? = null
     private var depth = 0
     private var changesStatement: SQLiteStatement? = null
 
@@ -66,6 +68,7 @@ class SqlConnection private constructor(private val conn: SQLiteConnection, val 
             val out = ArrayList<T>()
             val r = SqlRow(s)
             while (s.step()) out.add(row(r))
+            queryWorkObserver?.invoke(sql, out.size)
             out
         }
     }

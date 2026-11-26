@@ -80,7 +80,7 @@ class LiveQuery<T>(private val initial: T, private val scope: CoroutineScope) {
             job = scope.launch {
                 try {
                     reload(load, current, revisions, invalidatedBy)
-                    for (batch in batches) if (batch.any(matches)) reload(load, current, revisions, invalidatedBy)
+                    for (batch in batches) if (batches.drainMatches(batch, matches)) reload(load, current, revisions, invalidatedBy)
                 } finally {
                     batches.cancel()
                 }
@@ -154,7 +154,7 @@ fun <T> LocalStore.liveQuery(matches: (ChangeKey) -> Boolean, load: suspend () -
         var last = load()
         emit(last)
         for (batch in batches) {
-            if (!batch.any(matches)) continue
+            if (!batches.drainMatches(batch, matches)) continue
             val value = load()
             if (value != last) { last = value; emit(value) }
         }
@@ -162,3 +162,16 @@ fun <T> LocalStore.liveQuery(matches: (ChangeKey) -> Boolean, load: suspend () -
         batches.cancel()
     }
 }.flowOn(Dispatchers.Default)
+
+/** A slow read needs one catch-up snapshot, not a replay of obsolete invalidations. Match before conflating so
+ * a later unrelated batch cannot hide a message/access change. Changes arriving during the next read stay queued. */
+private fun kotlinx.coroutines.channels.ReceiveChannel<Set<ChangeKey>>.drainMatches(
+    first: Set<ChangeKey>, matches: (ChangeKey) -> Boolean,
+): Boolean {
+    var relevant = first.any(matches)
+    while (true) {
+        val next = tryReceive().getOrNull() ?: break
+        if (next.any(matches)) relevant = true
+    }
+    return relevant
+}

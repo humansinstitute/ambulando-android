@@ -33,14 +33,14 @@ class ThreadMenuFlowTest {
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(20_000) { model.channels.any { it.id == SampleIds.GENERAL } }
             compose.runOnIdle { val c = model.channels.first { it.id == SampleIds.GENERAL }; model.selectContext(c.scopeId, c.id); model.section = AppSection.CHAT }
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.inbox.new").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chat.inbox.new").performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.composer") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             val text = "Synthetic thread menu ${System.nanoTime()}"
             compose.onNodeWithTag("chat.composer").performTextReplacement(text)
             compose.onNodeWithTag("chat.send").performClick()
             compose.waitUntil(20_000) { runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).any { it.message.body == text } } }
             val root = runBlocking { model.store.reader.channelFeed(SampleIds.STUDIO, SampleIds.GENERAL, 300).first { it.message.body == text }.message }
-            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
-            compose.onNodeWithTag("chat.message.${root.id}").performClick()
             compose.waitUntil(20_000) { compose.onAllNodesWithTag("thread.actions").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("thread.actions").performClick()
             compose.onNodeWithTag("thread.menu.ref").assertIsDisplayed()
@@ -72,9 +72,12 @@ class ThreadMenuFlowTest {
 
             // Reopening retains the thread and draft, then an own root can be deleted only after confirmation.
             compose.onNodeWithTag("chat.composer").performTextReplacement("Retained thread draft")
-            compose.onNodeWithTag("thread.close").performClick()
-            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${root.id}"))
-            compose.onNodeWithTag("chat.message.${root.id}").performClick()
+            compose.onNodeWithTag("nav.back").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.inbox.search").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chat.inbox.search").performTextReplacement("body:\"$text\"")
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.inbox.row.${root.threadId}").fetchSemanticsNodes().isNotEmpty() }
+            androidx.test.espresso.Espresso.closeSoftKeyboard()
+            compose.onNodeWithTag("chat.inbox.row.${root.threadId}").performClick()
             compose.waitUntil(10_000) { compose.onAllNodesWithText("Retained thread draft").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("thread.actions").performClick()
             compose.onNodeWithTag("thread.menu.delete").performClick()

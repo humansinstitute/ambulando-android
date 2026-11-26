@@ -31,15 +31,19 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
 /** The message's top-right controls (iOS `messageControls`): the sync dot and the ⋮ menu holding every action, Edit and Delete included. */
 @Composable internal fun ChatMessageControls(model: AppModel, message: MessageRecord, enabled: Boolean, onEdit: (MessageRecord) -> Unit, onDelete: (MessageRecord) -> Unit, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
     val w = model.workspace ?: return; val c = model.connection ?: return
-    val writes by remember(message.id) { model.store.liveQuery({ it.table == StoreTable.WRITES }) { model.store.reader.workspaceWrites(c.id, w.id).filter { it.targetId == message.id } } }.collectAsState(emptyList())
+    val writes by remember(message.id) { model.store.liveQuery({ it.table == StoreTable.WRITES }) { model.store.reader.workspaceWrites(c.id, w.id, message.id) } }.collectAsState(emptyList())
+    var reacting by remember(message.id) { mutableStateOf(false) }
     androidx.compose.foundation.layout.Row(modifier, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        SyncDot(failed = writes.any { !it.isPending }, pending = writes.isNotEmpty(), modifier = androidx.compose.ui.Modifier.testTag("message.${message.id}.sync"))
+        if (writes.isNotEmpty()) SyncDot(failed = writes.any { !it.isPending }, pending = writes.isNotEmpty(), modifier = androidx.compose.ui.Modifier.testTag("message.${message.id}.sync"))
         MessageMenu(model, message, message.threadSourceId ?: message.takeIf { it.isThreadRoot }?.id,
             "@[Chat message](mention:chat:${message.channelId}#${message.id})", message.takeIf { AutopilotSessionLink.sessionId(it.raw) != null },
             enabled, "message.${message.id}", "Message actions",
             onEdit = { onEdit(message) }.takeIf { message.senderNpub == c.signerNpub && !message.deleted && !message.readOnly && writes.none { it.kind == WriteKind.MESSAGE_EDIT } },
-            onDelete = { onDelete(message) })
+            onDelete = { onDelete(message) }, onReact = { reacting = true }.takeIf { !message.deleted && !message.readOnly })
     }
+    if (reacting) AlertDialog(onDismissRequest = { reacting = false }, title = { Text("Reactions") },
+        text = { ChatMessageReactions(model, message, enabled) },
+        confirmButton = { TextButton(onClick = { reacting = false }) { Text("Done") } })
 }
 
 /** Queued edits keep the durable-write retry, conflict and discard controls beside the message. */
@@ -53,11 +57,11 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
 }
 
 /** Reactions already on the message, then the quick thumbs-up and "+" (iOS `ReactionBar`). Reactions go by wire name. */
-@Composable internal fun ChatMessageReactions(model: AppModel, message: MessageRecord, enabled: Boolean, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
+@Composable internal fun ChatMessageReactions(model: AppModel, message: MessageRecord, enabled: Boolean, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier, showActions: Boolean = true) {
     val w = model.workspace ?: return; val c = model.connection ?: return
-    val reactions by remember(message.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.reactions(w.id, listOf(message.id)) } }.collectAsState(emptyList())
+    val reactions by remember(message.id) { model.store.liveQuery({ it.workspaceId == w.id && it.table in setOf(StoreTable.REACTIONS, StoreTable.ACCESS) }) { model.store.reader.reactions(w.id, listOf(message.id)) } }.collectAsState(emptyList())
     fun payload(block: JsonObjectBuilder.() -> Unit) = buildJsonObject(block)
-    ReactionBar(reactions, c.signerNpub, enabled && !message.readOnly && !message.accessRemoved, modifier) { emoji, existing ->
+    ReactionBar(reactions, c.signerNpub, enabled && !message.readOnly && !message.accessRemoved, modifier, showActions) { emoji, existing ->
         model.submit(if (existing == null) WriteIntent(WriteKind.REACTION_ADD, message.id, payload { put("target_type", "message"); put("emoji", emoji.wire) })
         else WriteIntent(WriteKind.REACTION_REMOVE, message.id, payload { put("reaction_id", existing.id) }))
     }
@@ -77,7 +81,7 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
  * Tower accepts. Reactions are sent by wire name (`thumbs_up`); rows an earlier build stored by glyph still count and toggle.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable private fun ReactionBar(reactions: List<ReactionRecord>, me: String?, enabled: Boolean, modifier: androidx.compose.ui.Modifier, toggle: (ReactionEmoji, ReactionRecord?) -> Unit) {
+@Composable private fun ReactionBar(reactions: List<ReactionRecord>, me: String?, enabled: Boolean, modifier: androidx.compose.ui.Modifier, showActions: Boolean, toggle: (ReactionEmoji, ReactionRecord?) -> Unit) {
     var picker by remember { mutableStateOf(false) }
     val live = reactions.filter { !it.deleted }
     // Wraps, so seven reactions never overflow a narrow screen.
@@ -90,6 +94,7 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
                 Text(emoji.glyph + " " + count, fontSize = AmbType.footnote, fontWeight = FontWeight.SemiBold, color = if (mine != null) Amb.colors.primary else Amb.colors.foreground)
             }
         }
+        if (showActions) {
         val thumbs = live.firstOrNull { ReactionEmoji.fromStored(it.emoji) == ReactionEmoji.THUMBS_UP && it.reactorNpub == me }
         ReactionPill(enabled, false, "React with thumbs up", "reaction.quick", { toggle(ReactionEmoji.THUMBS_UP, thumbs) }) {
             Icon(Icons.Outlined.ThumbUp, null, Modifier.size(16.dp), tint = Amb.colors.mutedForeground)
@@ -105,6 +110,7 @@ import studio.otherstuff.ambulando.core.chat.AutopilotSessionLink
                         modifier = androidx.compose.ui.Modifier.testTag("reaction.pick.${emoji.wire}"))
                 }
             }
+        }
         }
     }
 }

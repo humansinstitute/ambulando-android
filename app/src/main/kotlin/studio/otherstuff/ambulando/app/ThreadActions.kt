@@ -25,7 +25,7 @@ import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.surfaces.PinRecord
 import studio.otherstuff.ambulando.core.transport.MessageRecord
 
-/** A phone thread already occupies its section; its menu sits next to Pin and Close. */
+/** A phone thread keeps one Back action, its title, Pin and the thread menu. */
 @Composable internal fun ThreadHeader(model: AppModel, threadId: String, enabled: Boolean) {
     val w = model.workspace ?: return
     val exit = LocalRouteExit.current
@@ -43,12 +43,11 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
             Text(menu?.second?.let(MentionCodec::plain)?.takeIf { it.isNotBlank() } ?: menu?.first?.root?.body?.let(MentionCodec::plain)?.lineSequence()?.firstOrNull() ?: "Conversation", maxLines = 2,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
             Text(listOfNotNull((record?.channelId ?: menu?.first?.root?.channelId)?.let { channelLabels(model)[it] }, participants.joinToString(", ").takeIf { it.isNotBlank() }).joinToString(" · "),
-                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground)
         }
         RecordPin(model, PinRecord.ResourceType.THREAD, threadId)
         MessageMenu(model, menu?.first?.root, menu?.first?.rootMessageId, menu?.first?.reference, menu?.first?.autopilotSource,
             enabled, "thread", "Thread menu", conversationThreadId = threadId, onRename = if (record != null) ({ renaming = true }) else null)
-        if (exit != null) IconButton(onClick = exit, modifier = Modifier.testTag("thread.close")) { Icon(Icons.Outlined.Close, "Close thread") }
     }
     if (renaming) record?.let { RenameThreadDialog(model, it) { renaming = false } }
 }
@@ -88,6 +87,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     enabled: Boolean, prefix: String, label: String, conversationThreadId: String? = message?.effectiveThreadId ?: message?.threadId, onRename: (() -> Unit)? = null,
     /** Edit of the author's own message (shown only when given). */
     onEdit: (() -> Unit)? = null,
+    onReact: (() -> Unit)? = null,
     /** Delete handled by the screen (its dialog outlives a row that scrolls away); otherwise the menu confirms itself. */
     onDelete: (() -> Unit)? = null,
 ) {
@@ -108,6 +108,8 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
         IconButton(onClick = { expanded = true }, enabled = message != null || reference != null || autopilot != null || onRename != null,
             modifier = Modifier.testTag("$prefix.actions")) { Icon(Icons.Outlined.MoreHoriz, label) }
         DropdownMenu(expanded, { expanded = false }) {
+            if (onReact != null) DropdownMenuItem({ Text("Add reaction") }, enabled = canMutate,
+                onClick = { expanded = false; onReact() }, modifier = Modifier.testTag("$prefix.menu.react"))
             if (message != null && !message.deleted && rootId != null) DropdownMenuItem({ Text("Get it done") }, enabled = writable,
                 onClick = { expanded = false; gettingItDone = true }, modifier = Modifier.testTag("$prefix.menu.getitdone"))
             if (message != null) DropdownMenuItem({ Text("Copy message") },

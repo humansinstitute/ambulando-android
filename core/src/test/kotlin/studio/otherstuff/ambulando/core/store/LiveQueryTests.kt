@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.async
@@ -26,6 +27,57 @@ class LiveQueryTests {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @After fun tearDown() = scope.cancel()
+
+    @Test fun slowReadDoesNotReplayEveryObsoleteSyncBatch() = runBlocking {
+        ChangeCoalescer(1).use { changes ->
+            val firstRead = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val loads = java.util.concurrent.atomic.AtomicInteger()
+            val query = LiveQuery(0, scope)
+            val observed = changes.subscribe()
+            query.start(changes, matches = { it.table == StoreTable.MESSAGES }) {
+                val n = loads.incrementAndGet()
+                if (n == 1) { firstRead.complete(Unit); release.await() }
+                n
+            }
+            firstRead.await()
+            repeat(5) {
+                changes.record(setOf(ChangeKey(StoreTable.MESSAGES,W)))
+                withTimeout(3000) { observed.receive() }
+            }
+            release.complete(Unit)
+            waitFor { query.loaded && loads.get() >= 2 }
+            delay(100) // Allow the consumer to drain; the assertion measures work, not elapsed time.
+            assertEquals("One refresh catches up all invalidations queued during the read",2,loads.get())
+            query.stop(); observed.cancel()
+        }
+    }
+
+    @Test fun coldFlowCombinesQueuedRelevantChangesWithoutLosingThemToUnrelatedBatches() = runBlocking {
+        StoreFixtures.store(intervalMillis = 1).use { store ->
+            val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val loads = java.util.concurrent.atomic.AtomicInteger()
+            val observed = store.changes.subscribe()
+            val collecting = scope.launch {
+                store.liveQuery({ it.workspaceId == W && it.table in ConversationInvalidation.rows }) {
+                    val n = loads.incrementAndGet()
+                    if (n == 1) { entered.complete(Unit); release.await() }
+                    n
+                }.collect { }
+            }
+            entered.await()
+            for (table in listOf(StoreTable.MESSAGES,StoreTable.VIEW_STATES,StoreTable.THREADS,StoreTable.WRITES)) {
+                store.writer.touch(setOf(ChangeKey(table,W)))
+                withTimeout(3000) { observed.receive() }
+            }
+            release.complete(Unit)
+            waitFor { loads.get() >= 2 }
+            delay(100)
+            assertEquals("Last unrelated write must neither hide relevant changes nor replay them",2,loads.get())
+            collecting.cancel(); observed.cancel()
+        }
+    }
 
     /** A slow load for a replaced query (previous workspace) must not overwrite the new one. */
     @Test fun slowLoadFromReplacedQueryIsDiscarded() = runBlocking {

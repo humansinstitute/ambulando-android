@@ -128,8 +128,9 @@ class StoreWriter internal constructor(path: String, val changes: ChangeCoalesce
  * Read-only connection on its own single-threaded dispatcher. Each read runs in one DEFERRED transaction, so it sees one
  * consistent WAL snapshot while the writer commits.
  */
-class StoreReader internal constructor(path: String) : AutoCloseable {
+class StoreReader internal constructor(path: String, internal val revisions: ChangeRevisions) : AutoCloseable {
     internal val db: SqlConnection = SqlConnection.open(path, readOnly = true)
+    internal val conversationCache = ConversationCache()
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
 
     @Volatile internal var closed = false
@@ -158,7 +159,7 @@ class LocalStore(directory: File, coalesceIntervalMillis: Long = 100) : AutoClos
         path = File(directory, ProductionStorage.DATABASE_FILE_NAME).path
         changes = ChangeCoalescer(coalesceIntervalMillis)
         writer = StoreWriter(path, changes)
-        reader = StoreReader(path)
+        reader = StoreReader(path, changes.revisions)
     }
 
     override fun close() {

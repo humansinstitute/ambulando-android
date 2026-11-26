@@ -44,3 +44,26 @@ history becomes searchable after it has been fetched through the existing thread
 
 Mac shares the approved query semantics. Web and iPhone parity for this inbox/search presentation remain pending
 approved-task nightly catch-up; this Android change does not establish delivery on either surface.
+
+## Retained-history loading
+
+The inbox projects scalar SQL summaries rather than decoding every canonical message JSON record and issuing one
+thread lookup per result. Canonical/effective membership is deduplicated before aggregation. Only the first and latest
+message bodies are fetched for each summary, with deterministic timestamp/id ordering. Cached records, identities,
+FTS entries, drafts and pending writes remain unchanged; no database migration is required.
+
+Each reader keeps at most eight recent context/search results, keyed by workspace, selected channels, viewer, query
+and filter. Workspace, scope, channel, message, thread, view-state or access revisions invalidate those results.
+Reactions, draft edits and unrelated activity do not rebuild the inbox. Slow live queries combine queued matching
+change batches into one fresh snapshot; an unrelated later batch cannot hide a relevant invalidation.
+
+`ConversationLoadingTests` exercises 1,200 threads and 48,000 retained messages through the real inbox and queued Deck
+reader, with query/result-row budgets and measured cold/warm latency. `RetainedConversationLoadingTest` exercises
+actual Android navigation and the same retained history, plus a server-backed synthetic thread, signed send,
+menu reactions, draft retention and keyboard clearance. Timing output is evidence for the tested host/device, not a
+guarantee for arbitrary devices or a substitute for measuring network/download latency.
+
+Thread replies use flat incoming rows and subtle own-message surfaces. Channel conversation cards remain separate.
+The message menu provides first-reaction actions; existing reaction chips remain visible. Full-screen threads own
+the navigation-bar inset, while the section bar owns it for normal channel screens; the composer consumes the IME
+inset. The header keeps one Back action and the original system text scale and palette.

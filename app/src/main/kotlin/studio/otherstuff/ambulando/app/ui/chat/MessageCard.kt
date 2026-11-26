@@ -65,7 +65,7 @@ fun MessageRowLayout(person: PersonDisplay, time: String, trailingReserve: Dp = 
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp), horizontalAlignment = if (own) Alignment.End else Alignment.Start) {
             // A name and its time share a line; at large text sizes the time wraps below instead of cutting the name short.
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(end = if (own) 0.dp else trailingReserve, start = if (own) trailingReserve else 0.dp), horizontalArrangement = if (own) Arrangement.End else Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.Bottom) {
+            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(end = if (own) 0.dp else trailingReserve, start = if (own) trailingReserve else 0.dp), horizontalArrangement = if (own) Arrangement.spacedBy(6.dp, Alignment.End) else Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.Bottom) {
                 Text(person.name, fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("message.author"))
                 Text(time, fontSize = AmbType.caption, color = amb.mutedForeground, maxLines = 1)
@@ -100,5 +100,13 @@ fun DaySeparator(label: String, modifier: Modifier = Modifier) {
         HorizontalDivider(Modifier.weight(1f), thickness = 1.dp, color = amb.border)
         Text(label, fontSize = AmbType.caption, fontWeight = FontWeight.SemiBold, color = amb.mutedForeground)
         HorizontalDivider(Modifier.weight(1f), thickness = 1.dp, color = amb.border)
+    }
+}
+
+/** Thread replies share the page; only the author's own message has a quiet surface. */
+@Composable
+fun ThreadReplySurface(own: Boolean, modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp)) {
+        Box(modifier.fillMaxWidth().then(if (own) Modifier.background(Amb.colors.muted, RoundedCornerShape(Amb.radiusPanel)) else Modifier)) { content() }
     }
 }

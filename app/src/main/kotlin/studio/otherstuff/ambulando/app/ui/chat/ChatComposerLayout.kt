@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -17,12 +18,13 @@ import androidx.compose.ui.layout.SubcomposeLayout
  */
 @Composable
 internal fun ChatComposerLayout(
+    ownsNavigationBar: Boolean = false,
     header: @Composable () -> Unit,
     messages: @Composable () -> Unit,
     details: @Composable () -> Unit,
     composer: @Composable () -> Unit,
 ) {
-    SubcomposeLayout(Modifier.fillMaxSize().imePadding()) { constraints ->
+    SubcomposeLayout(Modifier.fillMaxSize().then(if (ownsNavigationBar) Modifier.navigationBarsPadding() else Modifier).imePadding()) { constraints ->
         val loose = constraints.copy(minWidth = 0, minHeight = 0)
         val headerPlaceable = subcompose("header") { Box(Modifier.fillMaxWidth()) { header() } }.single().measure(loose)
         val editor = subcompose("composer") { Box(Modifier.fillMaxWidth()) { composer() } }.single()
