@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.withResumed
 import kotlinx.coroutines.delay
 import studio.otherstuff.ambulando.app.AppModel
 import studio.otherstuff.ambulando.core.store.ChatTarget
@@ -42,6 +43,7 @@ internal fun rememberVoiceRecorderAction(model: AppModel, c: ConnectionRecord, w
     var setupTarget by remember { mutableStateOf<VoiceDestination?>(null) }
     var selectedInput by remember { mutableStateOf<VoiceInput?>(null) }
     var permissionTarget by remember { mutableStateOf<VoiceDestination?>(null) }
+    var grantedTarget by remember { mutableStateOf<VoiceDestination?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     fun start(destination: VoiceDestination) {
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) { error = "Return to Ambulando and tap Record again."; return }
@@ -52,8 +54,15 @@ internal fun rememberVoiceRecorderAction(model: AppModel, c: ConnectionRecord, w
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         val destination = permissionTarget
         permissionTarget = null
-        if (result.values.all { it } && destination != null) start(destination)
+        if (result.values.all { it } && destination != null) grantedTarget = destination
         else error = "Microphone and notification permission are required to record. Enable them in Android settings, then tap Record again."
+    }
+    // Android delivers permission results before onResume. Keep consent tied to this mounted
+    // composer, wait for its visible lifecycle, then revalidate the original account/destination.
+    LaunchedEffect(grantedTarget, lifecycle) {
+        val destination = grantedTarget ?: return@LaunchedEffect
+        lifecycle.withResumed { start(destination) }
+        grantedTarget = null
     }
     fun requestRecording(destination: VoiceDestination) {
         val required = buildList {

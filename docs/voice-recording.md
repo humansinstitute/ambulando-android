@@ -118,6 +118,14 @@ speech/silence response, privacy switching and live authenticated upload/transcr
 
 ### Foreground startup and failure handling
 
+Android returns microphone/notification permission results before the activity resumes. Granted recording consent
+waits for the same mounted composer's resumed lifecycle before starting; leaving that composer cancels the pending
+start. The original destination and chosen input remain in memory, and the unlocked account, workspace and foreground
+checks still run before capture. Denial leaves an actionable permission error without opening the microphone.
+`ComposerMenuFlowTest.grantingRecordingPermissionsStartsCaptureAndRetainsPlayableAudio` drives the real Android
+dialogs, selected/actual input, meter samples, stop and playable retained audio. Run it in the isolated test package
+with one or both recording permissions absent; it fails if a successful permission result never starts capture.
+
 Service creation immediately posts **Preparing voice recording**, before reading the model or draft and before any
 cancelled/stale/Stop path can exit. On Android 14+ this uses the bounded `shortService` type, which opens no microphone
 and needs no microphone runtime grant. A valid current draft with microphone permission and enabled recording

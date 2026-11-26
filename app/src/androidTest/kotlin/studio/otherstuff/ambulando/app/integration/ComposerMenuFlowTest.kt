@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.unit.dp
@@ -19,6 +20,7 @@ import org.junit.runner.RunWith
 import studio.otherstuff.ambulando.app.*
 import studio.otherstuff.ambulando.app.ui.shell.AppSection
 import studio.otherstuff.ambulando.app.voice.VoicePhase
+import studio.otherstuff.ambulando.app.voice.voiceInput
 import studio.otherstuff.ambulando.core.sample.SampleIds
 import studio.otherstuff.ambulando.core.store.channelFeed
 
@@ -43,6 +45,10 @@ class ComposerMenuFlowTest {
                 model.section = AppSection.CHAT
                 model.voice.cancel()
             }
+            compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.inbox.rows")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onAllNodes(SemanticsMatcher("conversation row") {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)?.startsWith("chat.inbox.row.") == true
+            }).onFirst().performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("chat.attach") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
             block(model)
         }
@@ -169,5 +175,57 @@ class ComposerMenuFlowTest {
         compose.onNodeWithTag("chat.attach.pick").assertIsEnabled()
         capture("permission-denied")
         Espresso.pressBack()
+    }
+
+    /** Run separately with microphone/notification grants absent in the isolated fixture package. */
+    @Test fun grantingRecordingPermissionsStartsCaptureAndRetainsPlayableAudio() = launch { model ->
+        check(context.packageName.endsWith(".watchtest"))
+        assertTrue("Run with at least one recording permission absent",
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+        openMenu()
+        compose.onNodeWithTag("voice.record").performClick()
+        val input = context.getSystemService(android.media.AudioManager::class.java)
+            .getDevices(android.media.AudioManager.GET_DEVICES_INPUTS).first { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC }
+        val selected = input.voiceInput()
+        // Select the actual OS-listed built-in microphone before entering the permission flow.
+        compose.onAllNodesWithText(selected.label, substring = true).onFirst().performScrollTo().performClick()
+        compose.onNodeWithTag("voice.start").performClick()
+        fun allow(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            val id = node.viewIdResourceName.orEmpty()
+            if (id.endsWith(":id/permission_allow_foreground_only_button") || id.endsWith(":id/permission_allow_button"))
+                return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            for (i in 0 until node.childCount) if (allow(node.getChild(i))) return true
+            return false
+        }
+        val deadline = android.os.SystemClock.elapsedRealtime() + 15_000
+        while (model.voice.state.value == null && android.os.SystemClock.elapsedRealtime() < deadline) {
+            allow(instrumentation.uiAutomation.rootInActiveWindow)
+            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) break
+            Thread.sleep(100)
+        }
+        compose.waitForIdle()
+        println("Recording permission result: draft=${model.voice.state.value?.phase}; " +
+            compose.onAllNodesWithTag("voice.permission.error").fetchSemanticsNodes().map {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)
+            })
+        compose.waitUntil(10_000) { model.voice.state.value?.phase == VoicePhase.RECORDING }
+        val draft = requireNotNull(model.voice.state.value)
+        compose.waitUntil(5_000) { model.voice.input.value.actual != null && model.voice.input.value.samples >= 3 }
+        assertEquals(selected.id, model.voice.input.value.requested?.id)
+        assertEquals(input.id, model.voice.input.value.actual?.id)
+        Thread.sleep(1500)
+        compose.runOnIdle { model.voice.stop() }
+        assertEquals(VoicePhase.REVIEW, model.voice.state.value?.phase)
+        assertEquals(draft.destination, model.voice.state.value?.destination)
+        val player = android.media.MediaPlayer()
+        try {
+            player.setDataSource(model.voice.drafts.audio(draft).absolutePath)
+            player.prepare()
+            assertTrue("Capture must produce playable audio", player.duration >= 1000)
+        } finally { player.release() }
+        compose.runOnIdle { model.voice.cancel() }
     }
 }
