@@ -79,7 +79,8 @@ class GoalsFlowTest {
             // Create with validation.
             tap("goals.new")
             type("goal.input.name", "Ship Ambulando"); type("goal.input.description", " ")
-            tap("goal.input.save"); waitTag("goal.input.error")
+            // Save is disabled with the reason shown before anything is sent.
+            compose.onNodeWithTag("goal.input.save").assertIsNotEnabled(); waitTag("goal.input.issue")
             type("goal.input.description", "Use it every day")
             tap("goal.input.target"); tap("goal.input.target.ok")
             tap("goal.input.save")

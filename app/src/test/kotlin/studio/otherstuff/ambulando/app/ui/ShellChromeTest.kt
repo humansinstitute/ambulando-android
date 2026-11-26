@@ -39,7 +39,7 @@ class ShellChromeTest {
             AppSection.visible(false, false, showChat = false))
         compose.runOnIdle { showChat.value = true }
         compose.onNodeWithTag("section.chat").assertIsSelected()
-        assertEquals(AppSection.entries.toList(), AppSection.visible(true, true, true))
+        assertEquals(AppSection.entries.filter { it != AppSection.HOME }, AppSection.visible(true, true, true))
         compose.runOnIdle { showChat.value = false }
         compose.onNodeWithTag("section.chat").assertDoesNotExist()
         assertEquals(AppSection.CHAT, AppSection.fromKey("chat"))
@@ -106,7 +106,7 @@ class ShellChromeTest {
 
     @Test fun narrowControlsKeepOriginalMinimumWidthAndIconSize() {
         compose.setContent { AmbulandoTheme { Box(Modifier.width(300.dp)) {
-            SectionBar(AppSection.entries.toList(), AppSection.TASKS, {}, {})
+            SectionBar(AppSection.visible(true, true), AppSection.TASKS, {}, {})
         } } }
         val density = compose.density.density
         val home = compose.onNodeWithTag("section.home").fetchSemanticsNode().boundsInRoot
@@ -126,10 +126,10 @@ class ShellChromeTest {
             androidx.compose.runtime.CompositionLocalProvider(
                 androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(1f, 2f)
             ) { AmbulandoTheme { Box(Modifier.width(320.dp)) {
-                SectionBar(AppSection.entries.toList(), AppSection.TASKS, {}, {})
+                SectionBar(AppSection.visible(true, true), AppSection.TASKS, {}, {})
             } } }
         }
-        for (key in listOf("home") + AppSection.entries.map { it.key }) {
+        for (key in listOf("home") + AppSection.visible(true, true).map { it.key }) {
             val tag = "section.$key"
             compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
             val button = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot

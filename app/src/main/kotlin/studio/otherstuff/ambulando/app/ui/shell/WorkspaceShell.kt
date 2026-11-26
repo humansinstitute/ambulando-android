@@ -75,9 +75,9 @@ import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import studio.otherstuff.ambulando.core.profiles.PersonDisplay
 
-/** Chat opened from Deck belongs to Deck; external/other-section entry uses Chat's safe root fallback. */
+/** Chat opened from Deck or Home stays there; external/other-section entry uses Chat's safe root fallback. */
 fun chatEntrySection(origin: AppSection, overlay: Boolean = false): AppSection =
-    if (origin == AppSection.DECK && !overlay) AppSection.DECK else AppSection.CHAT
+    if ((origin == AppSection.DECK || origin == AppSection.HOME) && !overlay) origin else AppSection.CHAT
 
 /**
  * Per-section navigation stacks, kept while the app runs so switching sections returns to the same screen.
@@ -242,7 +242,7 @@ fun WorkspaceShell(
                     androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
                 if (!focusedEditor && !chatKeyboardOpen && stacks.of(chrome.section).lastOrNull()?.fullScreen != true) {
                     SectionBar(chrome.sections, chrome.section, onSelect = actions::select, onReselect = actions::reselect,
-                        homeSelected = chrome.isHome && chrome.section == AppSection.DECK && stacks.of(AppSection.DECK).isEmpty(),
+                        homeSelected = chrome.section == AppSection.HOME,
                         onHome = actions::workspaceHome,
                         navigationIdentity = listOf(chrome.navigationContext, chrome.section, stacks.of(chrome.section).toList()))
                 }

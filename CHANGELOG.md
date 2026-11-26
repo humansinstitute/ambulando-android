@@ -1,3 +1,10 @@
+## 0.9.62 (90)
+
+- Home is its own screen again, separate from Deck: your goals, a Daily Briefing and your latest chats. Opening Ambulando without a scope or channel chosen lands there; choosing a scope or channel opens Deck as before.
+- The three goals in focus show their description, dates, checkpoints reached and progress dots, with a quieter peek at the next and "Show all" for the rest. Drag a goal or use its menu to change which goals are in focus; the order syncs with the Mac app.
+- The Daily Briefing lists only what your saved goals say for the day (next checkpoints, dated checkpoints, start and target dates). It never speaks for an agent or schedules anything; agent briefings are not available yet.
+- The goal and checkpoint forms now have labels above clear, left-aligned fields with a visible cursor, open with the first field ready to type, and work with a keyboard: Enter moves on (or starts a new line in a description), Tab and Shift+Tab move between fields, Esc cancels and Ctrl+Enter saves. Save explains what is missing instead of failing after you press it.
+
 ## 0.9.61 (89)
 
 - Share a thread's attached Docs, whiteboards and HTML across supported clients, while keeping each device's editor, historical revision and viewport independent.

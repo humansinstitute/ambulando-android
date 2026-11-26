@@ -35,7 +35,7 @@ class ChatEntryNavigationTest {
     }
 
     @Test fun chatListEntryReturnsToListAndOtherOriginsHaveSafeChatFallback() {
-        AppSection.entries.filter { it != AppSection.DECK }.forEach { origin ->
+        AppSection.entries.filter { it != AppSection.DECK && it != AppSection.HOME }.forEach { origin ->
             val stacks = SectionStacks()
             val section = chatEntrySection(origin)
             assertEquals(AppSection.CHAT, section)

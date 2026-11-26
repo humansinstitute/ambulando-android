@@ -48,7 +48,7 @@ class NavigationStripTest {
             assertEquals((strip.width / density / 4.5f).coerceIn(72f, 96f), home.width / density, 1f)
             compose.runOnIdle { model.viewLocked = true }
             compose.onNodeWithTag("section.home").performTouchInput { click() }
-            compose.waitUntil(30_000) { model.context.isHome && model.section == AppSection.DECK }
+            compose.waitUntil(30_000) { model.context.isHome && model.section == AppSection.HOME }
             compose.onNodeWithTag("section.home").assertIsSelected()
             compose.runOnIdle { assertFalse(model.viewLocked); assertEquals(SampleIds.STUDIO, model.workspace?.id) }
             for (key in listOf("home") + AppSection.visible(false, false).map { it.key }) {
@@ -80,7 +80,7 @@ class NavigationStripTest {
             val scrolled = offset()
             assertTrue(scrolled > 0f)
             compose.onNodeWithTag("section.home").assertIsNotDisplayed()
-            compose.runOnIdle { assertEquals(AppSection.DECK, model.section); model.refresh() }
+            compose.runOnIdle { assertEquals(AppSection.HOME, model.section); model.refresh() }
             compose.waitForIdle()
             assertEquals(scrolled, offset(), 1f)
             // Same-screen presentation updates do not reset; a real context change does.
@@ -96,7 +96,7 @@ class NavigationStripTest {
             compose.waitUntil(30_000) { model.section == AppSection.TOOLBOX }
             assertEquals(0f, offset(), 1f)
             compose.onNodeWithTag("section.home").assertIsDisplayed().performTouchInput { click() }
-            compose.waitUntil(30_000) { model.context.isHome && model.section == AppSection.DECK }
+            compose.waitUntil(30_000) { model.context.isHome && model.section == AppSection.HOME }
             compose.onNodeWithTag("section.scroll").performTouchInput { swipeLeft() }
             scenario.recreate()
             compose.onNodeWithTag("section.home").assertIsDisplayed()
@@ -124,7 +124,7 @@ class NavigationStripTest {
                 }
             }
             compose.onNodeWithTag("section.home").performTouchInput { click() }
-            compose.waitUntil(30_000) { app.activeModel?.context?.isHome == true && app.activeModel?.section == AppSection.DECK }
+            compose.waitUntil(30_000) { app.activeModel?.context?.isHome == true && app.activeModel?.section == AppSection.HOME }
             compose.onNodeWithTag("section.home").assertIsSelected()
         }
     }

@@ -1,22 +1,52 @@
 package studio.otherstuff.ambulando.app
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import studio.otherstuff.ambulando.app.ui.theme.Amb
 import studio.otherstuff.ambulando.app.ui.theme.AmbType
+import studio.otherstuff.ambulando.app.ui.work.WorkSheet
 import studio.otherstuff.ambulando.core.goals.*
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.transport.ConnectionFailure
@@ -33,87 +63,174 @@ private fun readable(e: Exception): String = when (e) {
 
 /** Name, description and optional date-only start/target. [existing] null creates a goal. */
 @Composable internal fun GoalEditorDialog(existing: Goal?, onDismiss: () -> Unit, onSave: suspend (String, String, String?, String?) -> Unit) {
-    var name by remember { mutableStateOf(existing?.name ?: "") }
-    var description by remember { mutableStateOf(existing?.description ?: "") }
-    var start by remember { mutableStateOf(existing?.startDate) }
-    var target by remember { mutableStateOf(existing?.targetDate) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(if (existing == null) "New goal" else "Edit goal") },
-        text = {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(name, { name = it; error = null }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("goal.input.name"),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences))
-                OutlinedTextField(description, { description = it; error = null }, label = { Text("Goal") }, minLines = 3, modifier = Modifier.fillMaxWidth().testTag("goal.input.description"),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences))
-                DateField("Start date (optional)", start, "goal.input.start") { start = it; error = null }
-                DateField("Target date (optional)", target, "goal.input.target") { target = it; error = null }
-                error?.let { Text(it, color = Amb.colors.destructive, fontSize = AmbType.footnote, modifier = Modifier.testTag("goal.input.error")) }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = !busy, modifier = Modifier.testTag("goal.input.save"), onClick = {
-                busy = true; error = null
-                scope.launch {
-                    try { onSave(name.trim(), description.trim(), start, target) }
-                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                    catch (e: Exception) { error = readable(e) }
-                    finally { busy = false }
-                }
-            }) { Text(if (existing == null) "Create" else "Save") }
-        },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss, modifier = Modifier.testTag("goal.input.cancel")) { Text("Cancel") } },
-    )
+    var name by rememberSaveable { mutableStateOf(existing?.name ?: "") }
+    var description by rememberSaveable { mutableStateOf(existing?.description ?: "") }
+    var start by rememberSaveable { mutableStateOf(existing?.startDate) }
+    var target by rememberSaveable { mutableStateOf(existing?.targetDate) }
+    val issue = GoalForm.goalIssue(name, description, start, target)
+    GoalFormSheet(
+        title = if (existing == null) "New goal" else "Edit goal", confirmLabel = if (existing == null) "Create" else "Save", tag = "goal.input",
+        issue = issue, onDismiss = onDismiss, save = { onSave(name.trim(), description.trim(), start, target) },
+    ) { first, error ->
+        FormField("Name", "goal.input.name.label", counter = name.length to Goal.MAX_NAME) { focused ->
+            FieldText(name, { name = it; error() }, "What are you working toward?", focused, Modifier.focusRequester(first).testTag("goal.input.name"), singleLine = true)
+        }
+        FormField("Description", "goal.input.description.label", counter = description.length to Goal.MAX_DESCRIPTION) { focused ->
+            FieldText(description, { description = it; error() }, "What will be different when it’s done?", focused, Modifier.testTag("goal.input.description"), minLines = 4, maxLines = 12)
+        }
+        DateRow {
+            DateField("Start date", start, "goal.input.start", Modifier.weight(1f)) { start = it; error() }
+            DateField("Target date", target, "goal.input.target", Modifier.weight(1f), invalid = GoalForm.targetBeforeStart(start, target)) { target = it; error() }
+        }
+    }
 }
 
 /** Title, optional date and description of one checkpoint. */
 @Composable internal fun CheckpointDialog(existing: GoalCheckpoint?, onDismiss: () -> Unit, onSave: suspend (String, String?, String?) -> Unit) {
-    var title by remember { mutableStateOf(existing?.title ?: "") }
-    var date by remember { mutableStateOf(existing?.date) }
-    var description by remember { mutableStateOf(existing?.description ?: "") }
+    var title by rememberSaveable { mutableStateOf(existing?.title ?: "") }
+    var date by rememberSaveable { mutableStateOf(existing?.date) }
+    var description by rememberSaveable { mutableStateOf(existing?.description ?: "") }
+    GoalFormSheet(
+        title = if (existing == null) "Add checkpoint" else "Edit checkpoint", confirmLabel = if (existing == null) "Add" else "Save", tag = "checkpoint.input",
+        issue = GoalForm.checkpointIssue(title, description), onDismiss = onDismiss,
+        save = { onSave(title.trim(), date, description.trim().ifEmpty { null }) },
+    ) { first, error ->
+        FormField("Title", "checkpoint.input.title.label", counter = title.length to GoalForm.MAX_CHECKPOINT_TITLE) { focused ->
+            FieldText(title, { title = it; error() }, "A step along the way", focused, Modifier.focusRequester(first).testTag("checkpoint.input.title"), singleLine = true)
+        }
+        DateRow { DateField("Date (optional)", date, "checkpoint.input.date", Modifier.weight(1f)) { date = it; error() } }
+        FormField("Description (optional)", "checkpoint.input.description.label", counter = description.length to GoalForm.MAX_CHECKPOINT_DESCRIPTION) { focused ->
+            FieldText(description, { description = it; error() }, "What reaching it means", focused, Modifier.testTag("checkpoint.input.description"), minLines = 3, maxLines = 10)
+        }
+    }
+}
+
+/**
+ * The app's full-screen form sheet (Cancel · title · confirm, as New task) for goal and checkpoint forms. Save stays in
+ * the bar above the keyboard and is disabled with [issue] shown under the fields. The first field is focused on open.
+ * Hardware keys: Tab / Shift+Tab move between fields, Escape cancels, Ctrl/Cmd+Enter saves; Enter in a one-line field
+ * moves on, and in a multi-line field starts a new line. A failed save keeps the sheet open with what was typed.
+ */
+@Composable private fun GoalFormSheet(
+    title: String, confirmLabel: String, tag: String, issue: String?, onDismiss: () -> Unit, save: suspend () -> Unit,
+    fields: @Composable ColumnScope.(first: FocusRequester, clearError: () -> Unit) -> Unit,
+) {
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(if (existing == null) "Add checkpoint" else "Edit checkpoint") },
-        text = {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(title, { title = it; error = null }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("checkpoint.input.title"),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences))
-                DateField("Date (optional)", date, "checkpoint.input.date") { date = it; error = null }
-                OutlinedTextField(description, { description = it; error = null }, label = { Text("Description (optional)") }, minLines = 2, modifier = Modifier.fillMaxWidth().testTag("checkpoint.input.description"),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences))
-                error?.let { Text(it, color = Amb.colors.destructive, fontSize = AmbType.footnote, modifier = Modifier.testTag("checkpoint.input.error")) }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = !busy && title.isNotBlank(), modifier = Modifier.testTag("checkpoint.input.save"), onClick = {
-                busy = true; error = null
-                scope.launch {
-                    try { onSave(title.trim(), date, description.trim().ifEmpty { null }) }
-                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                    catch (e: Exception) { error = readable(e) }
-                    finally { busy = false }
+    val first = remember { FocusRequester() }
+    fun cancel() { if (!busy) onDismiss() }
+    fun submit() {
+        if (busy || issue != null) return
+        busy = true; error = null
+        scope.launch {
+            try { save() }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { error = readable(e) }
+            finally { busy = false }
+        }
+    }
+    WorkSheet(title, ::cancel, confirmLabel = if (busy) "Saving…" else confirmLabel, confirmEnabled = !busy && issue == null, confirmTag = "$tag.save", onConfirm = ::submit) {
+        // The sheet is its own window: move focus with that window's manager, not the screen's behind it.
+        val focus = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(Unit) { delay(80); runCatching { first.requestFocus(); keyboard?.show() } }
+        Column(
+            Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())
+                .onPreviewKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        e.key == Key.Escape -> { cancel(); true }
+                        (e.key == Key.Enter || e.key == Key.NumPadEnter) && (e.isCtrlPressed || e.isMetaPressed) -> { submit(); true }
+                        // Never typed into a field: the form has no use for tab characters.
+                        e.key == Key.Tab -> { focus.moveFocus(if (e.isShiftPressed) FocusDirection.Previous else FocusDirection.Next); true }
+                        else -> false
+                    }
                 }
-            }) { Text(if (existing == null) "Add" else "Save") }
-        },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } },
-    )
+                .padding(vertical = 8.dp).testTag("$tag.form"),
+        ) {
+            fields(first) { error = null }
+            val message = error ?: issue
+            if (message != null) Text(message, color = if (error != null) Amb.colors.destructive else Amb.colors.mutedForeground, fontSize = AmbType.footnote,
+                modifier = Modifier.padding(horizontal = 32.dp, vertical = 4.dp).testTag(if (error != null) "$tag.error" else "$tag.issue"))
+            Text("Ctrl+Enter saves · Esc cancels", fontSize = AmbType.caption2, color = Amb.colors.mutedForeground, modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp))
+        }
+    }
 }
 
-/** A date-only value picked from a calendar; "Clear" removes it. No time or zone is ever stored. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun DateField(label: String, value: String?, tag: String, onChange: (String?) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedButton(onClick = { open = true }, modifier = Modifier.weight(1f).testTag(tag)) {
-            Text(GoalFormat.date(value)?.let { "$label: $it" } ?: label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+/** A label above a filled, bordered field (FormGroup's look); the border turns primary while the field has focus. */
+@Composable private fun FormField(label: String, labelTag: String, counter: Pair<Int, Int>? = null, content: @Composable (focused: Boolean) -> Unit) {
+    val amb = Amb.colors
+    var focused by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = amb.foreground, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp).testTag(labelTag))
+        Box(
+            Modifier.fillMaxWidth().background(amb.card, RoundedCornerShape(Amb.radiusPanel))
+                .border(if (focused) 2.dp else 1.dp, if (focused) amb.primary else amb.border, RoundedCornerShape(Amb.radiusPanel))
+                .onFocusChanged { focused = it.hasFocus }.padding(horizontal = 14.dp, vertical = 12.dp),
+        ) { content(focused) }
+        counter?.let { (used, max) ->
+            if (used > max * 4 / 5) Text("$used / $max", fontSize = AmbType.caption, color = if (used > max) amb.destructive else amb.mutedForeground,
+                modifier = Modifier.align(Alignment.End).padding(top = 4.dp, end = 4.dp))
         }
-        if (value != null) TextButton(onClick = { onChange(null) }, modifier = Modifier.testTag("$tag.clear")) { Text("Clear") }
+    }
+}
+
+/** Left-aligned text with the app's primary-coloured cursor and selection. One-line fields move to the next field on Enter. */
+@Composable private fun FieldText(value: String, onChange: (String) -> Unit, placeholder: String, focused: Boolean, modifier: Modifier, singleLine: Boolean = false, minLines: Int = 1, maxLines: Int = 1) {
+    val amb = Amb.colors
+    val focus = LocalFocusManager.current
+    val selection = TextSelectionColors(handleColor = amb.primary, backgroundColor = amb.primary.copy(alpha = 0.3f))
+    CompositionLocalProvider(LocalTextSelectionColors provides selection) {
+        BasicTextField(
+            value, onChange, singleLine = singleLine, minLines = if (singleLine) 1 else minLines, maxLines = if (singleLine) 1 else maxLines,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = amb.foreground, textAlign = TextAlign.Start), cursorBrush = SolidColor(amb.primary),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = if (singleLine) ImeAction.Next else ImeAction.Default),
+            keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }),
+            modifier = modifier.fillMaxWidth().semantics { contentDescription = placeholder }
+                .onPreviewKeyEvent { e -> if (singleLine && e.type == KeyEventType.KeyDown && (e.key == Key.Enter || e.key == Key.NumPadEnter) && !e.isCtrlPressed && !e.isMetaPressed) focus.moveFocus(FocusDirection.Next) else false },
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty()) Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = amb.mutedForeground)
+                    inner()
+                }
+            },
+        )
+    }
+}
+
+/** Dates side by side on a wide screen, one per line on a phone. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun DateRow(content: @Composable FlowRowScope.() -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        FlowRow(Modifier.fillMaxWidth(), maxItemsInEachRow = if (maxWidth >= 520.dp) 2 else 1, content = content)
+    }
+}
+
+/** A date-only value picked from a calendar; the clear button removes it. No time or zone is ever stored. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun DateField(label: String, value: String?, tag: String, modifier: Modifier = Modifier, invalid: Boolean = false, onChange: (String?) -> Unit) {
+    val amb = Amb.colors
+    var open by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    Column(modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = amb.foreground, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).background(amb.card, RoundedCornerShape(Amb.radiusPanel))
+                .border(if (focused || invalid) 2.dp else 1.dp, if (invalid) amb.destructive else if (focused) amb.primary else amb.border, RoundedCornerShape(Amb.radiusPanel))
+                .onFocusChanged { focused = it.isFocused }.focusable()
+                .clickable(role = Role.Button, onClickLabel = "Choose $label") { open = true }
+                .onPreviewKeyEvent { e -> if (e.type == KeyEventType.KeyDown && (e.key == Key.Enter || e.key == Key.Spacebar) && !e.isCtrlPressed && !e.isMetaPressed) { open = true; true } else false }
+                .semantics { contentDescription = "$label: ${GoalFormat.date(value) ?: "not set"}" }
+                .padding(start = 14.dp, end = 4.dp).testTag(tag),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.CalendarMonth, null, Modifier.size(18.dp), tint = amb.mutedForeground)
+            Spacer(Modifier.width(10.dp))
+            Text(GoalFormat.date(value) ?: "Not set", color = if (value == null) amb.mutedForeground else amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (value != null) IconButton(onClick = { onChange(null) }, modifier = Modifier.testTag("$tag.clear")) { Icon(Icons.Outlined.Close, "Clear $label", tint = amb.mutedForeground) }
+            else Spacer(Modifier.height(48.dp))
+        }
     }
     if (open) {
         val initial = value?.let { runCatching { LocalDate.parse(it).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli() }.getOrNull() }

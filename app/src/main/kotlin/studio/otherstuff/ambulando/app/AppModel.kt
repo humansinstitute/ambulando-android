@@ -325,7 +325,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var channels by mutableStateOf(emptyList<ChannelRecord>()); private set
     internal val artefactFilters = mutableStateMapOf<String, Pair<String, String>>()
     var context by mutableStateOf(WorkContext.HOME); private set
-    var section by mutableStateOf(AppSection.DECK)
+    var section by mutableStateOf(AppSection.HOME)
     var notice by mutableStateOf<String?>(null); private set
     val canvasViewports = mutableStateMapOf<String, studio.otherstuff.ambulando.core.surfaces.CanvasViewport>()
     /** Where each conversation was left (by draft key) while the app runs, so returning to it keeps the reading position. */
@@ -947,7 +947,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         context = WorkContext.decode(runtime.store.reader.state(WorkContext.stateKey(runtime.connection.id, runtime.workspace.id))) ?: WorkContext.HOME
         activeBoundaryId = entry.id
         editorDoc = null; editorBoard = null; autoEditedDoc = null
-        section = AppSection.DECK
+        section = AppSection.landing(context)
         WorkspaceCatalog.saveSelected(catalog, entry.id)
         catalog.writer.setState("workspace:${runtime.connection.id}", runtime.workspace.id)
         observeActive(runtime)
@@ -975,6 +975,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         val rt = active ?: return
         val boundary = rt.boundary
         context = WorkContext(scopeId, channelId)
+        // Home always shows the whole workspace: choosing a scope or channel from anywhere (a mention, a link) opens Deck.
+        if (section == AppSection.HOME && !context.isHome) section = AppSection.DECK
         rt.store.writer.setState(WorkContext.stateKey(rt.connection.id, rt.workspace.id), context.encoded())
         if (activeBoundaryId == boundary.id) refresh()
     }

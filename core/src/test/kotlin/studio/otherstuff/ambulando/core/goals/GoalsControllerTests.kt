@@ -63,4 +63,38 @@ class GoalsControllerTests {
         assertTrue(runCatching { c.edit(g.id, GoalEdit.SetName("A", "B")) }.isFailure)
         ok = true; assertEquals("A", h.api.readGoal(w, h.app, g.id).goal.name)
     }
+
+    private fun GoalsController.active() = GoalFocus.order(state.value.goals.filter { it.goal.status == GoalStatus.ACTIVE })
+
+    @Test fun focusMoveSavesEachWriteAndPersistsForOtherClients() = runBlocking {
+        val h = SampleHarness(); val c = ready(h); val other = controller(h)
+        val ids = listOf("A", "B", "C").map { c.create(Goal.create(it, "d")).id }
+        assertEquals(3, c.move(c.active(), ids[0], 2))   // all unranked, first to bottom: ranks B and C, then A
+        other.refresh()
+        assertEquals(listOf("B", "C", "A"), other.active().map { it.goal.name })
+        assertEquals(0, c.move(c.active(), ids[1], 0))   // unchanged position writes nothing
+    }
+
+    @Test fun staleRankMidBatchStopsAfterSavedPrefix() = runBlocking {
+        val h = SampleHarness(); val c = ready(h); val other = ready(h, controller(h))
+        val ids = listOf("A", "B", "C").map { c.create(Goal.create(it, "d")).id }
+        val seen = c.active()
+        other.refresh(); other.edit(ids[2], GoalEdit.SetFocusRank(null, "z"))   // C ranked elsewhere after this device looked
+        val e = runCatching { c.move(seen, ids[0], 2) }.exceptionOrNull() as GoalMoveIncomplete
+        assertEquals(1, e.saved); assertEquals(3, e.total)
+        assertTrue(e.message!!.startsWith("Saved 1 of 3 order changes. The goal order was changed elsewhere."))
+        // B's write stayed; C kept the other device's rank; A was never written; the reloaded order is valid.
+        assertEquals(listOf("B", "C", "A"), c.active().map { it.goal.name })
+        assertNull(GoalFocus.rank(c.goal(ids[0])!!.goal)); assertEquals("z", GoalFocus.rank(c.goal(ids[2])!!.goal))
+    }
+
+    @Test fun archivedGoalMidBatchStopsAndFirstWriteRefusalSavesNothing() = runBlocking {
+        val h = SampleHarness(); val c = ready(h); val other = ready(h, controller(h))
+        val ids = listOf("A", "B", "C").map { c.create(Goal.create(it, "d")).id }
+        val seen = c.active()
+        other.refresh(); other.edit(ids[1], GoalEdit.SetStatus(GoalStatus.ACTIVE, GoalStatus.ARCHIVED))
+        val e = runCatching { c.move(seen, ids[0], 2) }.exceptionOrNull() as GoalMoveIncomplete
+        assertEquals(0, e.saved); assertEquals(3, e.total)
+        assertTrue(c.state.value.goals.none { GoalFocus.rank(it.goal) != null })
+    }
 }

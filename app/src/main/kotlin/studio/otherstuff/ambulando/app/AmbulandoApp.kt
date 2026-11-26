@@ -68,7 +68,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             studio.otherstuff.ambulando.app.ui.nav.RouteState.decode(navStore.reader.state(navKey), workspace.id)?.let { saved ->
                 if (stacks.snapshot().values.all { it.isEmpty() }) {
                     stacks.restore(saved.stacks)
-                    AppSection.entries.firstOrNull { it.key == saved.section }?.takeIf { model.section == AppSection.DECK }?.let { model.section = it }
+                    AppSection.entries.firstOrNull { it.key == saved.section }?.takeIf { model.section == AppSection.landing(model.context) }?.let { model.section = it }
                 }
             }
         }
@@ -164,7 +164,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             val target = when (route) {
                 is WorkRoute.WorkspaceReport -> AppSection.TOOLBOX
                 is WorkRoute.DailyMetrics -> AppSection.TOOLBOX
-                is WorkRoute.Goals, is WorkRoute.Goal -> AppSection.DECK
+                is WorkRoute.Goals, is WorkRoute.Goal -> if (model.section == AppSection.HOME) AppSection.HOME else AppSection.DECK
                 is WorkRoute.Task -> AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
                 is WorkRoute.File -> if (model.section == AppSection.DOCS) AppSection.DOCS else AppSection.FILES
@@ -172,10 +172,12 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 else -> model.section
             }
             model.section = target
-            if (route is WorkRoute.Channel && target != AppSection.DECK) model.channels.firstOrNull { it.id == route.channelId }?.let { model.selectContext(it.scopeId, it.id) }
+            // Deck and Home keep their whole-workspace view: a conversation opened there goes on their own stack.
+            val keepsContext = target == AppSection.DECK || target == AppSection.HOME
+            if (route is WorkRoute.Channel && !keepsContext) model.channels.firstOrNull { it.id == route.channelId }?.let { model.selectContext(it.scopeId, it.id) }
             else {
                 stacks.push(target, route)
-                if (route is WorkRoute.Thread && target != AppSection.DECK) model.act {
+                if (route is WorkRoute.Thread && !keepsContext) model.act {
                     val id = route.channelId ?: model.store.reader.thread(w.id, route.threadId)?.channelId
                     model.channels.firstOrNull { it.id == id }?.let { model.selectContext(it.scopeId, it.id) }
                 }
@@ -227,6 +229,8 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             studio.otherstuff.ambulando.core.context.NavScope(scope.id, scope.name, scope.kind),
             model.channels.filter { it.scopeId == scope.id }.map { studio.otherstuff.ambulando.core.context.NavChannel(it.id, it.scopeId, it.name, it.kind) }, studio.otherstuff.ambulando.core.context.SidebarNavigation.isDirectMessageScope(studio.otherstuff.ambulando.core.context.NavScope(scope.id, scope.name, scope.kind))) }
         fun choose(scopeId: String?, channelId: String?) { if (!model.viewLocked) { stacks.resetContextBound(); model.section = AppSection.DECK; model.selectContext(scopeId, channelId) }; sidebar = false }
+        // Home is its own surface (goals, briefing, latest chats) showing everything, as the unfiltered Deck did; Deck stays one tap away.
+        fun goHome() { if (!model.viewLocked) { stacks.resetContextBound(); model.section = AppSection.HOME; model.selectContext(null, null); model.refresh() }; sidebar = false }
         val actions = object : ShellActions {
             override fun select(section: AppSection) { focusManager.clearFocus(force = true); keyboard?.hide(); model.section = section; model.refresh() }
             override fun reselect(section: AppSection) { stacks.popToRoot(section) }
@@ -235,9 +239,9 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             override fun workspaceHome() {
                 focusManager.clearFocus(force = true); keyboard?.hide()
                 model.viewLocked = false
-                choose(null, null)
+                goHome()
             }
-            override fun chooseHome() { choose(null, null) }
+            override fun chooseHome() { goHome() }
             override fun toggleViewLock() { model.viewLocked = !model.viewLocked }
             override fun search() { focusManager.clearFocus(force = true); keyboard?.hide(); search = true }
             override fun notifications() { focusManager.clearFocus(force = true); keyboard?.hide(); notifications = true }
@@ -295,7 +299,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             SidebarContent(SidebarState(w?.label ?: "Workspaces", w?.id, model.workspaces.map { it.id to it.label }, true, groups, unread, model.activeEntry?.nav?.collapsed ?: emptySet(), model.context,
                 labels, model.scopes.filter { !it.accessRemoved }.map { it.id }.toSet(),
                 if (w == null) studio.otherstuff.ambulando.core.context.NavigationLoadState.FindingWorkspaces else studio.otherstuff.ambulando.core.context.NavigationLoadState.Ready(model.notice), false, stacked), object : SidebarActions {
-                override fun chooseHome() { choose(null, null) }
+                override fun chooseHome() { goHome() }
                 override fun chooseScope(scopeId: String) { choose(scopeId, null) }
                 override fun chooseChannel(scopeId: String, channelId: String) { choose(scopeId, channelId) }
                 override fun toggleCollapsed(scopeId: String) { model.activeEntry?.let { model.toggleScopeCollapsed(it, scopeId) } }
@@ -319,6 +323,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 AppSection.CHAT -> ConversationInbox(model)
                 AppSection.DOCS -> ConnectedDocuments(model, null)
                 AppSection.FILES -> NativeFiles(model)
+                AppSection.HOME -> ConnectedHome(model)
                 AppSection.DECK -> ConnectedDeck(model) { channelId ->
                     // Recheck the exact context at invocation, including a delayed menu click after access/context changed.
                     val channel = model.channels.firstOrNull { it.id == channelId && it.id == model.context.channelId && it.scopeId == model.context.scopeId && !it.accessRemoved }

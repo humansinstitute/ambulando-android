@@ -95,6 +95,26 @@ class GoalsController(
         publish(saved); saved
     }
 
+    /**
+     * Moves goal [fileId] to [toIndex] among [items] (one status group, in focus order) by saving [GoalFocus.planMove]'s
+     * writes one at a time, top first. Each write is that goal's own expectation-checked edit against its current version.
+     * The first refusal (reordered elsewhere, removed, denied) stops the move: later writes are not attempted and the plan
+     * is never retried as a whole; the goals are reloaded and [GoalMoveIncomplete] says how many changes were saved.
+     * Every partial result is still a valid order. Returns the number of writes saved.
+     */
+    suspend fun move(items: List<GoalDocument>, fileId: String, toIndex: Int): Int {
+        val plan = GoalFocus.planMove(items, fileId, toIndex)
+        plan.forEachIndexed { saved, write ->
+            try { edit(write.fileId, write.edit) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                runCatching { refresh() }
+                throw GoalMoveIncomplete(saved, plan.size, (if (e is GoalError || e is GoalSaveFailed) e.message else null) ?: userMessage(e))
+            }
+        }
+        return plan.size
+    }
+
     /** Re-reads one goal from Tower (e.g. after a conflict or an agent edit). */
     suspend fun reload(fileId: String): GoalDocument = gate.withLock {
         check(current())
@@ -105,10 +125,15 @@ class GoalsController(
         s.copy(goals = (s.goals.filterNot { it.id == doc.id } + doc).sortedWith(order), loading = false, loaded = true, error = null)
     }
 
-    private val order = compareBy<GoalDocument>({ it.goal.status.ordinal }, { it.goal.targetDate ?: "9999-12-31" }, { it.goal.name.lowercase() }, { it.id })
+    /** The shared focus order (status, chosen rank, then date and name), the same on every client. */
+    private val order = GoalFocus.comparator
 
     private fun userMessage(e: Exception): String = when (e) {
         is GoalError -> e.message ?: "The goal could not be read."
         else -> ConnectionFailure.userMessage(e) ?: "Goals could not be loaded."
     }
 }
+
+/** A focus move stopped after [saved] of [total] rank changes; the order shown after reloading is valid. */
+class GoalMoveIncomplete(val saved: Int, val total: Int, val reason: String) :
+    Exception("Saved $saved of $total order change${if (total == 1) "" else "s"}. $reason")

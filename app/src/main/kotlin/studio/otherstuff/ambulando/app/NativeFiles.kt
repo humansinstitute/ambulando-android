@@ -38,7 +38,7 @@ import java.io.File
 import java.util.UUID
 
 @Composable internal fun NativeFiles(model: AppModel, fileId: String? = null, direct: Boolean = true, exactFile: studio.otherstuff.ambulando.core.transport.FileRecord? = null, exactVersion: studio.otherstuff.ambulando.core.transport.FileVersionRecord? = null) {
-    if (fileId != null && direct) { DirectArtefact(model, fileId); return }
+    if (fileId != null && direct) { GoalOrFile(model, fileId) { DirectArtefact(model, fileId) }; return }
     val w = model.workspace ?: return; val c = model.connection ?: return
     val context = LocalContext.current
     val cache = remember(model.activeBoundaryId) { model.fileCache() }

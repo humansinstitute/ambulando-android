@@ -24,6 +24,21 @@ sealed class GoalEdit {
         override fun apply(goal: Goal) = goal.setting("target date", goal.targetDate, expected, value?.trim()?.ifEmpty { null }) { copy(targetDate = it) }
     }
 
+    /**
+     * Places the goal in the focus order (see [GoalFocus]); [value] null clears it. Only this goal changes. [expected] is
+     * the valid rank the mover saw (null for unranked), so a goal reordered elsewhere is a conflict, never a silent move.
+     */
+    data class SetFocusRank(val expected: String?, val value: String?) : GoalEdit() {
+        override fun apply(goal: Goal): Goal {
+            goal.requireEditable()
+            if (value != null && !GoalFocus.isValid(value)) throw GoalError.Invalid("A focus rank is invalid.")
+            val current = GoalFocus.rank(goal)
+            if (current == value) return goal
+            if (current != expected) throw GoalError.Conflict("The goal order was changed elsewhere.")
+            return GoalFocus.setting(goal, value)
+        }
+    }
+
     /** Completing is explicit and reversible; archiving keeps every checkpoint and link, and linked work is never touched. */
     data class SetStatus(val expected: GoalStatus, val value: GoalStatus) : GoalEdit() {
         override fun apply(goal: Goal): Goal {

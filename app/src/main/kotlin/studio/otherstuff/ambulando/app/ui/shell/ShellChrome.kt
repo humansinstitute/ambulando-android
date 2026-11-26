@@ -54,6 +54,8 @@ import studio.otherstuff.ambulando.app.ui.theme.Amb
 
 /** The app's sections, in the web client's mobile order and labels. */
 enum class AppSection(val title: String, val icon: ImageVector, val contextBound: Boolean, val lockable: Boolean) {
+    /** Workspace Home (the strip's globe and the sidebar's Home): goals, the briefing and latest chats. Never a strip button of its own. */
+    HOME("Home", Icons.Outlined.Public, contextBound = false, lockable = false),
     DECK("Deck", Icons.Outlined.ViewCarousel, contextBound = true, lockable = false),
     CHAT("Chat", Icons.Outlined.Forum, contextBound = true, lockable = true),
     TASKS("Tasks", Icons.Outlined.Checklist, contextBound = true, lockable = true),
@@ -68,9 +70,15 @@ enum class AppSection(val title: String, val icon: ImageVector, val contextBound
     companion object {
         /** Chat, Agents and Context are optional (Settings › Sections), off by default. */
         fun visible(showAgents: Boolean, showContext: Boolean, showChat: Boolean = true): List<AppSection> =
-            entries.filter { (it != CHAT || showChat) && (it != AGENTS || showAgents) && (it != CONTEXT || showContext) }
+            entries.filter { it != HOME && (it != CHAT || showChat) && (it != AGENTS || showAgents) && (it != CONTEXT || showContext) }
 
         fun fromKey(key: String?): AppSection? = entries.firstOrNull { it.key == key }
+
+        /**
+         * Where a workspace opens when nothing more specific was asked for: Home for the unfiltered workspace, Deck when a
+         * scope or channel is chosen. Restored sections, deep links and notifications still open where they point.
+         */
+        fun landing(context: studio.otherstuff.ambulando.core.context.WorkContext): AppSection = if (context.isHome) HOME else DECK
     }
 }
 

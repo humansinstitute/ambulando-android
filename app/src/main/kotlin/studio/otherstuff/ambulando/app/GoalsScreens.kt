@@ -128,7 +128,7 @@ import java.util.UUID
 }
 
 /** Reloads on entry, when the app returns to the foreground and when this workspace's files change (another device or an agent saved). */
-@Composable private fun GoalsRefresh(model: AppModel, goals: GoalsController) {
+@Composable internal fun GoalsRefresh(model: AppModel, goals: GoalsController) {
     val w = model.workspace ?: return
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(goals) { goals.refresh() }
@@ -140,6 +140,25 @@ import java.util.UUID
         model.store.changes.stream().collect { changes ->
             if (changes.any { (it.workspaceId == null || it.workspaceId == w.id) && it.table == StoreTable.FILES }) { delay(1500); goals.refresh() }
         }
+    }
+}
+
+/**
+ * A File opened by reference (a mention, search, a chip) that is one of the viewer's goals shows the goal, not its JSON.
+ * Anything else, or a goal file this viewer's Goals space does not hold, keeps the ordinary [file] view.
+ */
+@Composable internal fun GoalOrFile(model: AppModel, fileId: String, file: @Composable () -> Unit) {
+    val w = model.workspace ?: return file()
+    val stored by remember(w.id, fileId) { model.store.liveQuery({ it.workspaceId == w.id && it.table == StoreTable.FILES }) { model.store.reader.file(w.id, fileId) } }.collectAsState(null)
+    val record = stored
+    if (record == null || record.accessRemoved || !GoalFiles.isGoal(record)) return file()
+    val goals = rememberGoals(model) ?: return file()
+    val state by goals.state.collectAsState()
+    LaunchedEffect(goals) { if (!goals.state.value.loaded) goals.refresh() }
+    when {
+        state.goals.any { it.id == fileId } -> GoalScreen(model, fileId)
+        !state.loaded && state.error == null -> LinearProgressIndicator(Modifier.fillMaxWidth().testTag("goal.file.loading"))
+        else -> file()
     }
 }
 

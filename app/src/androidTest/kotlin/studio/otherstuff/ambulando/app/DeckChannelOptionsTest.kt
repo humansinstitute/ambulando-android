@@ -36,7 +36,8 @@ class DeckChannelOptionsTest {
             compose.runOnIdle { model.selectWorkspace(model.workspaces.first { it.id == SampleIds.STUDIO }) }
             compose.waitUntil(30_000) { model.channels.any { it.id == SampleIds.DESIGN } }
             fun select(channelId: String?) {
-                compose.runOnIdle { model.selectContext(if (channelId == null) null else SampleIds.SCOPE_AMBULANDO, channelId) }
+                // Deck explicitly: an unfiltered workspace now opens on Home.
+                compose.runOnIdle { model.selectContext(if (channelId == null) null else SampleIds.SCOPE_AMBULANDO, channelId); model.section = studio.otherstuff.ambulando.app.ui.shell.AppSection.DECK }
                 compose.waitUntil(30_000) { model.context.channelId == channelId }
                 waitTag("deck.inbox.readMenu")
             }
