@@ -95,6 +95,9 @@ class DocumentEditController(
     private val draftDebounceMillis: Long = 500,
     private val renewMillis: Long = 60_000,
     private val autosaveMillis: Long = 60_000,
+    /** Thread detachment retains recovery but requires an explicit Save to publish. */
+    private val automaticSaveAllowed: () -> Boolean = { true },
+    private val onExplicitSave: () -> Unit = {},
 ) {
     enum class Tone { INFO, SUCCESS, WARNING, ERROR }
 
@@ -257,7 +260,7 @@ class DocumentEditController(
         val decoded = withContext(Dispatchers.Default) { DocumentBody(source.first, source.second) }
         body = decoded; sourceBytes = source.first
         journal = store.loadDocumentReview(draftKey)
-        // The draft row carries its own hold, so a missing, stale or reset journal can never release a merged draft to autosave.
+        // The draft row carries its own hold, so a missing, stale or reset journal can never release held recovery to autosave.
         if (draft?.state == DocDraft.State.HELD && !journal.pendingMergedSave) {
             journal.pendingMergedSave = true
             runCatching { store.writer.saveDocumentReview(journal, draftKey) }
@@ -429,12 +432,12 @@ class DocumentEditController(
                 delay(autosaveMillis)
                 if (!active) return@launch
                 reconcileRemote()
-                if (canAutosave()) save()
+                if (canAutosave()) personsAction(false) { saveNow() }
             }
         }
     }
 
-    private fun canAutosave() = dirty && !journal.pendingMergedSave && remoteVersion == null && journal.previewText == null && !authorityLost && !saving && !takingOver
+    private fun canAutosave() = automaticSaveAllowed() && dirty && !journal.pendingMergedSave && remoteVersion == null && journal.previewText == null && !authorityLost && !saving && !takingOver
 
     /** Background and foreground. Local durability comes first; the cloud flush is best effort. */
     suspend fun setActive(value: Boolean) {
@@ -447,7 +450,7 @@ class DocumentEditController(
     suspend fun flush() {
         checkpoint()
         persistReview()
-        if (canAutosave()) save()
+        if (canAutosave()) personsAction(false) { saveNow() }
     }
 
     private suspend fun inspectAuthority() {
@@ -1154,7 +1157,18 @@ class DocumentEditController(
         if (closed) return false
         if (pageReady) page?.snapshot()?.let { if (it != content) pageChanged(it) }
         if (!dirty) return true
+        if (!automaticSaveAllowed()) journal.pendingMergedSave = true
         return persistDraft(DocDraft.State.EDITING) != null
+    }
+
+    /** Holds detached recovery until an explicit source Save, including other editor entrypoints. */
+    suspend fun holdRecovery(): Boolean {
+        if (closed) return false
+        journal.pendingMergedSave = true
+        val preserved = checkpoint()
+        val reviewPreserved = persistReview()
+        publish()
+        return preserved && reviewPreserved
     }
 
     /** Encodes the current edit (off the main thread) and stores it as the durable draft. */
@@ -1201,11 +1215,12 @@ class DocumentEditController(
             setStatus("Your edits could not be stored on this device: ${e.message}", Tone.ERROR)
             return null
         }
-        if (!saving && statusTone != Tone.WARNING && statusTone != Tone.ERROR) setStatus("Saved locally; waiting to sync.", Tone.INFO)
+        if (!saving && statusTone != Tone.WARNING && statusTone != Tone.ERROR) setStatus(if (journal.pendingMergedSave) "Recovery saved locally; use Save to publish." else "Saved locally; waiting to sync.", Tone.INFO)
         return draft to revision
     }
 
     suspend fun prepareChatReference(): studio.otherstuff.ambulando.core.chat.ArtefactChatReference {
+        check(automaticSaveAllowed() && !journal.pendingMergedSave) { "Preserved recovery needs an explicit source Save before Send." }
         check(checkpoint()) { "Document did not confirm pending edits." }
         check(!saving && !takingOver && !permissionDenied && remoteVersion == null && journal.previewText == null) { "Resolve the document review before Send." }
         if (dirty) check(save()) { state.value.status ?: "Resolve the document save before Send." }
@@ -1214,7 +1229,14 @@ class DocumentEditController(
     }
 
     /** Saves through Tower (lease, expected version). True when Tower made it the canonical version. */
-    suspend fun save(): Boolean = personsAction(false) { saveNow() }
+    suspend fun save(): Boolean {
+        val acknowledged = personsAction(false) { saveNow() }
+        if (acknowledged) {
+            if (!dirty && journal.pendingMergedSave) { journal.pendingMergedSave = false; persistReview(); publish() }
+            onExplicitSave()
+        }
+        return acknowledged
+    }
 
     private suspend fun saveNow(): Boolean {
         if (closed || saving || takingOver || reconciling || permissionDenied) return false

@@ -50,7 +50,7 @@ class SampleWorkTower(
     companion object {
         val COLLECTIONS = listOf(
             "tasks", "task_comments", "docs", "doc_comments", "objects", "files", "folders", "view_states", "reactions", "leases", "requests",
-            "recoveries", "file_versions", "fenced_sessions",
+            "recoveries", "file_versions", "doc_versions", "fenced_sessions",
         )
 
         /** Whether a route under `/workspaces/:w/` belongs to this stand-in. */
@@ -197,6 +197,7 @@ class SampleWorkTower(
                 "activity_version" to 1L, "created_at" to stamp, "updated_at" to stamp, "archived_at" to null, "record_state" to "active",
             ),
         )
+        recordDocVersion(requireNotNull(state.row("docs", id)), "create")
         id
     }
 
@@ -489,6 +490,24 @@ class SampleWorkTower(
                 201 to mapOf("doc" to docOut(row))
             }
             method == "GET" && n == 2 && head == "docs" -> state.row("docs", p[1])?.let { 200 to mapOf("doc" to docOut(it)) } ?: errorReply(404, "doc_not_found")
+            method == "GET" && n == 3 && head == "docs" && p[2] == "versions" -> {
+                val doc = state.row("docs", p[1]) ?: return errorReply(404, "doc_not_found")
+                // Older persisted samples retain only their known head; never invent earlier bytes.
+                recordDocVersion(doc, "snapshot")
+                val versions = state.rows("doc_versions").filter { it["doc_id"] == p[1] }
+                    .sortedByDescending { it["row_version"].asInt() ?: 0 }
+                    .take(url.query("limit")?.toIntOrNull()?.coerceIn(1, 200) ?: 50).map { version ->
+                        val obj = state.row("objects", version["storage_object_id"].asString() ?: "")
+                        val encoded = obj?.get("bytes").asString()
+                        LinkedHashMap(version).also { result -> result["content"] =
+                            if (encoded == null) linkedMapOf("object_id" to version["storage_object_id"], "missing" to true)
+                            else linkedMapOf("object_id" to version["storage_object_id"], "content_type" to obj?.get("content_type"),
+                                "sha256_hex" to obj?.get("sha256_hex"), "size_bytes" to Base64.getDecoder().decode(encoded).size,
+                                "raw" to String(Base64.getDecoder().decode(encoded), Charsets.UTF_8))
+                        }
+                    }
+                200 to linkedMapOf("doc_id" to p[1], "versions" to versions, "next_cursor" to null)
+            }
             method == "GET" && n == 3 && head == "docs" && p[2] == "body" -> {
                 val d = state.row("docs", p[1])
                 val objectId = d?.get("storage_object_id").asString()
@@ -889,10 +908,22 @@ class SampleWorkTower(
         SampleChange("task", row["id"] as String, operation, row["channel_id"].asString(), row["scope_id"].asString(), row["row_version"].asInt()?.toLong()),
     )
 
-    private fun emitDoc(row: Row, operation: String) = emit(
-        SampleChange("doc", row["id"] as String, operation, row["channel_id"].asString(), row["scope_id"].asString()?.takeIf { it.isNotEmpty() },
-            row["row_version"].asInt()?.toLong()),
-    )
+    private fun recordDocVersion(row: Row, operation: String) {
+        val doc = row["id"].asString() ?: return
+        val version = row["row_version"].asInt() ?: return
+        val key = "$doc:$version"
+        if (state.row("doc_versions", key) != null) return
+        state.put("doc_versions", key, LinkedHashMap(row).also {
+            it.remove("id"); it["version_id"] = key; it["doc_id"] = doc; it["workspace_id"] = workspaceId
+            it["version"] = version.toLong(); it["row_version"] = version.toLong(); it["operation"] = operation
+            it["actor_npub"] = actor; it["created_at"] = row["updated_at"]
+        })
+    }
+
+    private fun emitDoc(row: Row, operation: String) {
+        recordDocVersion(row, operation)
+        emit(SampleChange("doc", row["id"] as String, operation, row["channel_id"].asString(), row["scope_id"].asString(), row["row_version"].asInt()?.toLong()))
+    }
 
     private fun createTask(channel: String, o: Row): Reply {
         val title = (o["title"].asString() ?: "").trimWhitespace()
@@ -978,6 +1009,7 @@ class SampleWorkTower(
             row["storage_object_id"] = storeObject(other.bytes, other.contentType, "external.json")
             row["row_version"] = ((row["row_version"].asInt() ?: 1) + 1).toLong()
             state.put("docs", id, row)
+            recordDocVersion(row, "external")
         }
         val head = state.row("objects", row["storage_object_id"].asString() ?: "") ?: LinkedHashMap()
         val stale = o["base_available"] == false || o["row_version"].asInt() == null || o["row_version"].asInt() != row["row_version"].asInt() ||

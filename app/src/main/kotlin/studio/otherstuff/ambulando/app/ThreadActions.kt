@@ -7,6 +7,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -47,6 +48,11 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
             Text(listOfNotNull((record?.channelId ?: menu?.first?.root?.channelId)?.let { channelLabels(model)[it] }, participants.joinToString(", ").takeIf { it.isNotBlank() }).joinToString(" · "),
                 maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground)
+        }
+        LocalThreadArtefacts.current?.let { artefacts ->
+            IconButton(onClick = { artefacts.listing = true }, enabled = !artefacts.busy, modifier = Modifier.testTag("thread.artefacts.open")) {
+                Icon(Icons.Outlined.FolderOpen, "Thread artefacts (${artefacts.members.size})")
+            }
         }
         RecordPin(model, PinRecord.ResourceType.THREAD, threadId)
         IconButton(onClick = { addToGoal = true }, enabled = record != null, modifier = Modifier.testTag("thread.addToGoal")) { Icon(Icons.Outlined.Flag, "Add to goal") }

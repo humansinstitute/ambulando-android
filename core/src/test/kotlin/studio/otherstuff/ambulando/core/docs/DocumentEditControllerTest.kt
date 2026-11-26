@@ -5,6 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -53,10 +55,10 @@ internal class World(val tower: FakeDocTower = FakeDocTower(), val store: LocalS
 
     fun docRecord(): DocRecord = DocRecord.parse(kotlinx.serialization.json.Json.parseToJsonElement(tower.docJson()) as kotlinx.serialization.json.JsonObject)
 
-    suspend fun open(page: FakePage = FakePage(), uploads: () -> Boolean = { false }, autosaveMillis: Long = 600_000): DocumentEditController {
+    suspend fun open(page: FakePage = FakePage(), uploads: () -> Boolean = { false }, autosaveMillis: Long = 600_000, automaticSaveAllowed: () -> Boolean = { true }, onExplicitSave: () -> Unit = {}): DocumentEditController {
         val controller = DocumentEditController(
             docRecord(), connection, workspace, store, authority, scope, isUnlocked = { unlocked }, uploadsPending = uploads,
-            draftDebounceMillis = 5, reviewDebounceMillis = 5, renewMillis = 25, autosaveMillis = autosaveMillis,
+            draftDebounceMillis = 5, reviewDebounceMillis = 5, renewMillis = 25, autosaveMillis = autosaveMillis, automaticSaveAllowed = automaticSaveAllowed, onExplicitSave = onExplicitSave,
         )
         controller.load()
         controller.pageAttached(page)
@@ -97,19 +99,22 @@ class DocumentEditControllerTest {
         assertEquals(DocDraft.State.EDITING, stored.state)
         assertEquals(1, stored.baseRowVersion)
         assertEquals("Two, edited offline", Docs.paragraphs(stored.body)[1])
+        // Process death stops the old editor and its debounce jobs before the new process can save.
+        scope.coroutineContext[Job]?.cancelAndJoin()
         // Relaunch: a new editor on the same store (process death lost every in-memory lease and session).
         val second = World(tower, store).also { it.reconnect(connection) }
-        val reopened = second.open(FakePage())
-        assertTrue("the draft is restored as unsaved work", reopened.dirty)
-        assertEquals("Two, edited offline", reopened.page!!.let { (it as FakePage).paragraphs()[1] })
-        assertEquals("nothing was published while offline", 0, tower.patches.size)
-        // Back online: Save publishes it.
-        tower.offline = false
-        assertTrue(reopened.prepareOpening())
-        assertTrue(reopened.save())
-        assertEquals(listOf("One", "Two, edited offline", "Three"), bodyParagraphs(tower))
-        assertNull(second.draft())
-        second.scope.cancel()
+        try {
+            val reopened = second.open(FakePage())
+            assertTrue("the draft is restored as unsaved work", reopened.dirty)
+            assertEquals("Two, edited offline", reopened.page!!.let { (it as FakePage).paragraphs()[1] })
+            assertEquals("nothing was published while offline", 0, tower.patches.size)
+            // Back online: Save publishes it.
+            tower.offline = false
+            assertTrue(reopened.prepareOpening())
+            assertTrue(reopened.save())
+            assertEquals(listOf("One", "Two, edited offline", "Three"), bodyParagraphs(tower))
+            assertNull(second.draft())
+        } finally { second.scope.coroutineContext[Job]?.cancelAndJoin() }
     }
 
     // Found as the intermittent "lease timing" failures: the background version check sets `reconciling`, and a person's Save or
@@ -378,6 +383,57 @@ class DocumentEditControllerTest {
         editor.beginMerge()
         assertTrue(editor.useMergePreview())
         return editor to page
+    }
+
+    @Test fun detachedRecoverySurvivesGlobalDocsReopenUntilExplicitSave() = world {
+        val page = FakePage()
+        val editor = open(page, automaticSaveAllowed = { false })
+        editor.prepareOpening()
+        page.editParagraph(0, "Held outside the thread")
+        editor.pageChanged(page.text)
+        assertTrue(editor.holdRecovery())
+        assertEquals(DocDraft.State.HELD, draft()!!.state)
+        editor.close()
+        val reopened = open(FakePage(), autosaveMillis = 20)
+        reopened.prepareOpening(); reopened.holdLease()
+        kotlinx.coroutines.delay(250)
+        reopened.setActive(false)
+        assertEquals("a normal Docs entrypoint must not publish detached recovery", 0, tower.patches.size)
+        assertTrue(runCatching { reopened.prepareChatReference() }.isFailure)
+        assertTrue(reopened.save())
+        assertEquals(1, tower.patches.size)
+        assertNotNull(reopened.prepareChatReference())
+    }
+
+    @Test fun detachedThreadHoldsAutosaveAndBackgroundFlushButPreservesExplicitSave() = world {
+        var attached = true
+        var recoveryHeld = false
+        val page = FakePage()
+        val editor = open(page, autosaveMillis = 20, automaticSaveAllowed = { attached && !recoveryHeld }, onExplicitSave = { recoveryHeld = false })
+        editor.prepareOpening()
+        page.editParagraph(0, "Detached work")
+        editor.pageChanged(page.text)
+        attached = false; recoveryHeld = true
+        editor.holdLease()
+        kotlinx.coroutines.delay(250)
+        editor.setActive(false)
+        assertEquals(0, tower.patches.size)
+        assertNotNull(draft())
+        attached = true
+        editor.setActive(true)
+        kotlinx.coroutines.delay(250)
+        assertEquals(0, tower.patches.size)
+        assertTrue(runCatching { editor.prepareChatReference() }.isFailure)
+        assertTrue(editor.save())
+        assertFalse(recoveryHeld)
+        assertNotNull(editor.prepareChatReference())
+        assertEquals(1, tower.patches.size)
+        attached = true
+        editor.setActive(true)
+        page.editParagraph(0, "Explicit reattachment resumes autosave")
+        editor.pageChanged(page.text)
+        eventually { tower.patches.size == 2 }
+        assertEquals(2, tower.patches.size)
     }
 
     @Test fun theMinuteAutosaveNeverPublishesAMergedDraftBeforeAnExplicitSave() = world {

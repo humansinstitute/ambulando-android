@@ -110,17 +110,19 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
     var visitEpoch by remember(docId) { mutableIntStateOf(0) }
     var visible by remember(docId) { mutableStateOf(true) }
 
+    val tab = LocalThreadArtefactTab.current
     val controller = remember(docId, c.id, w.id) {
         lateinit var self: DocumentEditController
         self = DocumentEditController(
             record, c, w, model.store, RunnerAuthority(model.documents, c, w), scope,
+            automaticSaveAllowed = { tab?.automaticPublicationAllowed != false },
+            onExplicitSave = { tab?.sourceSaved() },
             isUnlocked = { model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked },
             uploadsPending = { inserted.isNotEmpty() || UploadToken.containsAny(self.currentContent) },
         )
         self
     }
     val s by controller.state.collectAsState()
-    val tab = LocalThreadArtefactTab.current
     val restoredViewport = remember(controller) { tab?.viewport }
     var viewportRestored by remember(controller) { mutableStateOf(false) }
     SideEffect {
@@ -134,8 +136,14 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
         }
         tab?.validate = { ref -> val now = controller.state.value; !now.dirty && now.localBaseVersion?.toString() == ref.revision && !now.saving && now.remoteVersion == null }
         tab?.checkpoint = { controller.checkpoint() && controller.persistReview() }
+        tab?.sourceDirty = { controller.state.value.dirty }
+        tab?.saveSource = { controller.save() }
+        tab?.holdRecovery = { controller.holdRecovery() }
     }
-    DisposableEffect(tab, controller) { onDispose { tab?.prepare = null; tab?.checkpoint = null } }
+    LaunchedEffect(tab?.publicationHeld, s.dirty, s.pendingMergedSave) {
+        if (tab?.publicationHeld == true && s.dirty && !s.pendingMergedSave) controller.holdRecovery()
+    }
+    DisposableEffect(tab, controller) { onDispose { tab?.prepare = null; tab?.checkpoint = null; tab?.sourceDirty = null; tab?.saveSource = null; tab?.holdRecovery = null } }
 
 
     // Wiki behaviour for this screen: it reads the local store, keeps the draft safe before leaving and binds through the editor.

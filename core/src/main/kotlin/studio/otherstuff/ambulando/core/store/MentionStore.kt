@@ -11,8 +11,8 @@ data class MentionCandidate(val mention: Mention, val sublabel: String)
 /**
  * The composer's `@` lookahead over this device's store (never the network). As on the web, every type filters on its
  * name (case-insensitive substring); a type prefix (`doc:`, `task:`, `thread:`, `person:`, `agent:`, `channel:`,
- * `scope:`) limits the search to one type. People and agents come first, an exact name first among them, then
- * documents, tasks, chat threads, channels and scopes. Document and task titles, which can number in the thousands,
+ * `scope:`, `file:`/`artefact:`) limits the search to one type. People and agents come first, an exact name first among them, then
+ * documents, files, tasks, chat threads, channels and scopes. Document and task titles, which can number in the thousands,
  * are found through the trigram index in [MentionIndex]; the other lists are small and read directly.
  */
 object MentionSearch {
@@ -27,7 +27,7 @@ object MentionSearch {
     private val prefixes = mapOf(
         "person" to MentionType.PERSON, "agent" to MentionType.AGENT, "doc" to MentionType.DOC, "document" to MentionType.DOC,
         "task" to MentionType.TASK, "thread" to MentionType.CHAT, "channel" to MentionType.CHANNEL, "chat" to MentionType.CHANNEL,
-        "scope" to MentionType.SCOPE,
+        "scope" to MentionType.SCOPE, "file" to MentionType.FILE, "artefact" to MentionType.FILE, "artifact" to MentionType.FILE,
     )
 
     /** The type a `prefix:` query names (null: every type) and the remaining needle, lower-cased. */
@@ -92,6 +92,22 @@ suspend fun StoreReader.mentionCandidates(workspaceId: String, query: String, na
 
     if (wants(MentionType.DOC)) out += MentionIndex.find(this, workspaceId, "doc", needle, cap(MentionType.DOC, 4, 3)).map { (id, title) ->
         MentionCandidate(Mention(MentionType.DOC, id, title), "Document")
+    }
+    // Search before limiting: every synced File is eligible, including formats with a generic native reader.
+    // Retained history is not discovery authority, even when its parent access was revoked independently.
+    if (wants(MentionType.FILE)) out += query(
+        """SELECT f.id FROM files f WHERE f.workspace_id = ?1 AND f.access_removed = 0 AND f.archived = 0
+           AND NOT EXISTS (SELECT 1 FROM channels c WHERE c.workspace_id = f.workspace_id AND c.id = f.channel_id AND c.access_removed = 1)
+           AND NOT EXISTS (SELECT 1 FROM scopes s WHERE s.workspace_id = f.workspace_id AND s.id = f.scope_id AND s.access_removed = 1)
+           AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.workspace_id = f.workspace_id AND w.access_removed = 1)
+           AND (?2 = '' OR instr(lower(f.display_name), ?2) > 0)
+           ORDER BY f.updated_at DESC, f.id LIMIT ?3""",
+        workspaceId, needle, cap(MentionType.FILE, 4, 3),
+    ) { it.text(0)!! }.mapNotNull { id ->
+        fileRow(workspaceId, id)?.let { file ->
+            MentionCandidate(Mention(MentionType.FILE, file.id, file.displayName),
+                studio.otherstuff.ambulando.core.surfaces.ArtefactType.of(file)?.label ?: "File")
+        }
     }
     if (wants(MentionType.TASK)) out += MentionIndex.find(this, workspaceId, "task", needle, cap(MentionType.TASK, 4, 2)).map { (id, title) ->
         MentionCandidate(Mention(MentionType.TASK, id, title), "Task")

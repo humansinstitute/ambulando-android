@@ -66,7 +66,7 @@ class SampleTower(
     val auth = SampleAuth(clock)
 
     private val lock = Any()
-    private val chat = SampleState(directory?.let { File(it, "sample-chat.json") }, listOf("posted", "revised", "requests", "events", "managed"))
+    private val chat = SampleState(directory?.let { File(it, "sample-chat.json") }, listOf("posted", "revised", "requests", "events", "managed", "thread_overrides"))
     private val tick = MutableStateFlow(0L)
     private var actor = ""
     private var offlineFlag = false
@@ -420,11 +420,19 @@ class SampleTower(
                     ?: return errorReply(404, "thread_not_found")
                 val body = request.body?.let { runCatching { Json.parseToJsonElement(it.toString(Charsets.UTF_8)).jsonObject }.getOrNull() }
                     ?: return errorReply(400, "validation_error")
-                val title = (body["title"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: return errorReply(400, "validation_error")
+                val title = (body["title"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+                val metadata = body["metadata"] as? JsonObject
+                if (title == null && metadata == null) return errorReply(400, "validation_error")
                 val version = (body["row_version"] as? JsonPrimitive)?.longOrNull
-                val current = threadTitles[rest[1]]?.second ?: 1L
+                val current = threadOf(root)["row_version"].asInt()?.toLong() ?: 1L
+                if (metadata != null && version == null) return errorReply(400, "validation_error")
                 if (version != null && version != current) return errorReply(409, "stale_row_version")
-                threadTitles[rest[1]] = title to current + 1
+                chat.put("thread_overrides", rest[1], linkedMapOf(
+                    "title" to (title ?: threadOf(root)["title"]), "row_version" to current + 1,
+                    "metadata" to (metadata?.asMap() ?: threadOf(root)["metadata"].asMap().orEmpty()),
+                ))
+                chat.persist()
+                emit(w, SampleChange("thread", rest[1], "updated", root["channel_id"].asString(), rowVersion = current + 1))
                 200 to mapOf("thread" to threadOf(root))
             }
             else -> errorReply(404, "not_found")
@@ -488,15 +496,12 @@ class SampleTower(
             .sortedWith(compareBy({ it["created_at"] as? String ?: "" }, { it["id"] as? String ?: "" }))
     }
 
-    /** Titles set by `PATCH /threads/:t`, with the row version they bring the thread to. */
-    private val threadTitles = HashMap<Any?, Pair<String, Long>>()
-
     private fun threadOf(root: Row): Row {
-        val renamed = threadTitles[root["thread_id"]]
+        val override = chat.row("thread_overrides", root["thread_id"].asString() ?: "")
         return linkedMapOf(
             "id" to root["thread_id"], "workspace_id" to root["workspace_id"], "channel_id" to root["channel_id"], "source_message_id" to root["id"],
-            "title" to (renamed?.first ?: MentionCodec.plain(root["body"].asString() ?: "")), "record_state" to "active", "row_version" to (renamed?.second ?: 1L),
-            "updated_at" to root["updated_at"],
+            "title" to (override?.get("title") ?: MentionCodec.plain(root["body"].asString() ?: "")), "record_state" to "active", "row_version" to (override?.get("row_version") ?: 1L),
+            "updated_at" to root["updated_at"], "metadata" to override?.get("metadata").asMap().orEmpty(),
         )
     }
 

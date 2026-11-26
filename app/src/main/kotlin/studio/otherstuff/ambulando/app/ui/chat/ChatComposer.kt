@@ -96,6 +96,7 @@ object ComposerInsert {
 fun MentionType.badge(): String = when (this) {
     MentionType.PERSON, MentionType.AGENT -> "@"
     MentionType.DOC -> "DOC"
+    MentionType.FILE -> "FILE"
     MentionType.TASK -> "TASK"
     MentionType.CHAT -> "CHAT"
     MentionType.CHANNEL -> "CHAN"

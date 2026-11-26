@@ -156,6 +156,10 @@ class WorkspaceSync(
         // Chat (core.chat ChatSync)
         fun messagesKey(w: String, channelId: String): String = "messages:$w:$channelId"
         fun threadKey(w: String, threadId: String): String = "thread:$w:$threadId"
+        fun threadMembershipReadKey(w: String, t: String): String = "thread-membership-read:$w:$t"
+        fun threadMembershipWriteKey(w: String, t: String): String = "thread-membership-write:$w:$t"
+        fun threadFileMetadataKey(w: String, f: String): String = "thread-file-metadata:$w:$f"
+        fun docMetadataKey(w: String, d: String): String = "thread-artefact-title:$w:doc:$d"
         /** `app_state` key of the personal scope order (a JSON array of scope ids). */
         fun scopeOrderKey(w: String): String = "scope-order:$w"
         fun collapsedKey(connectionId: String, workspaceId: String): String = "scope-collapsed:$connectionId:$workspaceId"

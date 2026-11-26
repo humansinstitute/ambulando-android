@@ -446,7 +446,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         composer = {
         Column(Modifier.fillMaxWidth().background(amb.card)) {
         if (artefacts?.discuss == true) {
-            val tab = artefacts.tabs.firstOrNull { it.id == artefacts.selected }
+            val tab = artefacts.tabs.firstOrNull { it.id == artefacts.selected && it.attached && !it.publicationHeld }
             if (tab != null) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("thread.artefacts.target"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 TextButton(onClick = { artefacts.shown = true }, modifier = Modifier.weight(1f)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -454,8 +454,8 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                         Text(tab.versionLabel, Modifier.padding(start = 6.dp), maxLines = 1, style = MaterialTheme.typography.labelSmall)
                     }
                 }
-                TextButton(onClick = { artefacts.browsing = true }) { Text("Switch") }
-                TextButton(onClick = { artefacts.discuss = false }) { Text("Remove") }
+                TextButton(onClick = { artefacts.listing = true }) { Text("Switch") }
+                TextButton(onClick = { artefacts.discuss = false }) { Text("Clear Send target") }
             }
         }
         editing?.let { message -> Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("chat.edit.banner"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {

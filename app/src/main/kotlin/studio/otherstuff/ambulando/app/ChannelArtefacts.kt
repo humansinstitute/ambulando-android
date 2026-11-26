@@ -245,6 +245,12 @@ private data class HtmlArtefactRead(
         threadTab?.versionLabel = if (pendingThreadVersion != null) "Saved revision awaiting readback" else htmlPayload?.let { "${if (selected != null) "Pinned " else ""}v${it.versionNumber}" } ?: "Loading revision…"
         if (htmlPayload != null) { threadTab?.pinnedRevision = selected; threadTab?.selectedRevision = selected ?: pendingThreadVersion ?: htmlPayload?.versionId }
         threadTab?.checkpoint = { recovery?.let { drafts.checkpoint(it) }; !saving }
+        threadTab?.sourceDirty = { recovery != null }
+        threadTab?.saveSource = {
+            val saved = saveThreadSource()
+            if (saved != null && selected == null) pendingThreadVersion = saved
+            (saved != null || recovery == null).also { if (it) threadTab.sourceSaved() }
+        }
         threadTab?.prepare = {
             check(currentBoundary()) { "Unlock the original workspace before Send." }
             val loaded = htmlPayload ?: error("HTML is still loading. Retry Send.")
@@ -265,7 +271,7 @@ private data class HtmlArtefactRead(
         }
         threadTab?.validate = { ref -> pendingThreadVersion == null && !saving && currentBoundary() && htmlPayload?.versionId == ref.revision && recovery == null }
     }
-    DisposableEffect(threadTab) { onDispose { threadTab?.prepare = null; threadTab?.checkpoint = null; threadTab?.validate = null } }
+    DisposableEffect(threadTab) { onDispose { threadTab?.prepare = null; threadTab?.checkpoint = null; threadTab?.sourceDirty = null; threadTab?.saveSource = null; threadTab?.validate = null } }
 
     // Visual review state fenced to (connection, workspace, file, activeBoundaryId) so switching boundaries clears all state.
     val reviewBoundary = listOf(c.id, w.id, file.id, model.activeBoundaryId)
@@ -800,7 +806,7 @@ private data class HtmlArtefactRead(
                     store.reader.withArtefactAccess(runtime.workspace,file.id,::currentBoundary) { Unit }
                 })
                 check(currentBoundary())
-                source = null; recovery = null; selected = null; reload++
+                source = null; recovery = null; selected = null; reload++; threadTab?.sourceSaved()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) {
                 if (currentBoundary()) {

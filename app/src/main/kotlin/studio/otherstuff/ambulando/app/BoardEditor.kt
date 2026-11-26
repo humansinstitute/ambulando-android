@@ -36,6 +36,7 @@ import java.util.UUID
     var state by remember(board.fileId, boundaryId) { mutableStateOf(BoardState()) }
     var error by remember { mutableStateOf<String?>(null) }
     var page by remember(board.fileId, boundaryId) { mutableStateOf<EditorWebHost?>(null) }
+    var pageReady by remember(board.fileId, boundaryId) { mutableStateOf(false) }
     val session = remember(board.fileId, model.activeBoundaryId) { UUID.randomUUID().toString() }
     val transport = remember(board.fileId, boundaryId) {
         val base = TowerBoardTransport(model.identity, model.workspaceTransport, c, w, board.fileId, title)
@@ -64,8 +65,10 @@ import java.util.UUID
         tab?.prepare = { check(restorationComplete && !restorationFailure) { "Pinned board revision unavailable. Retry opening its exact history." }; controller.prepareChatReference() }
         tab?.validate = { ref -> val now = controller.current(); !now.dirty && ref.revision == now.viewingVersionId.ifBlank { now.baseVersionId } }
         tab?.checkpoint = { controller.checkpointChat() }
+        tab?.sourceDirty = { state.dirty }
+        tab?.saveSource = { controller.save().also { if (it) tab.sourceSaved() } }
     }
-    DisposableEffect(tab, controller) { onDispose { tab?.prepare = null; tab?.checkpoint = null } }
+    DisposableEffect(tab, controller) { onDispose { tab?.prepare = null; tab?.checkpoint = null; tab?.sourceDirty = null; tab?.saveSource = null } }
     val directory = peopleDirectory(model)
     val authorNames = remember(controller) { BoardAuthorNames() }
     val restoringViewport = remember(controller) { tab?.viewport }
@@ -80,29 +83,39 @@ import java.util.UUID
             // The page's own Save button (sol `action`) saves only while the controller's state still allows it.
             scope.launch { if (!current || model.activeBoundaryId != boundaryId) return@launch
                 val incoming = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+                if ((incoming?.get("type") as? kotlinx.serialization.json.JsonPrimitive)?.content == "ready") pageReady = true
                 if ((incoming?.get("type") as? kotlinx.serialization.json.JsonPrimitive)?.content == "viewport") {
                     if (viewportRestored) tab?.viewport = incoming["viewport"]?.toString()
                     return@launch
                 }
                 if (authorNames.request(raw)) { authorRevision++; return@launch }
-                if (isSaveAction(raw)) { if (stateNow()?.saveAction?.enabled == true) controller.save() } else controller.receive(session, raw) }
+                if (isSaveAction(raw)) { if (stateNow()?.saveAction?.enabled == true) controller.save().also { if (it) tab?.sourceSaved() } } else controller.receive(session, raw) }
         }
             .onSuccess { host -> page = host; host.load() }.onFailure { error = it.message }
         onDispose { current = false; page?.destroy(); controller.close() }
     }
     LaunchedEffect(controller, page) {
         val host = page ?: return@LaunchedEffect
+        // Restore the exact local view before a new page can edit or be asked to flush.
+        // Existing mounted editors still use the controller's normal history flush barrier.
+        controller.sync(board, title)
+        if (restoringRevision != null && (tab?.pinnedRevision != null || restoringRevision != board.versionId)) {
+            controller.loadVersions()
+            val version = controller.current().versions.firstOrNull { it.id == restoringRevision }
+            if (version != null) {
+                controller.viewVersion(version, forcePinned = true)
+                restorationComplete = controller.current().viewingVersionId == restoringRevision
+                restorationFailure = !restorationComplete
+                if (restorationFailure) error = "Pinned revision could not be restored. Reopen its exact history before Send."
+            } else { restorationFailure = true; error = "Pinned revision unavailable. Reopen its history; no latest substitution was made." }
+        } else restorationComplete = true
         controller.attach(session) { json -> scope.launch {
             if (page !== host || model.activeBoundaryId != boundaryId) return@launch
             authorNames.sent(json)
             host.call("window.ambulandoBoard.deliver", json)
         } }
-        controller.sync(board, title)
-        if (restoringRevision != null && (tab?.pinnedRevision != null || restoringRevision != board.versionId)) {
-            controller.loadVersions()
-            val version = controller.current().versions.firstOrNull { it.id == restoringRevision }
-            if (version != null) { controller.viewVersion(version, forcePinned = true); restorationComplete = true } else { restorationFailure = true; error = "Pinned revision unavailable. Reopen its history; no latest substitution was made." }
-        } else restorationComplete = true
+        // A fast page may have reported ready while source/history was loading.
+        if (pageReady) controller.receive(session, "{\"type\":\"ready\"}")
     }
     LaunchedEffect(page, state.status, restorationComplete) {
         if (state.status == BoardState.Status.READY && restorationComplete && !viewportRestored) {
@@ -184,7 +197,7 @@ import java.util.UUID
             }
         }
     }
-    if (noting) NoteDialog("Save board", "What changed (optional)", "", "Save", { noting = false }) { text -> noting = false; scope.launch { controller.save(text.trim()) } }
+    if (noting) NoteDialog("Save board", "What changed (optional)", "", "Save", { noting = false }) { text -> noting = false; scope.launch { controller.save(text.trim()).also { if (it) tab?.sourceSaved() } } }
     if (renaming) NoteDialog("Rename board", "Board name", state.title.ifBlank { title }, "Rename", { renaming = false }, required = true) { text -> renaming = false; scope.launch { controller.rename(text) } }
     if (discarding) AlertDialog(onDismissRequest = { discarding = false }, title = { Text("Discard your unsaved board changes and load the latest version?") },
         confirmButton = { TextButton(onClick = { discarding = false; scope.launch { controller.loadLatest() } }, modifier = Modifier.testTag("board.discard.confirm")) { Text("Discard and load latest", color = amb.destructive) } },

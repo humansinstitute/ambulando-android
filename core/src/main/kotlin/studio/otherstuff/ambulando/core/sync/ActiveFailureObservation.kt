@@ -54,7 +54,9 @@ internal fun activeFailureCategory(key: String): Stage = when {
     key.startsWith("napplet-runtime:") -> Stage.ACTIVE_FAILED_NAPPLET_RUNTIME
     key.startsWith("workspace-report:") -> Stage.ACTIVE_FAILED_WORKSPACE_REPORT
     key.startsWith("toolbox:") -> Stage.ACTIVE_FAILED_TOOLBOX
-    key.startsWith("thread-record:") -> Stage.ACTIVE_FAILED_THREAD_RECORD
+    key.startsWith("thread-record:") || key.startsWith("thread-membership-read:") || key.startsWith("thread-membership-write:") -> Stage.ACTIVE_FAILED_THREAD_RECORD
+    key.startsWith("thread-file-metadata:") -> Stage.ACTIVE_FAILED_FILES
+    key.startsWith("thread-artefact-title:") -> Stage.ACTIVE_FAILED_DOC
     key.startsWith("download:") -> Stage.ACTIVE_FAILED_DOWNLOAD
     key.startsWith("attachment:") -> Stage.ACTIVE_FAILED_ATTACHMENT
     key.startsWith("voice:") -> Stage.ACTIVE_FAILED_VOICE

@@ -10,7 +10,7 @@ import studio.otherstuff.ambulando.core.docs.TextSupport
  */
 enum class MentionType(val raw: String, val isActor: Boolean = false) {
     AGENT("agent", true), PERSON("person", true),
-    DOC("doc"), TASK("task"), CHAT("chat"), CHANNEL("channel"), SCOPE("scope");
+    DOC("doc"), FILE("file"), TASK("task"), CHAT("chat"), CHANNEL("channel"), SCOPE("scope");
 
     companion object {
         /** The type of a token kind, with the web's aliases (`document` is `doc`; `thread`/`message` are `chat`). */

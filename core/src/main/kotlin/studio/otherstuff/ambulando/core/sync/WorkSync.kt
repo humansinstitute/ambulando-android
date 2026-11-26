@@ -22,6 +22,8 @@ import studio.otherstuff.ambulando.core.store.upsertFiles
 import studio.otherstuff.ambulando.core.store.upsertFolders
 import studio.otherstuff.ambulando.core.store.upsertTasks
 import studio.otherstuff.ambulando.core.surfaces.TaskTreeWrites
+import studio.otherstuff.ambulando.core.surfaces.artefactFile
+import studio.otherstuff.ambulando.core.surfaces.ArtefactType
 import studio.otherstuff.ambulando.core.store.upsertThreads
 import studio.otherstuff.ambulando.core.store.upsertViewStates
 import studio.otherstuff.ambulando.core.chat.thread
@@ -336,5 +338,42 @@ suspend fun WorkspaceSync.downloadAttachment(connection: ConnectionRecord, works
         temp.writeBytes(bytes)
         if (!temp.renameTo(target)) throw TowerError.Malformed("attachment")
         store.writer.touch(setOf(ChangeKey(StoreTable.MESSAGES, workspace.id)))
+    }
+}
+
+/** Lightweight File resolution for native navigation; no body, versions or editor assets. */
+suspend fun WorkspaceSync.threadFileMetadata(connection: ConnectionRecord, workspace: WorkspaceRecord, fileId: String): FileRecord =
+    engine.perform(WorkspaceSync.threadFileMetadataKey(workspace.id, fileId), SyncPriority.VISIBLE) {
+        check(!workspace.accessRemoved) { "Workspace access is unavailable." }
+        identity.requireReader(connection.signerNpub)
+        val cached = store.reader.file(workspace.id, fileId)
+        check(cached?.accessRemoved != true && cached?.channelId?.let { store.reader.isChannelAccessRemoved(workspace.id, it) } != true) { "File access is unavailable." }
+        val file = api(connection).artefactFile(workspace.id, workspace.appNpub, fileId)
+        checkCancelled()
+        require(!file.archived)
+        store.writer.upsertFiles(workspace.id, listOf(file))
+        file
+    }
+
+/** Shared-reference discovery resolves labels without opening editors or manufacturing exact revision context. */
+suspend fun WorkspaceSync.threadArtefactTitle(
+    connection: ConnectionRecord, workspace: WorkspaceRecord,
+    member: studio.otherstuff.ambulando.core.chat.ThreadArtefactMember,
+): String {
+    if (member.kind == "file") {
+        val file = threadFileMetadata(connection, workspace, member.id)
+        require(ArtefactType.of(file) in listOf(ArtefactType.WHITEBOARD, ArtefactType.HTML)) { "This file opens in the native reader and cannot be attached as an editor context." }
+        return file.displayName
+    }
+    return engine.perform(WorkspaceSync.docMetadataKey(workspace.id, member.id), SyncPriority.VISIBLE) {
+        check(!workspace.accessRemoved) { "Workspace access is unavailable." }
+        identity.requireReader(connection.signerNpub)
+        val cached = store.reader.doc(workspace.id, member.id)
+        check(cached?.accessRemoved != true && cached?.channelId?.let { store.reader.isChannelAccessRemoved(workspace.id, it) } != true) { "Document access is unavailable." }
+        val doc = api(connection).doc(workspace.id, workspace.appNpub, member.id)
+        checkCancelled()
+        require(doc.id == member.id && !doc.archived)
+        store.writer.upsertDocs(workspace.id, listOf(doc))
+        doc.title
     }
 }

@@ -21,6 +21,7 @@ import studio.otherstuff.ambulando.core.store.docDraftStore
 import studio.otherstuff.ambulando.core.store.saveDocDraft
 import studio.otherstuff.ambulando.core.support.TestKeys
 import studio.otherstuff.ambulando.core.transport.TowerError
+import studio.otherstuff.ambulando.core.transport.documentVersions
 
 /**
  * The production document-save adapter (leases with sessions, inspection, takeover, head reads, recoveries) against the sample
@@ -135,5 +136,17 @@ class SampleDocumentEditingTest {
         saver.resolveRecovery(target, doc, versions.single().id, promote = true, head = fresh, editorSessionId = sessionA)
         assertEquals("# Plan\n\nPreserved before takeover\n", String(h.tower.work.docBody(doc)!!))
         assertEquals(0, saver.recoveries(target, doc).size)
+    }
+    @Test fun canonicalSavedVersionsKeepExactHistoricalBytesAfterHeadChanges() = rig {
+        val original = "# Plan\n\nOne\n\nTwo\n"
+        val initial = h.api.documentVersions(SampleIds.STUDIO, h.app, doc).single()
+        assertEquals(1, initial.rowVersion)
+        assertEquals(original, String(requireNotNull(initial.bytes)))
+        h.tower.work.externalDocSave(doc, "# New head\n".toByteArray(), "text/markdown")
+        val versions = h.api.documentVersions(SampleIds.STUDIO, h.app, doc)
+        assertEquals(listOf(2, 1), versions.map { it.rowVersion })
+        assertEquals("# New head\n", String(requireNotNull(versions.first().bytes)))
+        assertEquals(original, String(requireNotNull(versions.last().bytes)))
+        assertEquals(Sha256Hex.of(original.toByteArray()), versions.last().reference(doc, true).digest)
     }
 }

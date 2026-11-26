@@ -1,3 +1,9 @@
+## 0.9.61 (89)
+
+- Share a thread's attached Docs, whiteboards and HTML across supported clients, while keeping each device's editor, historical revision and viewport independent.
+- Open attachments from the icon beside Pin; remove the bottom switch so it no longer covers the chat. Remove from thread changes only the association and preserves source records and local recovery.
+- Preserve concurrent metadata changes and detached drafts, require explicit source Save before publishing retained dirty recovery, and retain closed historical views beyond the open-tab limit.
+
 ## 0.9.60 (88)
 
 - Add personal Goals from Home: a name, description and optional start and target dates, an ordered editable checkpoint timeline you can mark reached, and links to existing chats, tasks, Docs and Files from any channel you can read.
