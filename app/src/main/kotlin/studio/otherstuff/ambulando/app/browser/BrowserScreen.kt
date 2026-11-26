@@ -247,9 +247,17 @@ private fun BottomBar(browser: BrowserModel, tab: BrowserTab?) {
                             DropdownMenuItem(text = { Text("Close tab") }, leadingIcon = { Icon(Icons.Outlined.Close, null) }, onClick = { menu = false; browser.close(tab) })
                             DropdownMenuItem(text = { Text("Revoke page camera, microphone and location") }, onClick = { menu = false; browser.revokePagePermissions(tab) })
                             val origin = tab.origin
-                            if (origin != null && browser.sites[origin] != null) {
+                            if (origin != null && (browser.sites[origin] != null || browser.operationGrants.any { it.origin == origin })) {
                                 HorizontalDivider()
-                                DropdownMenuItem(text = { Text("Forget Nostr permission for ${runCatching { URI(origin).host }.getOrNull() ?: origin}") },
+                                browser.operationGrants.filter { it.origin == origin }.sortedBy { it.operation }.forEach { grant ->
+                                    val label = when (grant.operation) {
+                                        "encrypt" -> "encryption"
+                                        "decrypt" -> "decryption"
+                                        else -> "signing kind ${grant.operation.removePrefix("sign:")}"
+                                    }
+                                    DropdownMenuItem(text = { Text("Revoke $label for this site") }, onClick = { menu = false; browser.revoke(grant) })
+                                }
+                                DropdownMenuItem(text = { Text("Revoke all Nostr permissions for ${runCatching { URI(origin).host }.getOrNull() ?: origin}") },
                                     leadingIcon = { Icon(Icons.Outlined.Key, null) }, onClick = { menu = false; browser.forget(origin) })
                             }
                         } else {
@@ -305,8 +313,6 @@ fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
     val connect = prompt.kind is NIP07Prompt.Kind.Connect
     val cipher = prompt.kind as? NIP07Prompt.Kind.Cipher
     val action = if (cipher?.decrypt == true) "Decrypt" else "Encrypt"
-    // "Remember this site" starts on for the public key; an until-lock signing grant always starts off.
-    var remember by remember(prompt.id) { mutableStateOf(connect) }
     val host = runCatching { URI(prompt.context.origin).host }.getOrNull() ?: prompt.context.origin
     ModalBottomSheet(
         onDismissRequest = { decide(NIP07Decision.Deny(remember = false)) },
@@ -321,8 +327,8 @@ fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
             }
             Text(prompt.context.origin, style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace), color = amb.mutedForeground)
             Text(
-                if (connect) "$host wants to see your Nostr public key. It cannot sign anything without asking you."
-                else if (cipher != null) "$host wants to ${action.lowercase()} a message using your active Nostr account. Approval applies only to this request."
+                if (connect) "$host wants to see your Nostr public key. Signing, encryption and decryption have separate permissions."
+                else if (cipher != null) "$host wants to ${action.lowercase()} a message using your active Nostr account. Encryption and decryption have separate permissions."
                 else "$host wants your signature on the event below.",
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -340,22 +346,15 @@ fun NostrApprovalSheet(prompt: NIP07Prompt, decide: (NIP07Decision) -> Unit) {
             }
             if (cipher != null) Labeled("Peer key", cipher.peer)
             prompt.npub?.let { Labeled("Your key", shortNpub(it)) }
-            if (connect) {
-                SwitchRow("Remember this site", remember) { remember = it }
-                Text("You can forget this in the browser menu. Signing still asks every time.", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
-            } else if (prompt.offersSessionGrant) {
-                SwitchRow("Don't ask again for this kind on $host until Ambulando locks", remember) { remember = it }
-                Text("Only for sign-in requests. Other kinds always ask.", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
+            Text(if (connect) "Allow once shares your public key for this request. Always allow remembers this site for this account."
+                else "Always allow remembers only ${if (cipher != null) (if (cipher.decrypt) "decryption" else "encryption") else "signing kind ${(kind as NIP07Prompt.Kind.Sign).event.kind}"} for this exact site and account. Revoke it in the browser menu.",
+                style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
+            PrimaryButton("Allow once", onClick = { decide(NIP07Decision.Allow(false)) }, modifier = Modifier.fillMaxWidth().testTag("nostr.allow"))
+            OutlinedButton(onClick = { decide(NIP07Decision.Allow(true)) }, modifier = Modifier.fillMaxWidth().testTag("nostr.always")) {
+                Text("Always allow for this site")
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = { decide(NIP07Decision.Deny(remember = connect && remember)) }, modifier = Modifier.weight(1f).testTag("nostr.deny")) {
-                    Text(if (connect) "Don't allow" else "Reject")
-                }
-                Box(Modifier.weight(1f)) {
-                    PrimaryButton(if (connect) "Allow" else if (cipher != null) action else "Sign", onClick = { decide(NIP07Decision.Allow(remember = remember && (connect || prompt.offersSessionGrant))) },
-                        modifier = Modifier.testTag("nostr.allow"))
-                }
-            }
+            OutlinedButton(onClick = { decide(NIP07Decision.Deny(false)) }, modifier = Modifier.fillMaxWidth().testTag("nostr.deny")) { Text("Deny") }
+
         }
     }
 }

@@ -28,9 +28,9 @@ class BrowserNip44Test {
         error("WebView fixture timed out")
     }
     private fun js(browser: BrowserModel, script: String) = instrumentation.runOnMainSync { browser.selected!!.webView.evaluateJavascript(script, null) }
-    private fun approve(browser: BrowserModel, type: Class<out NIP07Prompt.Kind>) {
+    private fun approve(browser: BrowserModel, type: Class<out NIP07Prompt.Kind>, remember: Boolean = false) {
         waitFor { type.isInstance(browser.prompt?.kind) }
-        instrumentation.runOnMainSync { browser.answer(browser.prompt!!, NIP07Decision.Allow(false)) }
+        instrumentation.runOnMainSync { browser.answer(browser.prompt!!, NIP07Decision.Allow(remember)) }
     }
     private fun title(browser: BrowserModel, prefix: String) { waitFor { browser.selected?.title?.startsWith(prefix) == true } }
 
@@ -46,6 +46,14 @@ class BrowserNip44Test {
         val own = identity.publicKeyHex()
         lateinit var browser: BrowserModel
         val slot = "nip44-test-${UUID.randomUUID()}"
+        val consent = BrowserConsentPersistence(instrumentation.targetContext, slot)
+        fun configure() {
+            browser.configure(false, emptyMap(), { identity.publicKeyHex() }, { identity.sign(it) }, NIP07SitePersistence {},
+                cipher = { expected, peer, text, decrypt -> identity.nip44(expected, peer, text, decrypt) },
+                grants = BrowserConsentPersistence(instrumentation.targetContext, slot).load(),
+                persistGrants = consent::save,
+                accountSigner = { expected, template -> identity.signForBrowser(expected, template) })
+        }
         val html = """
           <html><title>READY</title><body><script>
           const own = '$own';
@@ -71,8 +79,7 @@ class BrowserNip44Test {
         try {
             instrumentation.runOnMainSync {
                 browser = BrowserModel(instrumentation.targetContext)
-                browser.configure(false, emptyMap(), { identity.publicKeyHex() }, { identity.sign(it) }, NIP07SitePersistence {},
-                    cipher = { expected, peer, text, decrypt -> identity.nip44(expected, peer, text, decrypt) })
+                configure()
                 browser.samplePage = "https://sample.example/" to html
                 browser.open("https://sample.example/")
             }
@@ -98,6 +105,27 @@ class BrowserNip44Test {
             js(browser, "read()")
             approve(browser, NIP07Prompt.Kind.Cipher::class.java)
             title(browser, "READBACK")
+            js(browser, "read()")
+            waitFor { browser.prompt?.kind is NIP07Prompt.Kind.Cipher }
+            instrumentation.runOnMainSync { browser.answer(browser.prompt!!, NIP07Decision.Deny(false)) }
+            title(browser, "DENIED")
+            // Explicit always-decrypt persists to disk and survives broker replacement and document reload.
+            js(browser, "read()")
+            approve(browser, NIP07Prompt.Kind.Cipher::class.java, remember = true)
+            title(browser, "READBACK")
+            assertEquals(setOf(NIP07Grant("https://sample.example", own, "decrypt")), BrowserConsentPersistence(instrumentation.targetContext, slot).load())
+            instrumentation.runOnMainSync { configure(); browser.selected!!.webView.reload() }
+            title(browser, "READY")
+            js(browser, "read()")
+            title(browser, "READBACK")
+            instrumentation.runOnMainSync { assertNull(browser.prompt) }
+            // Decrypt does not authorize encrypt, even for the same peer/account/site.
+            js(browser, "nostr.nip44.encrypt(own, 'fixture').then(()=>document.title='UNEXPECTED').catch(()=>document.title='ENCRYPT DENIED')")
+            waitFor { browser.prompt?.kind is NIP07Prompt.Kind.Cipher }
+            instrumentation.runOnMainSync { browser.answer(browser.prompt!!, NIP07Decision.Deny(false)) }
+            title(browser, "ENCRYPT DENIED")
+            instrumentation.runOnMainSync { browser.revoke(NIP07Grant("https://sample.example", own, "decrypt")) }
+            assertTrue(BrowserConsentPersistence(instrumentation.targetContext, slot).load().isEmpty())
             js(browser, "read()")
             waitFor { browser.prompt?.kind is NIP07Prompt.Kind.Cipher }
             instrumentation.runOnMainSync { browser.answer(browser.prompt!!, NIP07Decision.Deny(false)) }
@@ -129,7 +157,7 @@ class BrowserNip44Test {
             js(browser, "localStorage.removeItem('$slot')")
         } finally {
             instrumentation.runOnMainSync { runCatching { browser.closeAll() } }
-            identity.remove(); dir.deleteRecursively()
+            identity.remove(); dir.deleteRecursively(); consent.save(emptySet())
         }
     }
 }

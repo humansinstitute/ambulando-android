@@ -26,8 +26,7 @@ class Nip44AuthorizationTest {
             val request = async { broker.handle("nip44.encrypt", params, context) { true } }
             yield()
             assertTrue(broker.current!!.kind is NIP07Prompt.Kind.Cipher)
-            assertFalse(broker.current!!.offersSessionGrant)
-            broker.resolve(broker.current!!.id, if (it == 0) NIP07Decision.Allow(true) else NIP07Decision.Deny(false))
+            broker.resolve(broker.current!!.id, if (it == 0) NIP07Decision.Allow(false) else NIP07Decision.Deny(false))
             assertEquals(it == 0, request.await() is NIP07Result.Success)
         }
         assertEquals(1, calls)

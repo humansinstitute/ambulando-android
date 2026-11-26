@@ -305,6 +305,7 @@ class BrowserModel(private val context: Context) {
     var locked by mutableStateOf(true)
         private set
     var sites by mutableStateOf<Map<String, NIP07SitePermission>>(emptyMap())
+    var operationGrants by mutableStateOf<Set<studio.otherstuff.ambulando.core.browser.NIP07Grant>>(emptySet())
         private set
     /** Why the browser cannot open on this device (WebView without isolation support), shown instead of tabs. */
     var unavailable by mutableStateOf<String?>(null)
@@ -358,13 +359,18 @@ class BrowserModel(private val context: Context) {
         sign: suspend (NostrEventTemplate) -> NostrEvent,
         persist: NIP07SitePersistence,
         cipher: (suspend (String, String, String, Boolean) -> String)? = null,
+        grants: Set<studio.otherstuff.ambulando.core.browser.NIP07Grant> = emptySet(),
+        persistGrants: (Set<studio.otherstuff.ambulando.core.browser.NIP07Grant>) -> Unit = {},
+        accountSigner: (suspend (String, NostrEventTemplate) -> NostrEvent)? = null,
     ) {
         broker?.setLocked(true)
-        val made = NIP07Broker(locked, savedSites, publicKey, sign, persist, cipher)
-        made.onChange = { scope.launch { prompt = made.current; this@BrowserModel.locked = made.locked; sites = made.sites } }
+        val made = NIP07Broker(locked, savedSites, publicKey, sign, persist, cipher, grants = grants, persistGrants = persistGrants, accountSigner = accountSigner)
+        made.onChange = { scope.launch { if (broker !== made) return@launch; prompt = made.current; this@BrowserModel.locked = made.locked; sites = made.sites; operationGrants = made.grants } }
         broker = made
+        prompt = made.current
         this.locked = locked
         sites = savedSites
+        operationGrants = grants
     }
 
     // Favourites
@@ -673,6 +679,8 @@ class BrowserModel(private val context: Context) {
         broker?.setLocked(value)
         if (value) { cancelFileRequests(); cancelPageUI() }
     }
+
+    fun revoke(grant: studio.otherstuff.ambulando.core.browser.NIP07Grant) { broker?.revoke(grant) }
 
     fun forget(origin: String) { broker?.forget(origin) }
 

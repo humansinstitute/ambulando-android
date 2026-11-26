@@ -49,7 +49,7 @@ pictures may be fetched from their published HTTPS hosts through a separate cred
 refresh can be disabled in Settings. Existing profile cache entries can still supply names when disabled.
 
 WApps and other HTTPS pages opened by the user use the browser's isolated WebView profile. A website needs native
-consent to obtain a public key and each event signature needs approval. Origin, main-frame and document checks bind
+consent to obtain a public key, sign an event, encrypt or decrypt. Users can approve once or remember a scoped operation. Origin, main-frame and document checks bind
 those requests. Locking or leaving the foreground cancels signing consent. Browser, bundled editors and HTML artefacts
 use separate profiles; unsupported WebViews fail closed with an update message.
 
@@ -58,8 +58,10 @@ and cannot fetch network resources. Editor output is validated and encoded throu
 Native message photo uploads are orientation-corrected, resized and re-encoded; camera, time and location metadata are discarded.
 Browser file/capture uploads deliver the selected original files to the website and can include their metadata.
 
-Browser tab URLs and selection are saved locally for fresh HTTPS GET restoration; POST bodies and ephemeral signing/media
-grants are never saved. Camera, microphone and location need per-page consent plus Android permission. Leaving or revoking
+Browser tab URLs and selection are saved locally for fresh HTTPS GET restoration; POST bodies and media grants are
+never saved. Explicit “Always allow for this site” Nostr approvals persist locally for the exact origin, active account
+and operation (encrypt, decrypt, or signing one event kind). Connection consent is separate. Revoke individual or all
+Nostr permissions in the site's browser menu. Locking still cancels pending signing/cipher requests. Camera, microphone and location need per-page consent plus Android permission. Leaving or revoking
 a granted page reloads it to end active capture/location work. Browser download requests use only destination-specific
 website cookies, never Tower credentials. Temporary exports/captures are removed on cancellation, context changes and
 next-process cleanup. See [browser capabilities and limits](browser-files.md).

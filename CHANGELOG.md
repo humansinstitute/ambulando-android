@@ -1,5 +1,12 @@
 ## 0.9.64 (92)
 
+## 0.9.65 (93)
+
+- Browser Nostr approvals offer Allow once, Always allow for this site, and Deny.
+- Remember encryption, decryption and each signing kind independently for the exact site and account; revoke them in the browser menu.
+- Preserve lock, document and account authorization checks while remembered permissions survive restart.
+
+
 - Use one compact mobile conversation header, with Back, thread identity and Artefacts directly accessible. Pin, Add to goal and global navigation actions move into the labelled thread menu.
 - In a thread’s HTML, whiteboard and document views, keep one navigation bar with Artefacts and Discuss this. Move secondary versions and comment actions into menus; preserve editor Save, drafts, historical revisions and shared attachment behavior. Tablet layouts remain unchanged.
 

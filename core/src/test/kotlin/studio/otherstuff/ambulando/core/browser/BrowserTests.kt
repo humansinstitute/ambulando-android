@@ -190,9 +190,8 @@ class NIP07BrokerTest {
             val task = start(broker, "signEvent", params)
             val prompt = broker.current!!
             assertEquals(origin, prompt.context.origin)
-            assertFalse("ordinary kinds are never allowed in advance", prompt.offersSessionGrant)
             assertEquals("hello", (prompt.kind as NIP07Prompt.Kind.Sign).event.content)
-            broker.resolve(prompt.id, NIP07Decision.Allow(remember = true))
+            broker.resolve(prompt.id, NIP07Decision.Allow(remember = false))
             val event = ((task.await() as NIP07Result.Success).value as NIP07Reply.Event).event
             assertEquals(pubkey, event.pubkey)
             assertEquals(1, event.kind)
@@ -212,12 +211,11 @@ class NIP07BrokerTest {
         assertNull(broker.current)
     }
 
-    @Test fun authenticationKindsMayBeAllowedUntilLock() = runBlocking {
+    @Test fun authenticationKindsMayBeRememberedAndRevoked() = runBlocking {
         val broker = makeBroker()
         val auth = j(mapOf("kind" to 27235, "tags" to listOf(listOf("u", "https://app.example.com/api"), listOf("method", "GET"))))
         val first = start(broker, "signEvent", auth)
         val prompt = broker.current!!
-        assertTrue(prompt.offersSessionGrant)
         broker.resolve(prompt.id, NIP07Decision.Allow(remember = true))
         assertTrue((first.await() as NIP07Result.Success).value is NIP07Reply.Event)
         // Same site and kind: signed without asking. Another site still asks.
@@ -226,11 +224,13 @@ class NIP07BrokerTest {
         assertNotNull(broker.current)
         broker.resolve(broker.current!!.id, NIP07Decision.Deny(remember = false))
         other.await()
-        // Locking forgets the grant.
+        // Explicit grants survive lock; forgetting the site revokes them.
         broker.setLocked(true)
         broker.setLocked(false)
+        assertTrue(broker.handle("signEvent", auth, ctx()) { true } is NIP07Result.Success)
+        broker.forget(origin)
         val again = start(broker, "signEvent", auth)
-        assertNotNull("asks again after a lock", broker.current)
+        assertNotNull("asks again after revocation", broker.current)
         broker.resolve(broker.current!!.id, NIP07Decision.Deny(remember = false))
         again.await()
         Unit

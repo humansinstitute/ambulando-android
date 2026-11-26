@@ -140,6 +140,28 @@ object NIP07Sites {
     }
 }
 
+/** Independent, account-bound capabilities. Legacy connection answers never populate this store. */
+data class NIP07Grant(val origin: String, val account: String, val operation: String)
+
+object NIP07Grants {
+    const val STATE_KEY = "browser.operations.v1"
+    fun encode(grants: Set<NIP07Grant>): String = JsonFields.encode(JsonArray(grants.map {
+        JsonArray(listOf(JsonPrimitive(it.origin), JsonPrimitive(it.account), JsonPrimitive(it.operation)))
+    }))
+    fun decode(text: String?): Set<NIP07Grant> = runCatching {
+        (kotlinx.serialization.json.Json.parseToJsonElement(text ?: "[]") as JsonArray).mapNotNull { value ->
+            val row = value as? JsonArray ?: return@mapNotNull null
+            if (row.size != 3) return@mapNotNull null
+            val origin = JsonFields.string(row[0]) ?: return@mapNotNull null
+            val account = JsonFields.string(row[1]) ?: return@mapNotNull null
+            val operation = JsonFields.string(row[2]) ?: return@mapNotNull null
+            if (BrowserURLPolicy.origin(parseUri(origin)) != origin || !account.matches(Regex("[0-9a-f]{64}")) ||
+                !(operation in setOf("encrypt", "decrypt") || operation.removePrefix("sign:").toIntOrNull()?.let { operation == "sign:$it" && it in 0..65535 } == true)) null
+            else NIP07Grant(origin, account, operation)
+        }.toSet()
+    }.getOrDefault(emptySet())
+}
+
 /** Where remembered site answers are kept (app state in production). */
 fun interface NIP07SitePersistence {
     fun save(sites: Map<String, NIP07SitePermission>)
@@ -164,15 +186,12 @@ data class NIP07Prompt(
         data object Connect : Kind
         data class Sign(val event: NostrEventTemplate) : Kind
     }
-
-    /** Whether "allow for this site until Ambulando locks" may be offered (authentication kinds only). */
-    val offersSessionGrant: Boolean get() = (kind as? Kind.Sign)?.let { it.event.kind in NIP07Broker.SESSION_GRANT_KINDS } ?: false
 }
 
 sealed interface NIP07Decision {
     /**
-     * `remember`: for connect, keep the answer for the site; for an authentication kind, allow that kind for the site
-     * until Ambulando locks.
+     * `remember`: persist only this operation (and event kind when signing), exact origin and active account.
+     * Connection answers remain in their separate, account-scoped store.
      */
     data class Allow(val remember: Boolean) : NIP07Decision
     data class Deny(val remember: Boolean) : NIP07Decision
@@ -197,8 +216,8 @@ sealed interface NIP07Reply {
 
 /**
  * Native side of `window.nostr`. Pages never see the key; they get the public key (after the user allows the site)
- * and events the user approved one at a time in a sheet that names the site. Only the authentication kinds in
- * [SESSION_GRANT_KINDS] may be allowed for a site until Ambulando locks.
+ * and results approved in a sheet naming the site, or through an explicit persisted capability for the same
+ * origin, account and operation. Connection grants cannot authorize signing or ciphers.
  *
  * A request is tied to the document that made it: when the tab navigates, reloads or closes, or Ambulando locks, it
  * is cancelled, and `isCurrent` is asked again after the user answers and before anything is signed.
@@ -215,21 +234,23 @@ class NIP07Broker(
     private val persist: NIP07SitePersistence = NIP07SitePersistence { },
     private val cipher: (suspend (String, String, String, Boolean) -> String)? = null,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
+    grants: Set<NIP07Grant> = emptySet(),
+    private val persistGrants: (Set<NIP07Grant>) -> Unit = {},
+    private val accountSigner: (suspend (String, NostrEventTemplate) -> NostrEvent)? = null,
 ) {
     companion object {
-        /** NIP-42 relay authentication and NIP-98 HTTP authentication. */
-        val SESSION_GRANT_KINDS: Set<Int> = setOf(22242, 27235)
         const val MAX_PROMPTS_PER_TAB = 4
-
-        internal fun grantKey(origin: String, kind: Int) = "$origin|$kind"
     }
 
     private val lock = Any()
     private val promptList = ArrayList<NIP07Prompt>()
     private var authorizationRevision = 0L
+    private val documentRevisions = HashMap<UUID, Long>()
+    private fun documentRevision(context: NIP07Context): Long = synchronized(lock) { documentRevisions[context.tabId] ?: 0L }
     private var lockedState = locked
     private var siteMap = sites.toMap()
-    private var sessionGrants: Set<String> = emptySet()
+    private var operationGrants = grants.toSet()
+    val grants: Set<NIP07Grant> get() = synchronized(lock) { operationGrants.toSet() }
     private val waiters = HashMap<UUID, CompletableDeferred<NIP07Decision?>>()
 
     /** Called after `prompts`, `sites` or `locked` change. */
@@ -245,7 +266,7 @@ class NIP07Broker(
     /** Answers one request. `isCurrent` reports whether the requesting document is still the one shown in its tab. */
     suspend fun handle(method: String, params: JsonElement?, context: NIP07Context, isCurrent: () -> Boolean): NIP07Result<NIP07Reply> {
         if (locked) return NIP07Result.Failure(NIP07Error.Locked)
-        if (!isCurrent()) return NIP07Result.Failure(NIP07Error.PageChanged)
+        if (!isCurrent() || BrowserURLPolicy.origin(parseUri(context.origin)) != context.origin) return NIP07Result.Failure(NIP07Error.PageChanged)
         val parsed = when (val r = NIP07Method.parse(method, params, nowSeconds())) {
             is NIP07Result.Success -> r.value
             is NIP07Result.Failure -> return r
@@ -264,9 +285,10 @@ class NIP07Broker(
     private suspend fun crypt(call: NIP07Method.Cipher, context: NIP07Context, isCurrent: () -> Boolean): NIP07Result<NIP07Reply> {
         val operation = cipher ?: return failure(NIP07Error.Unsupported("nip44"))
         val revision = synchronized(lock) { authorizationRevision }
+        val pageRevision = documentRevision(context)
         fun invalid(): NIP07Error? {
             if (locked) return NIP07Error.Locked
-            if (!isCurrent()) return NIP07Error.PageChanged
+            if (!isCurrent() || pageRevision != documentRevision(context)) return NIP07Error.PageChanged
             if (synchronized(lock) { revision != authorizationRevision } || sites[context.origin] == NIP07SitePermission.DENIED) return NIP07Error.Denied
             return null
         }
@@ -274,12 +296,21 @@ class NIP07Broker(
             invalid()?.let { return failure(it) }
             val own = publicKey()
             invalid()?.let { return failure(it) }
-            when (val answer = ask(NIP07Prompt.Kind.Cipher(call.peer, call.decrypt), context, isCurrent)) {
-                is NIP07Result.Failure -> return answer
-                is NIP07Result.Success -> if (answer.value !is NIP07Decision.Allow) return failure(NIP07Error.Denied)
+            val grant = NIP07Grant(context.origin, own, if (call.decrypt) "decrypt" else "encrypt")
+            var remember = false
+            if (grant !in grants) {
+                when (val answer = ask(NIP07Prompt.Kind.Cipher(call.peer, call.decrypt), context, isCurrent, own)) {
+                    is NIP07Result.Failure -> return answer
+                    is NIP07Result.Success -> {
+                        val decision = answer.value as? NIP07Decision.Allow ?: return failure(NIP07Error.Denied)
+                        remember = decision.remember
+                    }
+                }
             }
             invalid()?.let { return failure(it) }
             if (publicKey() != own) return failure(NIP07Error.Denied)
+            invalid()?.let { return failure(it) }
+            if (remember && !rememberGrant(grant, revision)) return failure(NIP07Error.Denied)
             invalid()?.let { return failure(it) }
             val result = operation(own, call.peer, call.text, call.decrypt)
             invalid()?.let { return failure(it) }
@@ -294,33 +325,46 @@ class NIP07Broker(
     }
 
     private suspend fun connect(context: NIP07Context, isCurrent: () -> Boolean): NIP07Result<NIP07Reply> {
-        when (sites[context.origin]) {
-            NIP07SitePermission.DENIED -> return failure(NIP07Error.Denied)
-            NIP07SitePermission.ALLOWED -> Unit
-            null -> when (val answer = ask(NIP07Prompt.Kind.Connect, context, isCurrent)) {
-                is NIP07Result.Failure -> return answer
-                is NIP07Result.Success -> when (val d = answer.value) {
-                    is NIP07Decision.Deny -> {
-                        if (d.remember) setSite(context.origin, NIP07SitePermission.DENIED)
-                        return failure(NIP07Error.Denied)
+        val revision = synchronized(lock) { authorizationRevision }
+        val pageRevision = documentRevision(context)
+        return try {
+            val own = publicKey()
+            var remember: NIP07SitePermission? = null
+            when (sites[context.origin]) {
+                NIP07SitePermission.DENIED -> return failure(NIP07Error.Denied)
+                NIP07SitePermission.ALLOWED -> Unit
+                null -> when (val answer = ask(NIP07Prompt.Kind.Connect, context, isCurrent, own)) {
+                    is NIP07Result.Failure -> return answer
+                    is NIP07Result.Success -> when (val d = answer.value) {
+                        is NIP07Decision.Deny -> {
+                            if (d.remember && publicKey() == own && isCurrent()) synchronized(lock) {
+                                if (!lockedState && revision == authorizationRevision) setSite(context.origin, NIP07SitePermission.DENIED)
+                            }
+                            return failure(NIP07Error.Denied)
+                        }
+                        is NIP07Decision.Allow -> if (d.remember) remember = NIP07SitePermission.ALLOWED
                     }
-                    is NIP07Decision.Allow -> if (d.remember) setSite(context.origin, NIP07SitePermission.ALLOWED)
                 }
             }
-        }
-        if (locked) return failure(NIP07Error.Locked)
-        if (!isCurrent()) return failure(NIP07Error.PageChanged)
-        return try {
-            NIP07Result.Success(NIP07Reply.PublicKey(publicKey()))
+            if (publicKey() != own) return failure(NIP07Error.Denied)
+            if (locked) return failure(NIP07Error.Locked)
+            if (!isCurrent() || pageRevision != documentRevision(context)) return failure(NIP07Error.PageChanged)
+            synchronized(lock) {
+                if (revision != authorizationRevision || pageRevision != documentRevision(context)) return failure(NIP07Error.Denied)
+                if (remember != null) setSite(context.origin, remember)
+            }
+            NIP07Result.Success(NIP07Reply.PublicKey(own))
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             failure(if (locked) NIP07Error.Locked else NIP07Error.Invalid("no identity"))
         }
     }
 
     private suspend fun sign(template: NostrEventTemplate, requested: String?, context: NIP07Context, isCurrent: () -> Boolean): NIP07Result<NIP07Reply> {
         if (sites[context.origin] == NIP07SitePermission.DENIED) return failure(NIP07Error.Denied)
+        val revision = synchronized(lock) { authorizationRevision }
+        val pageRevision = documentRevision(context)
         val own = try {
             publicKey()
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
@@ -329,23 +373,33 @@ class NIP07Broker(
             return failure(if (locked) NIP07Error.Locked else NIP07Error.Invalid("no identity"))
         }
         if (requested != null && requested != own) return failure(NIP07Error.Invalid("the event's pubkey is not this identity"))
-        val grant = grantKey(context.origin, template.kind)
-        if (grant !in synchronized(lock) { sessionGrants }) {
-            when (val answer = ask(NIP07Prompt.Kind.Sign(template), context, isCurrent)) {
+        fun invalid(): NIP07Error? = when {
+            locked -> NIP07Error.Locked
+            !isCurrent() || pageRevision != documentRevision(context) -> NIP07Error.PageChanged
+            synchronized(lock) { revision != authorizationRevision } || sites[context.origin] == NIP07SitePermission.DENIED -> NIP07Error.Denied
+            else -> null
+        }
+        val grant = NIP07Grant(context.origin, own, "sign:${template.kind}")
+        var remember = false
+        if (grant !in grants) {
+            when (val answer = ask(NIP07Prompt.Kind.Sign(template), context, isCurrent, own)) {
                 is NIP07Result.Failure -> return answer
-                is NIP07Result.Success -> when (val d = answer.value) {
-                    is NIP07Decision.Deny -> return failure(NIP07Error.Denied)
-                    is NIP07Decision.Allow -> if (d.remember && template.kind in SESSION_GRANT_KINDS) synchronized(lock) { sessionGrants = sessionGrants + grant }
+                is NIP07Result.Success -> {
+                    val decision = answer.value as? NIP07Decision.Allow ?: return failure(NIP07Error.Denied)
+                    remember = decision.remember
                 }
             }
         }
-        // Re-checked after the user answered: a lock or a navigation in the meantime wins over the approval.
-        if (locked) return failure(NIP07Error.Locked)
-        if (!isCurrent()) return failure(NIP07Error.PageChanged)
         return try {
-            val event = signer(template)
-            if (locked) return failure(NIP07Error.Locked)
-            if (!isCurrent()) return failure(NIP07Error.PageChanged)
+            invalid()?.let { return failure(it) }
+            if (publicKey() != own) return failure(NIP07Error.Denied)
+            invalid()?.let { return failure(it) }
+            if (remember && !rememberGrant(grant, revision)) return failure(NIP07Error.Denied)
+            invalid()?.let { return failure(it) }
+            val event = accountSigner?.invoke(own, template) ?: signer(template)
+            invalid()?.let { return failure(it) }
+            if (event.pubkey != own || publicKey() != own) return failure(NIP07Error.Denied)
+            invalid()?.let { return failure(it) }
             NIP07Result.Success(NIP07Reply.Event(event))
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
@@ -354,15 +408,32 @@ class NIP07Broker(
         }
     }
 
-    private suspend fun ask(kind: NIP07Prompt.Kind, context: NIP07Context, isCurrent: () -> Boolean): NIP07Result<NIP07Decision> {
+    private fun rememberGrant(grant: NIP07Grant, revision: Long): Boolean {
+        synchronized(lock) {
+            if (lockedState || authorizationRevision != revision) return false
+            val saved = operationGrants + grant
+            persistGrants(saved)
+            operationGrants = saved
+        }
+        changed()
+        return true
+    }
+
+    private suspend fun ask(kind: NIP07Prompt.Kind, context: NIP07Context, isCurrent: () -> Boolean, expectedAccount: String? = null): NIP07Result<NIP07Decision> {
         if (synchronized(lock) { promptList.count { it.context.tabId == context.tabId } } >= MAX_PROMPTS_PER_TAB) return failure(NIP07Error.Busy)
-        val npub = runCatching { publicKey() }.getOrNull()?.let { NostrKeys.npub(it) }
+        val revision = synchronized(lock) { authorizationRevision }
+        val pageRevision = documentRevision(context)
+        val key = try { publicKey() } catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e } catch (_: Exception) { return failure(NIP07Error.Locked) }
+        if (expectedAccount != null && key != expectedAccount) return failure(NIP07Error.Denied)
+        val npub = NostrKeys.npub(key)
         // The key read above suspends; the page or lock may have changed meanwhile.
         if (locked) return failure(NIP07Error.Locked)
-        if (!isCurrent()) return failure(NIP07Error.PageChanged)
+        if (!isCurrent() || pageRevision != documentRevision(context)) return failure(NIP07Error.PageChanged)
         val prompt = NIP07Prompt(UUID.randomUUID(), context, kind, npub)
         val waiter = CompletableDeferred<NIP07Decision?>()
         synchronized(lock) {
+            if (lockedState || revision != authorizationRevision || pageRevision != documentRevision(context)) return failure(NIP07Error.Denied)
+            if (promptList.count { it.context.tabId == context.tabId } >= MAX_PROMPTS_PER_TAB) return failure(NIP07Error.Busy)
             waiters[prompt.id] = waiter
             promptList.add(prompt)
         }
@@ -380,17 +451,23 @@ class NIP07Broker(
     fun resolve(id: UUID, decision: NIP07Decision) = finish(id, decision)
 
     /** Cancels what the tab's earlier documents asked (called on every main-frame commit). */
-    fun documentChanged(tabId: UUID, documentId: Long) = cancel { it.context.tabId == tabId && it.context.documentId != documentId }
+    fun documentChanged(tabId: UUID, documentId: Long) {
+        synchronized(lock) { documentRevisions[tabId] = (documentRevisions[tabId] ?: 0L) + 1 }
+        cancel { it.context.tabId == tabId && it.context.documentId != documentId }
+    }
 
-    fun tabClosed(tabId: UUID) = cancel { it.context.tabId == tabId }
+    fun tabClosed(tabId: UUID) {
+        synchronized(lock) { documentRevisions[tabId] = (documentRevisions[tabId] ?: 0L) + 1 }
+        cancel { it.context.tabId == tabId }
+    }
 
-    /** Locking cancels every waiting request, forgets the until-lock grants and refuses new requests until unlocked. */
+    /** Locking cancels pending work and refuses new requests; explicit remembered capabilities survive unlocking. */
     fun setLocked(value: Boolean) {
         synchronized(lock) {
             if (value == lockedState) return
             authorizationRevision++
             lockedState = value
-            if (value) sessionGrants = emptySet()
+
         }
         if (value) cancel { true }
         changed()
@@ -398,19 +475,38 @@ class NIP07Broker(
 
     /** Settings › browser: forget what was decided for `origin`. */
     fun forget(origin: String) {
-        synchronized(lock) { authorizationRevision++ }
+        synchronized(lock) {
+            authorizationRevision++
+            operationGrants = operationGrants.filterNot { it.origin == origin }.toSet()
+            siteMap = siteMap - origin
+            persistGrants(operationGrants)
+            persist.save(siteMap)
+        }
         cancel { it.context.origin == origin }
-        synchronized(lock) { sessionGrants = sessionGrants.filterNot { it.startsWith("$origin|") }.toSet() }
-        setSite(origin, null)
+        changed()
+    }
+
+    /** Revoke one capability and invalidate work that may have already used it. */
+    fun revoke(grant: NIP07Grant) {
+        synchronized(lock) {
+            authorizationRevision++
+            operationGrants = operationGrants - grant
+            persistGrants(operationGrants)
+        }
+        cancel { it.context.origin == grant.origin }
+        changed()
     }
 
     /** Identity removed or disconnected: nothing a site was allowed survives. */
     fun reset() {
-        synchronized(lock) { authorizationRevision++ }
-        synchronized(lock) { sessionGrants = emptySet() }
+        synchronized(lock) {
+            authorizationRevision++
+            operationGrants = emptySet()
+            siteMap = emptyMap()
+            persistGrants(operationGrants)
+            persist.save(siteMap)
+        }
         cancel { true }
-        val saved = synchronized(lock) { siteMap = emptyMap(); siteMap }
-        persist.save(saved)
         changed()
     }
 

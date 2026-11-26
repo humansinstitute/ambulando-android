@@ -120,7 +120,8 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     LaunchedEffect(profilesEnabled) { avatars.setEnabled(profilesEnabled && !model.environment.isSample) }
     LaunchedEffect(model.identityState) {
         val key = "${studio.otherstuff.ambulando.core.browser.NIP07Sites.STATE_KEY}:${c.signerNpub}"
-        browser.configure(false, studio.otherstuff.ambulando.core.browser.NIP07Sites.decode(model.catalog.reader.state(key)), { model.identity.publicKeyHex() }, { model.identity.sign(it) }, NIP07SitePersistence { sites -> model.act { model.catalog.writer.setState(key, studio.otherstuff.ambulando.core.browser.NIP07Sites.encode(sites)) } }, cipher = { own, peer, text, decrypt -> model.identity.nip44(own, peer, text, decrypt) })
+        val consent = studio.otherstuff.ambulando.app.browser.BrowserConsentPersistence(androidContext, c.signerNpub)
+        browser.configure(false, studio.otherstuff.ambulando.core.browser.NIP07Sites.decode(model.catalog.reader.state(key)), { model.identity.publicKeyHex() }, { model.identity.sign(it) }, NIP07SitePersistence { sites -> model.act { model.catalog.writer.setState(key, studio.otherstuff.ambulando.core.browser.NIP07Sites.encode(sites)) } }, cipher = { own, peer, text, decrypt -> model.identity.nip44(own, peer, text, decrypt) }, grants = consent.load(), persistGrants = consent::save, accountSigner = { own, template -> model.identity.signForBrowser(own, template) })
         browser.configureFavourites(studio.otherstuff.ambulando.app.browser.StoreFavouritesPersistence(model.catalog))
     }
     DisposableEffect(browser) { onDispose { browser.updateLocked(true) } }

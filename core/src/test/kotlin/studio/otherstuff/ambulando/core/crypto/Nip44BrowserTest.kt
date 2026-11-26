@@ -99,7 +99,11 @@ class Nip44BrowserTest {
         val fresh = identity.nip44(own, own, text, false)
         assertEquals(text, identity.decryptPrivateIndex(fresh))
         assertTrue(runCatching { identity.nip44("0".repeat(64), own, text, false) }.isFailure)
+        val event = studio.otherstuff.ambulando.core.nostr.NostrEventTemplate(1, emptyList(), "fixture", 1)
+        assertEquals(own, identity.signForBrowser(own, event).pubkey)
+        assertTrue(runCatching { identity.signForBrowser("0".repeat(64), event) }.isFailure)
         identity.lock()
         assertTrue(runCatching { identity.nip44(own, own, fresh, true) }.isFailure)
+        assertTrue(runCatching { identity.signForBrowser(own, event) }.isFailure)
     }
 }

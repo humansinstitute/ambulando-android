@@ -305,6 +305,13 @@ class IdentityService(
         r.sign(template)
     }
 
+    /** Browser signing binds the approved account inside the vault mutex and excludes background credentials. */
+    suspend fun signForBrowser(expectedPublicKey: String, template: NostrEventTemplate): NostrEvent = locked {
+        if (!vault.isUnlocked) throw IdentityError.Locked
+        if (vault.publicKeyHex != expectedPublicKey) throw IdentityError.SignerMismatch
+        vault.sign(template)
+    }
+
     /** Self-only private locator encryption; available only while the real vault is unlocked. */
     suspend fun encryptPrivateIndex(plaintext: String): String = locked {
         if (!vault.isUnlocked) throw IdentityError.Locked
