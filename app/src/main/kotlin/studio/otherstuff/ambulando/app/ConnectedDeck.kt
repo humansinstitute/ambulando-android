@@ -55,6 +55,7 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
         }
         override fun refreshLaunchers(force: Boolean) { model.act { model.sync.refreshToolbox(c, w, force = force); model.sync.refreshPersonalAgentLaunchers(c, w, force) } }
         override fun launchApp(url: String) { services.openUrl(url) }
+        override fun openGoals() { services.open(WorkRoute.Goals(w.id)) }
         override fun showToolbox() { model.section = AppSection.TOOLBOX }
         override fun setPinned(pinned: Boolean, type: PinRecord.ResourceType, id: String) {
             model.act {

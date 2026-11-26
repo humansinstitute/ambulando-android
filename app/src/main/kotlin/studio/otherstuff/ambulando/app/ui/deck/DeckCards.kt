@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Tag
@@ -74,6 +75,9 @@ import studio.otherstuff.ambulando.core.store.LocalStore
                 Text(navigation.contextLabel(), fontSize = type.subheadline, color = amb.mutedForeground)
             }
         }
+        item {
+            AppLauncherCard("Goals", "Personal · your aims, checkpoints and linked work", { androidx.compose.foundation.layout.Box(Modifier.size(44.dp), contentAlignment = androidx.compose.ui.Alignment.Center) { androidx.compose.material3.Icon(Icons.Outlined.Flag, null, Modifier.size(26.dp), tint = amb.primary) } }, intents::openGoals)
+        }
         item { Text("Apps", Modifier.padding(horizontal = 4.dp), fontSize = type.footnote, fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold, color = amb.mutedForeground) }
         query.error?.let { item { DeckNote(it) } }
         items(query.value.apps, key = { it.id }) { app ->
@@ -121,6 +125,9 @@ import studio.otherstuff.ambulando.core.store.LocalStore
     }
     DeckCardFrame(channel?.let { "Inbox: #${navigation.label(it)}" } ?: "Inbox", "inbox", actions = {
         channel?.let { PinButton(studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.CHANNEL, it.id, "#" + navigation.label(it), pins, onSetPinned = { on -> intents.setPinned(on, studio.otherstuff.ambulando.core.surfaces.PinRecord.ResourceType.CHANNEL, it.id) }) }
+        androidx.compose.material3.IconButton(onClick = intents::openGoals, modifier = Modifier.testTag("deck.inbox.goals")) {
+            androidx.compose.material3.Icon(Icons.Outlined.Flag, "Goals")
+        }
         onNewThread?.let { open ->
             androidx.compose.material3.IconButton(onClick = open, modifier = Modifier.testTag("deck.inbox.new")) {
                 androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Add, "New thread")

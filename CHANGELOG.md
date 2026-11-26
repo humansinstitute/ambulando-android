@@ -1,3 +1,9 @@
+## 0.9.60 (88)
+
+- Add personal Goals from Home: a name, description and optional start and target dates, an ordered editable checkpoint timeline you can mark reached, and links to existing chats, tasks, Docs and Files from any channel you can read.
+- Complete, reopen, archive and restore a goal. Goals are saved as versioned Files in a private Goals channel shared only with you and the agents you choose, so an agent's change and yours are both kept and a stale save is refused rather than overwritten.
+- Goals that other apps wrote with unexpected fields are shown as stored and never erased by a later save; deleted goal files are hidden.
+
 ## 0.9.56 (84)
 
 - Restore Chat by default while respecting saved visibility choices, with a compact conversation inbox across Home, scope and channel.

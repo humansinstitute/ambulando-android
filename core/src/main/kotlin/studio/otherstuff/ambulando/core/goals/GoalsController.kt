@@ -1,0 +1,114 @@
+package studio.otherstuff.ambulando.core.goals
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import studio.otherstuff.ambulando.core.transport.*
+
+/**
+ * Screen state for the personal Goals list and the goal being viewed. One controller serves one workspace boundary;
+ * every network step re-checks [current] so a locked, switched or access-removed workspace can neither load nor save.
+ */
+class GoalsController(
+    private val api: TowerAPI,
+    private val workspace: String,
+    private val app: String,
+    private val viewer: String,
+    private val current: () -> Boolean,
+) {
+    /** A goal file that exists but cannot be shown (newer app version, damaged content). It is never rewritten. */
+    data class Unreadable(val fileId: String, val name: String, val reason: String)
+
+    data class State(
+        val loading: Boolean = false,
+        val loaded: Boolean = false,
+        val goals: List<GoalDocument> = emptyList(),
+        /** Where goals live, or why they cannot be used yet. Null until the first load finishes. */
+        val space: GoalsSpaceState? = null,
+        val unreadable: List<Unreadable> = emptyList(),
+        /** Plain-language reason the last load failed; the previous goals stay visible. */
+        val error: String? = null,
+    )
+
+    private val _state = MutableStateFlow(State())
+    val state: StateFlow<State> = _state
+    private val gate = Mutex()
+    @Volatile private var ownerOnly = false
+
+    fun goal(fileId: String): GoalDocument? = _state.value.goals.firstOrNull { it.id == fileId }
+
+    suspend fun refresh() = gate.withLock {
+        _state.update { it.copy(loading = true) }
+        try {
+            check(current()) { "Unlock an accessible workspace to open goals." }
+            val space = api.goalsSpace(workspace, app, viewer, ownerOnly)
+            val files = (space as? GoalsSpaceState.Ready)?.let { api.goalFiles(workspace, app, it.channel.id) }.orEmpty()
+            val goals = ArrayList<GoalDocument>(); val unreadable = ArrayList<Unreadable>()
+            for (file in files) {
+                check(current())
+                try { goals += api.readGoal(workspace, app, file) }
+                catch (e: GoalError) { unreadable += Unreadable(file.id, file.displayName, e.message ?: "Could not be read.") }
+            }
+            check(current())
+            _state.value = State(loaded = true, goals = goals.sortedWith(order), space = space, unreadable = unreadable)
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { _state.update { it.copy(loading = false, error = userMessage(e)) } }
+    }
+
+    /** Creates the private Goals channel (null [scopeId]: the disclosed owner-only fallback) and loads it. */
+    suspend fun setUp(scopeId: String?, agentActorIds: List<String>) {
+        gate.withLock {
+            check(current()) { "Unlock an accessible workspace to set up goals." }
+            check(_state.value.space is GoalsSpaceState.NeedsSetup) { "Goals are already set up." }
+            api.createGoalsSpace(workspace, app, viewer, scopeId, agentActorIds)
+            if (scopeId == null) ownerOnly = true
+        }
+        refresh()
+    }
+
+    /** Lets one agent contribute to the owner's goals, or stops it. Only the owner of the channel can change this. */
+    suspend fun setAgentAccess(agent: studio.otherstuff.ambulando.core.transport.MemberRecord, enabled: Boolean) {
+        gate.withLock {
+            check(current()) { "Unlock an accessible workspace to change access." }
+            val ready = _state.value.space as? GoalsSpaceState.Ready ?: error("Set up goals first.")
+            check(!ready.ownerOnly) { "Agents cannot use the owner-only space." }
+            api.setGoalsAgentAccess(workspace, app, ready.channel.id, agent, enabled)
+        }
+        refresh()
+    }
+
+    suspend fun create(goal: Goal): GoalDocument = gate.withLock {
+        check(current()) { "Unlock an accessible workspace to save goals." }
+        val ready = _state.value.space as? GoalsSpaceState.Ready ?: throw GoalError.Invalid("Set up goals before adding one.")
+        val created = api.createGoal(workspace, app, ready.channel.id, goal)
+        publish(created); created
+    }
+
+    /** Throws [GoalError.Conflict] / [GoalSaveFailed] with a readable message; the saved goal is unchanged in both cases. */
+    suspend fun edit(fileId: String, vararg edits: GoalEdit): GoalDocument = gate.withLock {
+        check(current()) { "Unlock an accessible workspace to save goals." }
+        val saved = api.editGoal(workspace, app, fileId, edits.toList())
+        check(current())
+        publish(saved); saved
+    }
+
+    /** Re-reads one goal from Tower (e.g. after a conflict or an agent edit). */
+    suspend fun reload(fileId: String): GoalDocument = gate.withLock {
+        check(current())
+        api.readGoal(workspace, app, fileId).also(::publish)
+    }
+
+    private fun publish(doc: GoalDocument) = _state.update { s ->
+        s.copy(goals = (s.goals.filterNot { it.id == doc.id } + doc).sortedWith(order), loading = false, loaded = true, error = null)
+    }
+
+    private val order = compareBy<GoalDocument>({ it.goal.status.ordinal }, { it.goal.targetDate ?: "9999-12-31" }, { it.goal.name.lowercase() }, { it.id })
+
+    private fun userMessage(e: Exception): String = when (e) {
+        is GoalError -> e.message ?: "The goal could not be read."
+        else -> ConnectionFailure.userMessage(e) ?: "Goals could not be loaded."
+    }
+}

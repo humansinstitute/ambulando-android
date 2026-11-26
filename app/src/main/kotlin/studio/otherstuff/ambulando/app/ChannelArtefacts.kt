@@ -411,6 +411,8 @@ private data class HtmlArtefactRead(
     val exit = studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current
     BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current && source == null) { exit?.invoke() }
     var menu by remember(file.id) { mutableStateOf(false) }
+    var addToGoal by remember(file.id) { mutableStateOf(false) }
+    if (addToGoal) AddToGoalSheet(model, studio.otherstuff.ambulando.core.goals.GoalLinkType.FILE, file.id, file.channelId) { addToGoal = false }
     var exporting by remember(file.id) { mutableStateOf(false) }
     val viewedVersionId = htmlPayload?.versionId?.takeIf { it.isNotBlank() } ?: selected ?: versions?.currentVersionId
     val viewedVersionNumber: Int = htmlPayload?.versionNumber ?: versions?.versions?.firstOrNull { it.id == viewedVersionId }?.versionNumber?.toInt() ?: 1
@@ -529,6 +531,7 @@ private data class HtmlArtefactRead(
                     ArtefactProvenance(file)
                     DropdownMenuItem(text = { Text("Download / share File") }, onClick = { menu = false; exporting = true }, modifier = Modifier.testTag("artefacts.export"))
                     RecordPin(model, PinRecord.ResourceType.FILE, file.id, inMenu = true)
+                    DropdownMenuItem(text = { Text("Add to goal…") }, onClick = { menu = false; addToGoal = true }, modifier = Modifier.testTag("artefacts.addToGoal"))
                     DropdownMenuItem(text = { Text("Refresh comments") }, onClick = { menu = false; commentsReload++ }, modifier = Modifier.testTag("artefacts.refreshComments"))
                     DropdownMenuItem(text = { Text(if (selected == null) "Edit source" else "Restore source") }, enabled = verifiedFile.raw.bool("can_write") == true && !saving, onClick = {
                         menu = false

@@ -234,13 +234,14 @@ object ScopeChannelRequests {
     /** A named channel in [scopeId] (optional description and channel context prompt, as the web form). */
     fun createChannel(
         workspaceId: String, scopeId: String, name: String, description: String?, contextPrompt: String?,
-        grants: List<InitialChannelGrant> = emptyList(),
+        grants: List<InitialChannelGrant> = emptyList(), metadata: JsonObject? = null,
     ): ManagementRequest {
         val trimmed = required(name, "Channel")
         val body = LinkedHashMap<String, Any?>()
         body["name"] = trimmed
         body["kind"] = "channel"
-        body["metadata"] = AgentChatConfig.write(JsonObject(emptyMap()), contextPrompt ?: "")
+        // An app-owned channel (e.g. Goals) supplies its own metadata instead of the agent-chat default.
+        body["metadata"] = metadata ?: AgentChatConfig.write(JsonObject(emptyMap()), contextPrompt ?: "")
         body["grants"] = InitialChannelGrant.payloads(grants)
         description?.trim()?.takeIf { it.isNotEmpty() }?.let { body["description"] = it }
         return ManagementRequest(

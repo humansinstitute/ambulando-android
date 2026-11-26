@@ -8,6 +8,9 @@ import studio.otherstuff.ambulando.core.transport.ViewStateRecord
  * integrator implements it on the sync engine and durable write queue.
  */
 interface DeckIntents : PinIntents {
+    /** Opens the viewer's personal Goals from Home. */
+    fun openGoals() {}
+
     /** Relative move, guarded by the row versions the user observed. */
     suspend fun movePin(target: studio.otherstuff.ambulando.core.surfaces.PinRecord, before: studio.otherstuff.ambulando.core.surfaces.PinRecord?): Result<Unit> = Result.failure(IllegalStateException("Pin ordering unavailable"))
 

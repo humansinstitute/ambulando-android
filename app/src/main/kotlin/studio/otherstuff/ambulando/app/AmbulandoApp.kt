@@ -164,6 +164,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             val target = when (route) {
                 is WorkRoute.WorkspaceReport -> AppSection.TOOLBOX
                 is WorkRoute.DailyMetrics -> AppSection.TOOLBOX
+                is WorkRoute.Goals, is WorkRoute.Goal -> AppSection.DECK
                 is WorkRoute.Task -> AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
                 is WorkRoute.File -> if (model.section == AppSection.DOCS) AppSection.DOCS else AppSection.FILES
@@ -331,9 +332,11 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             }
         }, routeScreen = { _, route ->
             if (screen != null) when (route) {
-                is WorkRoute.Task -> Column { Box(Modifier.weight(1f)) { TaskDetailScreen(remember(screen, route.taskId) { TaskDetailState(model.store, screen, route.taskId, coroutineScope) }, screen, intents) } }
+                is WorkRoute.Task -> Column { Box(Modifier.weight(1f)) { TaskDetailScreen(remember(screen, route.taskId) { TaskDetailState(model.store, screen, route.taskId, coroutineScope) }, screen, intents) }; AddToGoalButton(model, studio.otherstuff.ambulando.core.goals.GoalLinkType.TASK, route.taskId) }
                 is WorkRoute.WorkspaceReport -> WorkspaceReportScreen(model)
                 is WorkRoute.DailyMetrics -> DailyMetricsScreen(model)
+                is WorkRoute.Goals -> GoalsScreen(model)
+                is WorkRoute.Goal -> GoalScreen(model, route.fileId)
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)
                 is WorkRoute.Thread -> ConnectedChat(model, route.threadId, channelOverride = route.channelId, hitMessageId = route.messageId)

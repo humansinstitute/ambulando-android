@@ -538,6 +538,8 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
         var actionsMenu by remember { mutableStateOf(false) }
         var openMove by remember { mutableStateOf<(() -> Unit)?>(null) }
+        var addToGoal by remember(docId) { mutableStateOf(false) }
+        if (addToGoal) AddToGoalSheet(model, studio.otherstuff.ambulando.core.goals.GoalLinkType.DOC, docId, record?.channelId) { addToGoal = false }
         val canEdit = body != null && record?.accessRemoved == false && !w.accessRemoved
         Column(Modifier.fillMaxSize().background(studio.otherstuff.ambulando.app.ui.theme.Amb.paperSurround)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp, androidx.compose.ui.Alignment.End)) {
@@ -548,6 +550,8 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                         DropdownMenu(expanded = actionsMenu, onDismissRequest = { actionsMenu = false }) {
                             DropdownMenuItem(text = { Text("Move…") }, enabled = !doc.accessRemoved && !w.accessRemoved && services.unlocked, modifier = Modifier.testTag("doc.move"),
                                 onClick = { actionsMenu = false; openMove?.invoke() })
+                            DropdownMenuItem(text = { Text("Add to goal…") }, enabled = !doc.accessRemoved && !w.accessRemoved && services.unlocked, modifier = Modifier.testTag("doc.addToGoal"),
+                                onClick = { actionsMenu = false; addToGoal = true })
                         }
                     }
                 }

@@ -148,6 +148,16 @@ import studio.otherstuff.ambulando.core.transport.obj
         "Adding, editing and placing WApps is done in the web app."
     GroupedSurface(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+            item(key = "goals") {
+                GroupedRow(true, true, onClick = { services.open(WorkRoute.Goals(w.id)) }, enabled = services.unlocked && !w.accessRemoved, tag = "apps.goals") {
+                    Icon(Icons.Outlined.Flag, null, Modifier.size(22.dp), tint = Amb.colors.primary)
+                    Column {
+                        Text("Goals", fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = Amb.colors.foreground)
+                        Text("Personal · Your aims, checkpoints and linked work", fontSize = AmbType.caption, color = Amb.colors.mutedForeground)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
             item(key = "napplet:generic") { GenericApps(model) }
             item(key = "napplet:workspace-report") {
                 GroupedRow(true, true, onClick = { services.open(WorkRoute.WorkspaceReport(w.id)) }, enabled = services.unlocked && !w.accessRemoved, tag = "apps.workspaceReport") {

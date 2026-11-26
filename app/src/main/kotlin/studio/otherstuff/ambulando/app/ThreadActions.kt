@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,6 +38,8 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
         model.store.reader.conversationParticipants(w.id, threadId)
     } }.collectAsState(emptyList())
     var renaming by remember(threadId) { mutableStateOf(false) }
+    var addToGoal by remember(threadId) { mutableStateOf(false) }
+    if (addToGoal) AddToGoalSheet(model, studio.otherstuff.ambulando.core.goals.GoalLinkType.CHAT, threadId, record?.channelId) { addToGoal = false }
     Row(Modifier.fillMaxWidth().testTag("thread.header"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         if (exit != null) IconButton(onClick = exit, modifier = Modifier.testTag("nav.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to conversations") }
         Column(Modifier.weight(1f).padding(start = 12.dp, top = 6.dp, bottom = 6.dp)) {
@@ -46,6 +49,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                 maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground)
         }
         RecordPin(model, PinRecord.ResourceType.THREAD, threadId)
+        IconButton(onClick = { addToGoal = true }, enabled = record != null, modifier = Modifier.testTag("thread.addToGoal")) { Icon(Icons.Outlined.Flag, "Add to goal") }
         MessageMenu(model, menu?.first?.root, menu?.first?.rootMessageId, menu?.first?.reference, menu?.first?.autopilotSource,
             enabled, "thread", "Thread menu", conversationThreadId = threadId, onRename = if (record != null) ({ renaming = true }) else null)
     }
