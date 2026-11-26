@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.automirrored.outlined.Redo
@@ -302,12 +303,25 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         if (model.environment.isSample) Text("Sample data", style = MaterialTheme.typography.labelSmall)
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            TextButton(onClick = ::finish, enabled = !saving, modifier = Modifier.testTag("doc.editor.back")) { Text("Back") }
+            if (compactThreadArtefact()) IconButton(onClick = ::finish, enabled = !saving, modifier = Modifier.testTag("doc.editor.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to chat") }
+            else TextButton(onClick = ::finish, enabled = !saving, modifier = Modifier.testTag("doc.editor.back")) { Text("Back") }
             TextButton(enabled = !saving && ready && host?.failure == null && inserted.isEmpty() && !s.permissionDenied && !closing, modifier = Modifier.testTag("doc.editor.save"), onClick = {
                 scope.launch { controller.save() }
             }) { Text(if (saving) "Saving…" else "Save") }
-            Spacer(Modifier.weight(1f))
-            TextButton(enabled = ready && !saving && !s.permissionDenied, modifier = Modifier.testTag("doc.editor.versions"), onClick = { showVersions = true }) { Text("Versions") }
+            if (compactThreadArtefact()) Text(s.title, Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            else Spacer(Modifier.weight(1f))
+            if (compactThreadArtefact()) {
+                ThreadArtefactHeaderEntry()
+                Box {
+                    var options by remember { mutableStateOf(false) }
+                    IconButton(onClick = { options = true }, modifier = Modifier.testTag("doc.editor.options")) { Icon(Icons.Outlined.MoreHoriz, "Document options") }
+                    DropdownMenu(options, { options = false }) {
+                        ThreadArtefactMenuItems { options = false }
+                        DropdownMenuItem(text = { Text("Editor versions") }, enabled = ready && !saving && !s.permissionDenied,
+                            onClick = { options = false; showVersions = true }, modifier = Modifier.testTag("doc.editor.versions"))
+                    }
+                }
+            } else TextButton(enabled = ready && !saving && !s.permissionDenied, modifier = Modifier.testTag("doc.editor.versions"), onClick = { showVersions = true }) { Text("Versions") }
         }
         OutlinedTextField(s.title, { controller.setTitle(it) }, label = { Text("Title") }, enabled = !s.followingRemote && !s.permissionDenied, modifier = Modifier.fillMaxWidth().testTag("doc.editor.title"))
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {

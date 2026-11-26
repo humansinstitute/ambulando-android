@@ -64,7 +64,9 @@ class ThreadArtefactMembershipFlowTest {
                 compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("thread.artefacts.row.$id")).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithTag("thread.artefacts.row.$id").performClick()
                 compose.waitUntil(30_000) { state.members.size == expected && !state.busy }
-                compose.onNodeWithTag("thread.chat").performClick()
+                val back = when (id) { SampleIds.CANVAS_DOC -> "doc.editor.back"; SampleIds.BOARD_FILE -> "board.back"; else -> "artefacts.back" }
+                compose.waitUntil(30_000) { compose.onAllNodesWithTag(back).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithTag(back).performClick()
             }
             add(SampleIds.CANVAS_DOC, "Build 7 launch", 1)
             add(SampleIds.BOARD_FILE, "Architecture", 2)

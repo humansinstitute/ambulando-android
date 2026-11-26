@@ -325,8 +325,9 @@ private fun SectionStackView(
     val stack = stacks.of(section)
     val top = stack.lastOrNull()
     val focusedEditor = editor.owner != null
+    val compactThread = top is WorkRoute.Thread && androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp < TabletMinWidth
     Column(Modifier.fillMaxSize().then(if (focusedEditor) Modifier else Modifier.statusBarsPadding())) {
-        if (!focusedEditor && top?.fullScreen != true) TopBar(section, chrome, actions, canGoBack = top != null, route = top, pinControl = pinControl, onBack = { stacks.pop(section) })
+        if (!focusedEditor && !compactThread && top?.fullScreen != true) TopBar(section, chrome, actions, canGoBack = top != null, route = top, pinControl = pinControl, onBack = { stacks.pop(section) })
         if (!focusedEditor && top == null && section != AppSection.TOOLBOX) {
             ContextBar(
                 workspaceLabel = chrome.workspaceLabel, scopeName = chrome.scopeName, channelLabel = chrome.channelLabel, isHome = chrome.isHome,
@@ -339,7 +340,7 @@ private fun SectionStackView(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             CompositionLocalProvider(LocalEditorNavigation provides editor, LocalEditorActive provides (chrome.section == section)) {
                 if (top == null) rootState.SaveableStateProvider(section.key) { sectionRoot(section) } else androidx.compose.runtime.key(stack.size, top) {
-                    CompositionLocalProvider(LocalRouteExit provides { stacks.pop(section) }) { routeScreen(section, top) }
+                    CompositionLocalProvider(LocalRouteExit provides { stacks.pop(section) }, LocalCompactChatActions provides if (compactThread) actions else null) { routeScreen(section, top) }
                 }
             }
         }
@@ -403,4 +404,16 @@ private fun Banners(chrome: ShellChromeState, actions: ShellActions) {
         Text("Locked: showing saved data. Tap to unlock and sync.", style = MaterialTheme.typography.labelSmall, color = amb.warning)
     }
     HorizontalDivider(thickness = 0.dp, color = Color.Transparent)
+}
+
+/** Shell actions retained in the single mobile conversation menu. */
+val LocalCompactChatActions = staticCompositionLocalOf<ShellActions?> { null }
+
+@Composable
+fun CompactChatMenuItems(actions: ShellActions, dismiss: () -> Unit) {
+    listOf("Search" to actions::search, "Notifications" to actions::notifications,
+        "Browser" to actions::showBrowser, "Settings" to actions::settings,
+        "Open navigation" to actions::openSidebar).forEach { (label, action) ->
+        androidx.compose.material3.DropdownMenuItem(text = { Text(label) }, onClick = { dismiss(); action() })
+    }
 }

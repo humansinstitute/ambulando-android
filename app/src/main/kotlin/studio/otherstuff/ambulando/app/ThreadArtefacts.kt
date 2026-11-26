@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -34,6 +36,9 @@ internal class ThreadArtefactTab(val kind: String, val id: String, title: String
     var title by mutableStateOf(title)
     var open by mutableStateOf(true)
     var attached by mutableStateOf(true)
+    var compactHeaderOwned by mutableStateOf(false)
+    var showHistory: (() -> Unit)? = null
+    var resumeDraft: (() -> Unit)? = null
     var parent: ThreadArtefactTab? = null
     var recoveryHeld by mutableStateOf(false)
     var sourceDirty: (() -> Boolean)? = null
@@ -382,7 +387,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
                             } }, enabled = !state.busy && recovering.saveSource != null, modifier = Modifier.testTag("thread.artefacts.saveRecovery")) { Text("Save source") }
                             }
                         }
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        if (!compactThreadArtefact() || state.tabs.firstOrNull { it.id == state.selected }?.compactHeaderOwned != true) Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             IconButton(onClick = { state.shown = false }, enabled = !state.busy, modifier = Modifier.testTag("thread.chat")) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to chat")
                             }
@@ -390,7 +395,12 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
                             IconButton(onClick = { state.listing = true }, enabled = !state.busy, modifier = Modifier.testTag("thread.artefacts.menu")) {
                                 Icon(Icons.Outlined.FolderOpen, "Thread artefacts (${state.members.size})")
                             }
-                            TextButton(onClick = { state.discuss = true; state.shown = false }, enabled = state.tabs.any { it.id == state.selected && it.attached && !it.publicationHeld && it.unavailable == null } && !state.busy, modifier = Modifier.testTag("thread.artefacts.discuss")) { Text("Discuss this") }
+                            if (compactThreadArtefact()) ThreadArtefactDiscussButton()
+                            if (compactThreadArtefact()) Box {
+                                var menu by remember { mutableStateOf(false) }
+                                IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreHoriz, "Artefact options") }
+                                DropdownMenu(menu, { menu = false }) { ThreadArtefactMenuItems { menu = false } }
+                            } else TextButton(onClick = { state.discuss = true; state.shown = false }, enabled = state.tabs.any { it.id == state.selected && it.attached && !it.publicationHeld && it.unavailable == null } && !state.busy, modifier = Modifier.testTag("thread.artefacts.discuss")) { Text("Discuss this") }
                         }
                         Box(Modifier.weight(1f)) {
                             state.tabs.filter { it.open }.forEach { tab -> key(tab.kind, tab.id) {
@@ -457,6 +467,8 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     val syncStatus by model.engine.status.collectAsState()
     val openFailure = if (body == null) syncStatus.errors[WorkspaceSync.docKey(w.id, tab.id)] else null
     SideEffect {
+        tab.showHistory = { history = true; scope.launch { load() } }
+        tab.resumeDraft = if (pinned != null) ({ pinned = null }) else null
         tab.unavailable = openFailure?.let { "This document could not be opened: $it" }
         editor.attached = tab.attached
         tab.title = selected?.title ?: editor.title
@@ -477,14 +489,14 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     }
     DisposableEffect(tab) { onDispose { tab.prepare = null; tab.checkpoint = null; tab.validate = null; tab.sourceDirty = null; tab.saveSource = null; tab.holdRecovery = null } }
     Column(Modifier.fillMaxSize()) {
-        Row {
+        if (!compactThreadArtefact()) Row {
             TextButton(onClick = { history = true; scope.launch { load() } }, modifier = Modifier.testTag("thread.doc.history")) { Text("Saved versions") }
             if (pinned != null) TextButton(onClick = { pinned = null }, modifier = Modifier.testTag("thread.doc.latest")) { Text("Return to current draft") }
         }
         failure?.let { Text(it); TextButton(onClick = { scope.launch { load() } }) { Text("Retry") } }
         Box(Modifier.weight(1f)) {
             RetainedPane(pinned == null) {
-                CompositionLocalProvider(LocalThreadArtefactTab provides editor) {
+                CompositionLocalProvider(LocalThreadArtefactTab provides editor, LocalThreadPaneActive provides (state?.shown == true && pinned == null)) {
                     if (body != null) DocumentEditor(model, tab.id) { state?.shown = false }
                     else if (openFailure == null) Text("Opening document…", Modifier.padding(16.dp).testTag("thread.artefact.loading"))
                     else Column(Modifier.padding(16.dp).testTag("thread.artefact.unavailable")) {
@@ -552,4 +564,39 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
             Text("Saved authorised records; content loads when opened.", style = MaterialTheme.typography.bodySmall)
         }
     }, confirmButton = { TextButton(onClick = { state.browsing = false }, enabled = !state.busy) { Text("Cancel") } })
+}
+
+/** Native editor headers own navigation on narrow thread views; a loading/failed view keeps the fallback bar. */
+@Composable internal fun compactThreadArtefact(): Boolean = LocalThreadArtefacts.current != null &&
+    androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 760
+
+@Composable internal fun ThreadArtefactHeaderEntry() {
+    if (!compactThreadArtefact()) return
+    val state = LocalThreadArtefacts.current ?: return
+    val tab = LocalThreadArtefactTab.current ?: return
+    val owner = tab.parent ?: tab
+    val active = LocalThreadPaneActive.current
+    DisposableEffect(owner, active) { owner.compactHeaderOwned = active; onDispose { owner.compactHeaderOwned = false } }
+    IconButton(onClick = { state.listing = true }, enabled = !state.busy, modifier = Modifier.testTag("thread.artefacts.menu")) {
+        Icon(Icons.Outlined.FolderOpen, "Thread artefacts (${state.members.size})")
+    }
+    ThreadArtefactDiscussButton()
+}
+
+@Composable internal fun ThreadArtefactDiscussButton() {
+    val state = LocalThreadArtefacts.current ?: return
+    val tab = state.tabs.firstOrNull { it.id == state.selected }
+    IconButton(onClick = { state.discuss = true; state.shown = false },
+        enabled = tab?.let { it.attached && !it.publicationHeld && it.unavailable == null } == true && !state.busy,
+        modifier = Modifier.testTag("thread.artefacts.discuss")) { Icon(Icons.Outlined.Forum, "Discuss this") }
+}
+
+@Composable internal fun ThreadArtefactMenuItems(dismiss: () -> Unit) {
+    if (!compactThreadArtefact()) return
+    val state = LocalThreadArtefacts.current ?: return
+    val tab = state.tabs.firstOrNull { it.id == state.selected }
+    DropdownMenuItem(text = { Text("Discuss this") }, enabled = tab?.let { it.attached && !it.publicationHeld && it.unavailable == null } == true && !state.busy,
+        onClick = { dismiss(); state.discuss = true; state.shown = false }, modifier = Modifier.testTag("thread.artefacts.menu.discuss"))
+    tab?.showHistory?.let { action -> DropdownMenuItem(text = { Text("Saved document versions") }, onClick = { dismiss(); action() }, modifier = Modifier.testTag("thread.doc.history")) }
+    tab?.resumeDraft?.let { action -> DropdownMenuItem(text = { Text("Return to current draft") }, onClick = { dismiss(); action() }, modifier = Modifier.testTag("thread.doc.latest")) }
 }

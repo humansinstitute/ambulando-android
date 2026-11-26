@@ -65,6 +65,13 @@ class ThreadArtefactsFlowTest {
             compose.onNodeWithTag("thread.artefacts.row.${SampleIds.BOARD_FILE}").performClick()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.title")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("board.title").assertTextContains("Architecture", substring = true)
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("thread.chat").fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithTag("thread.artefacts.menu").assertIsDisplayed()
+            compose.onNodeWithTag("thread.artefacts.discuss").assertIsDisplayed()
+            compose.onNodeWithTag("board.menu").performClick()
+            compose.onNodeWithTag("thread.artefacts.menu.discuss").assertExists()
+            androidx.test.espresso.Espresso.pressBack()
+            compose.onNodeWithTag("board.title").assertIsDisplayed()
             compose.onNodeWithTag("thread.artefacts").assertDoesNotExist()
             // Real native pointer drag in the embedded editor: the bottom switch must not intercept panning.
             fun web(view: android.view.View): android.webkit.WebView? {
@@ -128,7 +135,7 @@ class ThreadArtefactsFlowTest {
             compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("board.merge")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("board.merge").performClick()
             compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("board.stale")).fetchSemanticsNodes().isEmpty() }
-            compose.onNodeWithTag("thread.chat").performClick()
+            compose.onNodeWithTag("board.back").performClick()
             compose.onNodeWithTag("chat.send").performClick()
             compose.waitUntil(20_000) { model.sampleTower!!.boards.versionCount(SampleIds.BOARD_FILE) > initialVersions }
             compose.waitUntil(20_000) { runBlocking { model.store.reader.threadMessages(SampleIds.STUDIO, SampleIds.thread(39), 300).any { it.body == "Keep this draft" && it.raw["metadata"]?.toString()?.contains("ambulando_artefact_context") == true } } }
@@ -139,7 +146,7 @@ class ThreadArtefactsFlowTest {
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("board.version")).fetchSemanticsNodes().isNotEmpty() }
             compose.onAllNodesWithTag("board.version")[0].performClick()
             compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("board.viewing")).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithTag("thread.chat").performClick()
+            compose.onNodeWithTag("board.back").performClick()
             compose.onNodeWithTag("chat.composer").assertTextContains("Retained after Send")
             openBoard()
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.viewing")).fetchSemanticsNodes().isNotEmpty() && !model.threadArtefacts[originalTarget.draftKey]!!.busy }
@@ -164,7 +171,7 @@ class ThreadArtefactsFlowTest {
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
             compose.waitUntil(30_000) { compose.onAllNodes(hasTestTag("board.viewing")).fetchSemanticsNodes().isNotEmpty() && !model.threadArtefacts[originalTarget.draftKey]!!.busy }
             compose.onNodeWithTag("board.viewing").assertIsDisplayed()
-            compose.onNodeWithTag("thread.chat").performClick()
+            compose.onNodeWithTag("board.back").performClick()
             compose.onNodeWithTag("chat.composer").assertTextContains("Retained after Send")
             val target = ChatTarget(model.connection!!.id, SampleIds.STUDIO, SampleIds.GENERAL, SampleIds.thread(39))
             compose.waitUntil(10_000) { runBlocking { model.store.reader.draft(target)?.text == "Retained after Send" } }

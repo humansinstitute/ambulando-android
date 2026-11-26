@@ -496,8 +496,9 @@ private data class HtmlArtefactRead(
         ) {
             IconButton(onClick = { exit?.invoke() }, modifier = Modifier.testTag("artefacts.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
             Text(file.displayName, Modifier.weight(1f).testTag("artefacts.fileTitle"), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ThreadArtefactHeaderEntry()
             // Compact version selector directly in control bar; browsing history never mutates current head.
-            Box {
+            if (!compactThreadArtefact()) Box {
                 TextButton(
                     onClick = { versionMenu = true },
                     enabled = !saving && availableVersions.isNotEmpty(),
@@ -529,7 +530,7 @@ private data class HtmlArtefactRead(
                 }
             }
             // Explicit Comment mode toggle for Android tap-to-target review.
-            IconButton(
+            if (!compactThreadArtefact()) IconButton(
                 onClick = { commentMode = !commentMode },
                 enabled = html != null && !saving && !commentsAccessRevoked,
                 modifier = Modifier.testTag("artefacts.commentMode"),
@@ -541,7 +542,7 @@ private data class HtmlArtefactRead(
                 )
             }
             // Threads button with open count.
-            TextButton(
+            if (!compactThreadArtefact()) TextButton(
                 onClick = { commentsSheetOpen = true },
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                 modifier = Modifier.testTag("artefacts.threads"),
@@ -555,6 +556,15 @@ private data class HtmlArtefactRead(
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.testTag("artefacts.menu")) { Icon(Icons.Outlined.MoreHoriz, "Artefact options") }
                 DropdownMenu(menu, { menu = false }) {
+                    ThreadArtefactMenuItems { menu = false }
+                    if (compactThreadArtefact()) {
+                        Text("Viewing v$viewedVersionNumber", Modifier.padding(16.dp), style = MaterialTheme.typography.labelMedium)
+                        availableVersions.forEach { v -> DropdownMenuItem(text = { Text("View v${v.versionNumber}" + if (v.id == (htmlPayload?.currentVersionId ?: versions?.currentVersionId)) " (Latest)" else "") }, enabled = !saving,
+                            onClick = { selected = if (v.id == (htmlPayload?.currentVersionId ?: versions?.currentVersionId)) null else v.id; commentMode = false; pendingTarget = null; menu = false }, modifier = Modifier.testTag("artefacts.version.v${v.versionNumber}")) }
+                        DropdownMenuItem(text = { Text(if (commentMode) "Exit comment mode" else "Comment mode") }, enabled = html != null && !saving && !commentsAccessRevoked,
+                            onClick = { menu = false; commentMode = !commentMode }, modifier = Modifier.testTag("artefacts.commentMode"))
+                        DropdownMenuItem(text = { Text("Comments ($openThreadCount)") }, onClick = { menu = false; commentsSheetOpen = true }, modifier = Modifier.testTag("artefacts.threads"))
+                    }
                     ArtefactProvenance(file)
                     DropdownMenuItem(text = { Text("Download / share File") }, onClick = { menu = false; exporting = true }, modifier = Modifier.testTag("artefacts.export"))
                     RecordPin(model, PinRecord.ResourceType.FILE, file.id, inMenu = true)

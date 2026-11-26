@@ -31,6 +31,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
 @Composable internal fun ThreadHeader(model: AppModel, threadId: String, enabled: Boolean) {
     val w = model.workspace ?: return
     val exit = LocalRouteExit.current
+    val compactActions = studio.otherstuff.ambulando.app.ui.shell.LocalCompactChatActions.current
     val menu by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) {
         model.store.reader.threadMenu(w.id, threadId) to model.store.reader.thread(w.id, threadId)?.title
     } }.collectAsState(null)
@@ -44,7 +45,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     Row(Modifier.fillMaxWidth().testTag("thread.header"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         if (exit != null) IconButton(onClick = exit, modifier = Modifier.testTag("nav.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to conversations") }
         Column(Modifier.weight(1f).padding(start = 12.dp, top = 6.dp, bottom = 6.dp)) {
-            Text(menu?.second?.let(MentionCodec::plain)?.takeIf { it.isNotBlank() } ?: menu?.first?.root?.body?.let(MentionCodec::plain)?.lineSequence()?.firstOrNull() ?: "Conversation", maxLines = 2,
+            Text(menu?.second?.let(MentionCodec::plain)?.takeIf { it.isNotBlank() } ?: menu?.first?.root?.body?.let(MentionCodec::plain)?.lineSequence()?.firstOrNull() ?: "Conversation", maxLines = if (compactActions != null) 1 else 2,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
             Text(listOfNotNull((record?.channelId ?: menu?.first?.root?.channelId)?.let { channelLabels(model)[it] }, participants.joinToString(", ").takeIf { it.isNotBlank() }).joinToString(" · "),
                 maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground)
@@ -54,10 +55,16 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                 Icon(Icons.Outlined.FolderOpen, "Thread artefacts (${artefacts.members.size})")
             }
         }
-        RecordPin(model, PinRecord.ResourceType.THREAD, threadId)
-        IconButton(onClick = { addToGoal = true }, enabled = record != null, modifier = Modifier.testTag("thread.addToGoal")) { Icon(Icons.Outlined.Flag, "Add to goal") }
+        if (compactActions == null) RecordPin(model, PinRecord.ResourceType.THREAD, threadId)
+        if (compactActions == null) IconButton(onClick = { addToGoal = true }, enabled = record != null, modifier = Modifier.testTag("thread.addToGoal")) { Icon(Icons.Outlined.Flag, "Add to goal") }
         MessageMenu(model, menu?.first?.root, menu?.first?.rootMessageId, menu?.first?.reference, menu?.first?.autopilotSource,
-            enabled, "thread", "Thread menu", conversationThreadId = threadId, onRename = if (record != null) ({ renaming = true }) else null)
+            enabled, "thread", "Thread menu", conversationThreadId = threadId, onRename = if (record != null) ({ renaming = true }) else null,
+            extraItems = if (compactActions != null) { dismiss ->
+                RecordPin(model, PinRecord.ResourceType.THREAD, threadId, inMenu = true, onInvoked = dismiss)
+                DropdownMenuItem(text = { Text("Add to goal") }, enabled = record != null,
+                    onClick = { dismiss(); addToGoal = true }, modifier = Modifier.testTag("thread.addToGoal"))
+                studio.otherstuff.ambulando.app.ui.shell.CompactChatMenuItems(compactActions, dismiss)
+            } else null)
     }
     if (renaming) record?.let { RenameThreadDialog(model, it) { renaming = false } }
 }
@@ -100,6 +107,7 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     onReact: (() -> Unit)? = null,
     /** Delete handled by the screen (its dialog outlives a row that scrolls away); otherwise the menu confirms itself. */
     onDelete: (() -> Unit)? = null,
+    extraItems: (@Composable (() -> Unit) -> Unit)? = null,
 ) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
@@ -115,9 +123,10 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     val canMutate = writable && message?.readOnly != true
     fun copy(text: String) { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(label, text)) }
     Box {
-        IconButton(onClick = { expanded = true }, enabled = message != null || reference != null || autopilot != null || onRename != null,
+        IconButton(onClick = { expanded = true }, enabled = extraItems != null || message != null || reference != null || autopilot != null || onRename != null,
             modifier = Modifier.testTag("$prefix.actions")) { Icon(Icons.Outlined.MoreHoriz, label) }
         DropdownMenu(expanded, { expanded = false }) {
+            extraItems?.invoke { expanded = false }
             if (onReact != null) DropdownMenuItem({ Text("Add reaction") }, enabled = canMutate,
                 onClick = { expanded = false; onReact() }, modifier = Modifier.testTag("$prefix.menu.react"))
             if (message != null && !message.deleted && rootId != null) DropdownMenuItem({ Text("Get it done") }, enabled = writable,

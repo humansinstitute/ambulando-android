@@ -10,3 +10,20 @@ Inbox search and type filters survive that transition. Context/workspace changes
 
 Chat-list entry continues to use Chat's stack. Notifications/direct destinations use Chat with its root as the
 fallback; no synthetic Deck route is inserted. Saved per-workspace route stacks also preserve a Deck parent.
+
+## Compact mobile conversation header
+
+Below the 760dp tablet breakpoint, a conversation opened from Chat, Deck or Home owns the only top bar.
+It keeps Back, the thread title and channel/participants, the accessible Thread artefacts button and Thread menu.
+Pin/Unpin and Add to goal move into the labelled menu alongside the existing thread actions. Search, Notifications,
+Browser, Settings and Open navigation remain available there. Android Back dismisses an open menu before leaving
+the thread. The originating section stack, composer and artefact state remain mounted as before. No bottom
+artefact switcher is added. Tablet chrome retains its existing layout.
+
+When an attached HTML, whiteboard or document editor is ready, its own header replaces the artefact workspace
+header on a narrow screen. Back, Artefacts and Discuss this remain directly accessible; versions and HTML comment
+actions use labelled menus. Editor Save controls remain available. Loading, failed and pinned document views retain
+a fallback header, including access to saved document versions and the current draft.
+
+This is Android presentation behavior. iPhone and mobile-web single-bar parity are pending the approved overnight
+catch-up; Android validation does not establish delivery on those clients.

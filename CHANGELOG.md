@@ -1,3 +1,8 @@
+## 0.9.64 (92)
+
+- Use one compact mobile conversation header, with Back, thread identity and Artefacts directly accessible. Pin, Add to goal and global navigation actions move into the labelled thread menu.
+- In a thread’s HTML, whiteboard and document views, keep one navigation bar with Artefacts and Discuss this. Move secondary versions and comment actions into menus; preserve editor Save, drafts, historical revisions and shared attachment behavior. Tablet layouts remain unchanged.
+
 ## 0.9.63 (91)
 
 - An artefact attached to a conversation that can no longer be opened (for example after it was updated elsewhere, or while Tower or the network fails) no longer freezes that conversation. Back, Send and the rest of the app keep working, including after closing and reopening Ambulando, and your drafts are kept.

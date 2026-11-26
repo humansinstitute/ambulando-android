@@ -28,7 +28,7 @@ import studio.otherstuff.ambulando.core.transport.obj
 import java.io.File
 import java.util.UUID
 
-@Composable internal fun RecordPin(model: AppModel, type: PinRecord.ResourceType, id: String, enabled: Boolean = true, inMenu: Boolean = false) {
+@Composable internal fun RecordPin(model: AppModel, type: PinRecord.ResourceType, id: String, enabled: Boolean = true, inMenu: Boolean = false, onInvoked: () -> Unit = {}) {
     val c = model.connection ?: return; val w = model.workspace ?: return
     val current by remember(c.id, w.id, type, id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == StoreTable.WRITES }) {
         val saved = model.store.reader.pin(c.id, w.id, type, id)
@@ -49,7 +49,7 @@ import java.util.UUID
         }))
     }
     if (inMenu) DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) },
-        modifier = Modifier.testTag("pin.toggle"), enabled = enabled && !removed && !w.accessRemoved, onClick = { toggle() })
+        modifier = Modifier.testTag("pin.toggle"), enabled = enabled && !removed && !w.accessRemoved, onClick = { if (failure == null) onInvoked(); toggle() })
     else IconButton(modifier = Modifier.testTag("pin.toggle"), enabled = enabled && !removed && !w.accessRemoved, onClick = { toggle() }) {
         Icon(icon, label)
     }

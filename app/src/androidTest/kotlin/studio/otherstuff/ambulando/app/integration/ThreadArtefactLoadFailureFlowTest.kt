@@ -87,7 +87,7 @@ class ThreadArtefactLoadFailureFlowTest {
             val state = model.threadArtefacts.getValue(target.draftKey)
             compose.waitUntil(30_000) { state.tabs.any { it.id == file && it.open && it.attached } && !state.busy }
             compose.waitUntil(30_000) { state.tabs.single { it.id == file }.versionLabel.startsWith("v") }
-            compose.onNodeWithTag("thread.chat").performClick()
+            compose.onNodeWithTag("artefacts.back").performClick()
             compose.onNodeWithTag("chat.composer").performTextInput(draftText)
             compose.waitUntil(10_000) { runBlocking { model.store.reader.draft(target)?.text == draftText } }
             backLeavesThread(state)

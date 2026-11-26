@@ -63,6 +63,9 @@ class DeckRootStateTest {
         repeat(2) { pass ->
             compose.onNodeWithText("Open chat").performClick()
             compose.onNodeWithText("Conversation").assertExists()
+            compose.onAllNodesWithTag("nav.back").assertCountEquals(1)
+            compose.onNodeWithTag("search").assertDoesNotExist()
+            compose.onNodeWithTag("settings").assertDoesNotExist()
             if (pass == 0) compose.onNodeWithTag("nav.back").performClick()
             else compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithTag("fixture.search").assertTextEquals("retained filter")

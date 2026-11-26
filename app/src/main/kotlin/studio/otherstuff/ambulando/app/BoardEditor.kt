@@ -155,9 +155,11 @@ import java.util.UUID
             IconButton(onClick = ::close, modifier = Modifier.testTag("board.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
             Text(state.title.ifBlank { title }, Modifier.weight(1f).testTag("board.title"), fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.body, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (state.dirty || state.save == BoardState.Save.STALE || state.newerAvailable) BoardStatusPill(state)
+            ThreadArtefactHeaderEntry()
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.testTag("board.menu")) { Icon(Icons.Outlined.MoreHoriz, "Board options") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    ThreadArtefactMenuItems { menu = false }
                     state.saveAction?.let { action ->
                         DropdownMenuItem(text = { Text("Save with a note…") }, leadingIcon = { Icon(Icons.Outlined.Save, null) }, enabled = action.enabled,
                             modifier = Modifier.testTag("board.saveNote"), onClick = { menu = false; noting = true })

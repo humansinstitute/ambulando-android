@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -331,6 +332,8 @@ class AdministrationUiTest {
         show(AdminRoute.Publishing(installation))
         compose.waitUntil(20_000) { session.rows(AdministrationList.PUBLISHING).any { it.id == installation } && session.canAdminister }
         waitTag("admin.publishing.hidden")
+        // The saved grant can render before asynchronous local draft restoration enables the form.
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("admin.field.name") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         tag("admin.field.name").performTextReplacement("Feed 2")
         val before = writes.size
         saveAndConfirm()
