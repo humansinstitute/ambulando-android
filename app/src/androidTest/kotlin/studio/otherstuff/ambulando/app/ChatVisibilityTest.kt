@@ -38,7 +38,7 @@ class ChatVisibilityTest {
             compose.waitUntil(30_000) { model.channels.any { it.id == SampleIds.GENERAL } }
             compose.runOnIdle { model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.CHAT }
             compose.onAllNodesWithTag("section.chat").assertCountEquals(0)
-            compose.onNodeWithTag("chat.messages").assertExists()
+            compose.onNodeWithTag("chat.inbox").assertExists()
             fun toggle() {
                 compose.onNodeWithTag("settings").performClick()
                 compose.onNodeWithTag("settings.sections.chat").performScrollTo().performClick()
@@ -58,7 +58,7 @@ class ChatVisibilityTest {
             toggle()
             compose.waitUntil(30_000) { app.activeModel?.showChat == false }
             compose.onAllNodesWithTag("section.chat").assertCountEquals(0)
-            compose.onNodeWithTag("chat.messages").assertExists()
+            compose.onNodeWithTag("chat.inbox").assertExists()
             compose.waitUntil(30_000) { runBlocking { model.catalog.reader.state("settings.chat") } == "false" }
             scenario.recreate()
             compose.waitUntil(30_000) { app.activeModel?.workspace != null }

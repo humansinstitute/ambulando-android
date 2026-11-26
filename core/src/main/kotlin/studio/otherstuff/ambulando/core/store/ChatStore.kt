@@ -448,12 +448,12 @@ suspend fun StoreReader.channelFeed(workspaceId: String, channelId: String, limi
 }
 
 /** Latest visible rows of the effective transcript, oldest first, without a fixed history ceiling. */
-suspend fun StoreReader.threadMessages(workspaceId: String, threadId: String, limit: Int): List<MessageRecord> = read {
+suspend fun StoreReader.threadMessages(workspaceId: String, threadId: String, limit: Int, offset: Int = 0): List<MessageRecord> = read {
     query(
         """SELECT ${Rows.MESSAGE_COLUMNS} FROM messages WHERE workspace_id = ? AND deleted = 0 AND
           (thread_id = ? OR id IN (SELECT message_id FROM thread_message_members WHERE workspace_id = ? AND thread_id = ?))
-          ORDER BY created_at DESC, id DESC LIMIT ?""",
-        workspaceId, threadId, workspaceId, threadId, limit,
+          ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?""",
+        workspaceId, threadId, workspaceId, threadId, limit, offset.coerceAtLeast(0),
     ) { Rows.message(it, workspaceId).copy(effectiveThreadId = threadId) }.asReversed()
 }
 
@@ -569,4 +569,17 @@ suspend fun StoreReader.threadTitles(workspaceId: String, channelId: String): Ma
         "SELECT id, title FROM threads WHERE workspace_id = ? AND channel_id = ? AND deleted = 0 AND title IS NOT NULL AND title <> ''",
         workspaceId, channelId,
     ) { it.text(0)!! to it.text(1)!! }.toMap()
+}
+
+/** Number of newer cached transcript rows, so a search hit opens in a bounded window rather than loading all history. */
+suspend fun StoreReader.threadMessageWindowOffset(workspaceId: String, threadId: String, messageId: String): Int? = read {
+    val message = messageRow(workspaceId, messageId) ?: return@read null
+    if (message.deleted || message.accessRemoved) return@read null
+    val member = message.threadId == threadId || first("SELECT 1 FROM thread_message_members WHERE workspace_id = ? AND thread_id = ? AND message_id = ?", workspaceId, threadId, messageId) { true } == true
+    if (!member) return@read null
+    val newer = longValue("""SELECT count(*) FROM messages WHERE workspace_id = ? AND deleted = 0 AND
+        (thread_id = ? OR id IN (SELECT message_id FROM thread_message_members WHERE workspace_id = ? AND thread_id = ?))
+        AND (created_at > ? OR (created_at = ? AND id > ?))""", workspaceId, threadId, workspaceId, threadId,
+        message.createdAt, message.createdAt, messageId) ?: 0
+    (newer.toInt() - 20).coerceAtLeast(0)
 }

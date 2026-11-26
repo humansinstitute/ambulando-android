@@ -56,13 +56,13 @@ import studio.otherstuff.ambulando.core.deck.DeckActivity
 internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Unit)
 
 /** Only local database reads occur in these native surfaces. */
-@Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null, family: Boolean = false, writeAllowed: Boolean = true, channelOverride: String? = null) {
+@Composable internal fun ConnectedChat(model: AppModel, threadId: String?, composeOnly: ComposeOnly? = null, family: Boolean = false, writeAllowed: Boolean = true, channelOverride: String? = null, hitMessageId: String? = null) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
     val labels = channelLabels(model)
     val threadChannel by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.thread(w.id, it)?.channelId } } }.collectAsState(null)
     LaunchedEffect(w.id, threadId) { if (threadId != null) model.sync.ensureThread(c, w, threadId) }
-    val channel = if (threadId != null) threadChannel else composeOnly?.channelId ?: channelOverride ?: model.context.channelId
+    val channel = if (threadId != null) threadChannel ?: channelOverride else composeOnly?.channelId ?: channelOverride ?: model.context.channelId
     if (channel == null) {
         if (threadId != null) { Text("Opening conversation…"); return }
         LazyColumn { items(model.channels.filter { model.context.scopeId == null || it.scopeId == model.context.scopeId }, key = { it.id }) { row ->
@@ -92,14 +92,22 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     val services = LocalAppServices.current
     val scopedTextAttachments = remember(c.id, c.origin, c.signerNpub, w.id) { model.textAttachments(c, w.id) }
     var visibleMessageLimit by remember(target) { mutableIntStateOf(50) }
+    var windowEndOffset by remember(target) { mutableIntStateOf(0) }
+    val wantedMessageId = remember(target, hitMessageId) { hitMessageId ?: model.chatPositions[target.draftKey]?.takeIf { !it.follow }?.key as? String }
+    LaunchedEffect(target, wantedMessageId) {
+        if (threadId != null && wantedMessageId != null) {
+            windowEndOffset = model.store.reader.threadMessageWindowOffset(w.id, threadId, wantedMessageId) ?: 0
+        }
+    }
     val threadCount by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
         threadId?.let { model.store.reader.threadMessageCount(w.id, it) } ?: 0
     } }.collectAsState(0)
     // One Messages list (no separate Threads view): channel posts carry their thread's reply count and open the thread.
-    val feed by remember(target, visibleMessageLimit) { model.store.liveQuery({ it.workspaceId == w.id }) {
-        if (threadId == null) model.store.reader.channelFeed(w.id, channel, 300) else model.store.reader.threadMessages(w.id, threadId, visibleMessageLimit).map { FeedPost(it, 0, null) }
+    val feed by remember(target, visibleMessageLimit, windowEndOffset) { model.store.liveQuery({ it.workspaceId == w.id }) {
+        if (threadId == null) model.store.reader.channelFeed(w.id, channel, 300) else model.store.reader.threadMessages(w.id, threadId, visibleMessageLimit, windowEndOffset).map { FeedPost(it, 0, null) }
     } }.collectAsState(null)
     val posts = feed ?: emptyList()
+    val earlierCount = (threadCount - posts.size - windowEndOffset).coerceAtLeast(0)
     val messages = posts.map { it.message }
     val agentDirectory by remember(w.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.workspaceAgents(w.id) } }.collectAsState(emptyList())
     val people by remember(c.id, w.id) { model.store.liveQuery({ it.workspaceId == w.id || it.table == StoreTable.PROFILES }) { model.store.reader.people(c.id, w.id) } }.collectAsState(null)
@@ -238,6 +246,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     LaunchedEffect(target) { val saved = model.store.reader.draft(target); text = saved?.text ?: ""; mentions = saved?.mentions ?: emptyList(); ready = true
         if (threadId != null) model.sync.refreshThread(c, w, channel, threadId) else model.sync.catchUpChannel(c, w, channel)
     }
+    LaunchedEffect(sent) { if (sent > 0) windowEndOffset = 0 }
     val ids = messages.map { it.id }
     LaunchedEffect(target, ids) { if (threadId != null) model.markViewed(ViewStateRecord.ResourceType.THREAD, threadId); if (!w.accessRemoved && model.channels.firstOrNull { it.id == channel }?.accessRemoved != true) model.sync.refreshReactions(c, w, threadId ?: channel, ids) }
     val removed = !writeAllowed || threadRemoved || w.accessRemoved || model.channels.firstOrNull { it.id == channel }?.accessRemoved == true
@@ -257,7 +266,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     val activityDisclosures = remember(target) { mutableMapOf<String, AgentProgressDisclosure>() }
     var activityInteraction by remember(target) { mutableLongStateOf(0L) }
     val activityTail = visibleProgress.map { "${it.activityId}:${it.turnId}:${it.sequence}:${it.progressStatus(agentNow)}" }
-    ChatFollowsNewest(listState, target, feed != null, posts.map { it.id } + pending.map { it.id } + (if (visibleProgress.isEmpty()) emptyList() else listOf("agent-activity-tail")), model.chatPositions[target.draftKey], sent, activityTail, activityInteraction) {
+    ChatFollowsNewest(listState, target, feed != null, (if (threadId != null && earlierCount > 0) listOf("earlier-messages") else emptyList()) + posts.map { it.id } + (if (windowEndOffset > 0) listOf("later-messages") else emptyList()) + pending.map { it.id } + (if (visibleProgress.isEmpty()) emptyList() else listOf("agent-activity-tail")), hitMessageId?.let { ChatPosition(it, 0, false) } ?: model.chatPositions[target.draftKey], sent, activityTail, activityInteraction, anchorKey = wantedMessageId) {
         model.chatPositions[target.draftKey] = it
     }
     studio.otherstuff.ambulando.app.ui.chat.ChatComposerLayout(
@@ -277,22 +286,24 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             Text(if (threadId == null) "No messages yet" else "No replies yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("chat.empty"))
         } else Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.TopCenter) {
           LazyColumn(Modifier.readingWidth().fillMaxHeight().testTag("chat.messages"), state = listState, contentPadding = PaddingValues(vertical = 8.dp)) {
-            if (threadId != null && threadCount > posts.size) item(key = "earlier-messages") {
+            if (threadId != null && earlierCount > 0) item(key = "earlier-messages") {
                 TextButton(onClick = { visibleMessageLimit += 50 }, modifier = Modifier.fillMaxWidth().testTag("chat.loadEarlier")) {
-                    Text("Load earlier messages (${threadCount - posts.size})")
+                    Text("Load earlier messages ($earlierCount)")
                 }
             }
             items(posts, key = { it.id }) { post ->
                 val message = post.message
                 val sender = people?.person(message.senderNpub, message.senderLabel)
                     ?: studio.otherstuff.ambulando.core.profiles.PersonDisplay.unknown(message.senderNpub ?: "")
-                Column {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.senderNpub == c.signerNpub) androidx.compose.ui.Alignment.End else androidx.compose.ui.Alignment.Start) {
                 dayStarts[post.id]?.let { DaySeparator(it.label) }
-                ConversationCard(Modifier.testTag("chat.message.${message.id}").clickable(enabled = threadId == null && message.threadId != null, onClickLabel = "Open conversation") {
+                ConversationCard(Modifier.padding(start = if (threadId != null && message.senderNpub == c.signerNpub) 28.dp else 0.dp,
+                    end = if (threadId != null && message.senderNpub != c.signerNpub) 20.dp else 0.dp)
+                    .then(if (message.id == hitMessageId) Modifier.background(amb.primary.copy(alpha = 0.12f)) else Modifier).testTag("chat.message.${message.id}").clickable(enabled = threadId == null && message.threadId != null, onClickLabel = "Open conversation") {
                     message.threadId?.let { services.open(WorkRoute.Thread(w.id, channel, it)) }
                 }) {
                     Column {
-                        MessageRowLayout(sender, studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(message.createdAt), avatar = { PersonAvatar(sender) }) {
+                        MessageRowLayout(sender, studio.otherstuff.ambulando.app.ui.chat.ChatTime.label(message.createdAt), own = threadId != null && message.senderNpub == c.signerNpub, avatar = { PersonAvatar(sender) }) {
                     if (message.inherited) Text("Inherited history · read only", style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.testTag("chat.inherited.${message.id}"))
                     if (message.deleted) Text("Message deleted", fontSize = AmbType.footnote, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground) else {
@@ -322,15 +333,20 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                         if (!family && !message.deleted) ChatMessageReactions(model, message, !removed, Modifier.padding(start = studio.otherstuff.ambulando.app.ui.chat.MessageTextInset, end = 16.dp))
                     }
                     if (!family) ChatMessageControls(model, message, !removed, onEdit = { beginEdit(it); composerFocus.requestFocus(); keyboard?.show() }, onDelete = { deleting = it },
-                        modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).offset(x = (-4).dp, y = (-4).dp))
+                        modifier = Modifier.align(if (threadId != null && message.senderNpub == c.signerNpub) androidx.compose.ui.Alignment.TopStart else androidx.compose.ui.Alignment.TopEnd).offset(x = (-4).dp, y = (-4).dp))
                 }
                 ChatMessageEditStatus(model, message)
+                }
+            }
+            if (windowEndOffset > 0) item(key = "later-messages") {
+                TextButton(onClick = { windowEndOffset = (windowEndOffset - 50).coerceAtLeast(0) }, modifier = Modifier.fillMaxWidth().testTag("chat.loadLater")) {
+                    Text("Load newer messages ($windowEndOffset)")
                 }
             }
             items(pending, key = { it.id }) { item ->
                 val me = people?.person(c.signerNpub) ?: studio.otherstuff.ambulando.core.profiles.PersonDisplay.unknown(c.signerNpub ?: "")
                 ConversationCard {
-                  MessageRowLayout(me, "", avatar = { PersonAvatar(me) }) {
+                  MessageRowLayout(me, "", own = threadId != null, avatar = { PersonAvatar(me) }) {
                     if (item.body.isNotBlank()) Text(item.body, color = studio.otherstuff.ambulando.app.ui.theme.Amb.colors.mutedForeground)
                     item.attachments.filter { it.isText }.forEach { a ->
                         TextAttachmentCard(a.filename, a.sizeBytes, a.text?.lines, null, if (a.complete) "Uploaded" else "Waiting to upload", "chat.pending.attachment.${a.id}", onOpen = null)
@@ -571,7 +587,7 @@ data class ChatPosition(val key: Any?, val offset: Int, val follow: Boolean)
  */
 @Composable internal fun ChatFollowsNewest(
     state: androidx.compose.foundation.lazy.LazyListState, target: ChatTarget, loaded: Boolean, keys: List<Any>,
-    saved: ChatPosition?, sent: Long = 0L, activityTail: Any? = null, activityInteraction: Long = 0L, onSave: (ChatPosition) -> Unit,
+    saved: ChatPosition?, sent: Long = 0L, activityTail: Any? = null, activityInteraction: Long = 0L, anchorKey: Any? = null, onSave: (ChatPosition) -> Unit,
 ) {
     var follow by remember(target) { mutableStateOf(saved?.follow ?: true) }
     var placed by remember(target) { mutableStateOf(false) }
@@ -588,6 +604,7 @@ data class ChatPosition(val key: Any?, val offset: Int, val follow: Boolean)
     LaunchedEffect(state, loaded, count, activityTail) {
         if (!loaded || count == 0) return@LaunchedEffect
         if (!placed) {
+            if (anchorKey != null && anchorKey !in keys) return@LaunchedEffect
             placed = true
             val index = saved?.takeIf { !it.follow }?.let { keys.indexOf(it.key) }?.takeIf { it >= 0 }
             if (index != null) { state.requestScrollToItem(index, saved.offset); return@LaunchedEffect }

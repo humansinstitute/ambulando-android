@@ -147,6 +147,21 @@ class SampleTower(
         allMessages().filter { it["workspace_id"] == workspaceId }.mapNotNull { it["body"] as? String }
     }
 
+    /** Adds deterministic synthetic replies for long-history device regression checks; no real service is involved. */
+    fun seedLongConversation(threadId: String, count: Int = 75) = synchronized(lock) {
+        require(count in 1..1000)
+        val root = allMessages().first { it["thread_id"] == threadId && it["id"] == it["thread_source_message_id"] }
+        repeat(count) { index ->
+            val id = java.util.UUID.nameUUIDFromBytes("search-history-$threadId-$index".toByteArray()).toString()
+            val row = LinkedHashMap(root)
+            row["id"] = id; row["body"] = if (index == 0) "Older deployment checklist anchor" else "Long conversation reply $index"
+            row["created_at"] = java.time.Instant.parse(root["created_at"] as String).plusSeconds(index.toLong() + 1).toString()
+            row["updated_at"] = row["created_at"]
+            chat.put("posted", id, row)
+        }
+        chat.persist()
+    }
+
     /** Workspaces this identity lost membership in: absent from the list, and every request under them answers 403. */
     var revokedWorkspaces: Set<String>
         get() = synchronized(lock) { revoked }

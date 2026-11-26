@@ -36,7 +36,7 @@ sealed interface WorkRoute {
     data class Task(override val workspaceId: String, val taskId: String) : WorkRoute
     data class Doc(override val workspaceId: String, val docId: String) : WorkRoute
     data class File(override val workspaceId: String, val fileId: String) : WorkRoute
-    data class Thread(override val workspaceId: String, val channelId: String?, val threadId: String) : WorkRoute
+    data class Thread(override val workspaceId: String, val channelId: String?, val threadId: String, val messageId: String? = null) : WorkRoute
     data class Channel(override val workspaceId: String, val channelId: String) : WorkRoute
     data class Canvas(override val workspaceId: String, val canvasId: String) : WorkRoute
     /** An Excalidraw board on a canvas, full screen. */
@@ -50,7 +50,7 @@ sealed interface WorkRoute {
  * Records shown full screen on a phone: the global top bar and section bar are hidden and the screen draws its own
  * navigation and exit at the bottom, within thumb reach (the web's mobile canvas).
  */
-val WorkRoute.fullScreen: Boolean get() = this is WorkRoute.Canvas
+val WorkRoute.fullScreen: Boolean get() = this is WorkRoute.Canvas || this is WorkRoute.Thread
 
 /** The conversation shown in the focused thread view over the current section (the web's thread modal). */
 @Immutable

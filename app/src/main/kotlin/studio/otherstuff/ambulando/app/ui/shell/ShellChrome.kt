@@ -67,7 +67,7 @@ enum class AppSection(val title: String, val icon: ImageVector, val contextBound
 
     companion object {
         /** Chat, Agents and Context are optional (Settings › Sections), off by default. */
-        fun visible(showAgents: Boolean, showContext: Boolean, showChat: Boolean = false): List<AppSection> =
+        fun visible(showAgents: Boolean, showContext: Boolean, showChat: Boolean = true): List<AppSection> =
             entries.filter { (it != CHAT || showChat) && (it != AGENTS || showAgents) && (it != CONTEXT || showContext) }
 
         fun fromKey(key: String?): AppSection? = entries.firstOrNull { it.key == key }

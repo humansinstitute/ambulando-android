@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +28,7 @@ class ShellChromeTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun chatVisibilityOnlyChangesTheButtonAndRestoresOrder() {
+        assertTrue(AppSection.CHAT in AppSection.visible(false, false))
         val showChat = mutableStateOf(false)
         val selected = AppSection.CHAT
         compose.setContent { AmbulandoTheme {
@@ -34,7 +36,7 @@ class ShellChromeTest {
         } }
         compose.onNodeWithTag("section.chat").assertDoesNotExist()
         assertEquals(listOf(AppSection.DECK, AppSection.TASKS, AppSection.DOCS, AppSection.FILES, AppSection.TOOLBOX),
-            AppSection.visible(false, false))
+            AppSection.visible(false, false, showChat = false))
         compose.runOnIdle { showChat.value = true }
         compose.onNodeWithTag("section.chat").assertIsSelected()
         assertEquals(AppSection.entries.toList(), AppSection.visible(true, true, true))

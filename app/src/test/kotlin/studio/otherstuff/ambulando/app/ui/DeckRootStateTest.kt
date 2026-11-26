@@ -49,7 +49,13 @@ class DeckRootStateTest {
                             TextField(search, { search = it }, Modifier.testTag("fixture.search"))
                             Button(onClick = { stacks.push(chatEntrySection(AppSection.DECK), WorkRoute.Thread("w", "c", "t")) }) { Text("Open chat") }
                         }
-                    }, routeScreen = { _, _ -> Text("Conversation") },
+                    }, routeScreen = { _, _ ->
+                        val exit = LocalRouteExit.current!!
+                        Column {
+                            Text("Conversation")
+                            Button(onClick = exit, modifier = Modifier.testTag("nav.back")) { Text("Back") }
+                        }
+                    },
                 )
             }
         }

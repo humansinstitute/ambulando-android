@@ -58,20 +58,21 @@ fun ConversationCard(modifier: Modifier = Modifier, content: @Composable android
  * the card's controls, which overlay that corner.
  */
 @Composable
-fun MessageRowLayout(person: PersonDisplay, time: String, trailingReserve: Dp = 56.dp, avatar: @Composable () -> Unit, content: @Composable () -> Unit) {
+fun MessageRowLayout(person: PersonDisplay, time: String, trailingReserve: Dp = 56.dp, own: Boolean = false, avatar: @Composable () -> Unit, content: @Composable () -> Unit) {
     val amb = Amb.colors
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        avatar()
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        if (!own) avatar()
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp), horizontalAlignment = if (own) Alignment.End else Alignment.Start) {
             // A name and its time share a line; at large text sizes the time wraps below instead of cutting the name short.
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-            androidx.compose.foundation.layout.FlowRow(Modifier.padding(end = trailingReserve), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.Bottom) {
+            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(end = if (own) 0.dp else trailingReserve, start = if (own) trailingReserve else 0.dp), horizontalArrangement = if (own) Arrangement.End else Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.Bottom) {
                 Text(person.name, fontSize = AmbType.subheadline, fontWeight = FontWeight.SemiBold, color = amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("message.author"))
                 Text(time, fontSize = AmbType.caption, color = amb.mutedForeground, maxLines = 1)
             }
             content()
         }
+        if (own) avatar()
     }
 }
 

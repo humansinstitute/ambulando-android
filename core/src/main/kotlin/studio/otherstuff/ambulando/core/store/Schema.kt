@@ -57,12 +57,30 @@ object Schema {
               PRIMARY KEY(workspace_id, parent_id, child_id))""",
             "CREATE INDEX task_relationship_children ON task_relationship_members(workspace_id, child_id)",
         )),
+        Migration(9, conversationIndex()),
         Migration(8, listOf(
             """CREATE TABLE thread_message_members(workspace_id TEXT NOT NULL, thread_id TEXT NOT NULL,
               message_id TEXT NOT NULL, PRIMARY KEY(workspace_id, thread_id, message_id))""",
             "CREATE INDEX thread_message_member_message ON thread_message_members(workspace_id, message_id)",
         )),
     )
+
+    private fun conversationIndex(): List<String> = buildList {
+        // Rebuild cached message entries and add title-only entries without duplicating conversation records.
+        add("DELETE FROM search_index WHERE kind IN ('message','thread')")
+        for ((table, kind, title, body, visible) in listOf(
+            listOf("messages", "message", "''", "new.body", "new.deleted = 0"),
+            listOf("threads", "thread", "coalesce(new.title,'')", "''", "new.deleted = 0 AND new.access_removed = 0"),
+        )) {
+            if (table == "messages") for (event in listOf("ai", "au", "ad")) add("DROP TRIGGER IF EXISTS search_messages_$event")
+            val insert = "INSERT INTO search_index(workspace_id,kind,record_id,title,body) SELECT new.workspace_id,'$kind',new.id,$title,$body WHERE $visible;"
+            val delete = "DELETE FROM search_index WHERE workspace_id = old.workspace_id AND kind = '$kind' AND record_id = old.id;"
+            add("CREATE TRIGGER conversation_${table}_ai AFTER INSERT ON $table BEGIN $insert END")
+            add("CREATE TRIGGER conversation_${table}_au AFTER UPDATE ON $table BEGIN $delete $insert END")
+            add("CREATE TRIGGER conversation_${table}_ad AFTER DELETE ON $table BEGIN $delete END")
+            add("INSERT INTO search_index(workspace_id,kind,record_id,title,body) SELECT workspace_id,'$kind',id,${title.replace("new.", "")},${body.replace("new.", "")} FROM $table WHERE ${visible.replace("new.", "")}")
+        }
+    }
 
     val VERSION: Int get() = migrations.maxOf { it.version }
 

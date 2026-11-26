@@ -1,3 +1,9 @@
+## 0.9.56 (84)
+
+- Restore Chat by default while respecting saved visibility choices, with a compact conversation inbox across Home, scope and channel.
+- Search cached conversation titles and replies using exact words, quoted phrases and title/body fields; open the matching message and see history download coverage.
+- Keep threads in a compact full-screen view with channel, participants, existing actions and the anchored reply composer.
+
 ## 0.9.55 (83)
 
 - Keep workspace settings, scope/channel configuration and full-screen form controls clear of Android status bars, display cutouts, navigation bars and the keyboard.

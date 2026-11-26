@@ -10,6 +10,9 @@ import studio.otherstuff.ambulando.core.store.ConnectionRecord
 import studio.otherstuff.ambulando.core.store.MessageKey
 import studio.otherstuff.ambulando.core.store.channel
 import studio.otherstuff.ambulando.core.store.channelSync
+import studio.otherstuff.ambulando.core.store.channelConversationThreadIds
+import studio.otherstuff.ambulando.core.store.markAccessRemoved
+import studio.otherstuff.ambulando.core.store.AccessTarget
 import studio.otherstuff.ambulando.core.store.isChannelAccessRemoved
 import studio.otherstuff.ambulando.core.store.reconcileMessages
 import studio.otherstuff.ambulando.core.store.replaceMembers
@@ -83,6 +86,22 @@ suspend fun WorkspaceSync.runChannelCatchUp(connection: ConnectionRecord, worksp
     val threads = api.threads(workspace.id, workspace.appNpub, channelId)
     checkCancelled()
     store.writer.upsertThreads(workspace.id, threads.items)
+    // The list route is capped at 200. A complete user-requested history refresh also refreshes metadata for
+    // conversations found in that history, using the existing single-record route rather than a new catalogue.
+    if (fromStart) {
+        val listed = threads.items.map { it.id }.toSet()
+        for (id in store.reader.channelConversationThreadIds(workspace.id, channelId).filter { it !in listed }) {
+            checkCancelled()
+            val thread = try { api.thread(workspace.id, workspace.appNpub, id) } catch (e: TowerError.Http) {
+                if (e.status == 403 || e.status == 404) {
+                    store.writer.markAccessRemoved(workspace.id, AccessTarget.Thread(id)); continue
+                }
+                throw e
+            }
+            if (thread.workspaceId != workspace.id || thread.channelId != channelId || thread.id != id) throw TowerError.Malformed("thread")
+            store.writer.upsertThreads(workspace.id, listOf(thread))
+        }
+    }
 }
 
 /** Opening a thread fetches that thread's messages directly (user priority), independent of channel catch-up. */

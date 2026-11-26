@@ -83,7 +83,8 @@ class KeyboardSpaceTest {
             assertKeyboardGap("deck-multiline")
             assertTrue(compose.onNodeWithTag("chat.composer").fetchSemanticsNode().size.height > shortHeight)
             Espresso.closeSoftKeyboard()
-            compose.waitUntil(10_000) { compose.onAllNodesWithTag("section.bar").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("thread.header").assertIsDisplayed()
+            compose.onNodeWithTag("section.bar").assertDoesNotExist()
             capture("deck-hidden")
             compose.onNodeWithTag("chat.composer").performClick()
             assertKeyboardGap("deck-reopened")
@@ -92,6 +93,9 @@ class KeyboardSpaceTest {
                 model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL)
                 model.section = AppSection.CHAT
             }
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.inbox.rows").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chat.inbox.rows").performScrollToNode(hasTestTag("chat.inbox.row.${SampleIds.thread(36)}"))
+            compose.onNodeWithTag("chat.inbox.row.${SampleIds.thread(36)}").performClick()
             compose.waitUntil(20_000) { compose.onAllNodesWithTag("chat.composer").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("chat.composer").performTextReplacement("")
             compose.onNodeWithTag("chat.composer").performClick()

@@ -561,7 +561,7 @@ suspend fun StoreReader.search(workspaceId: String, text: String, limit: Int = 6
     if (trimmed.codePointCount(0, trimmed.length) < 2) return@read emptyList()
     val query = SearchIndex.ftsQuery(trimmed) ?: return@read emptyList()
     val hits = query(
-        "SELECT kind, record_id FROM search_index WHERE search_index MATCH ? AND workspace_id = ? ORDER BY rank LIMIT ?",
+        "SELECT kind, record_id FROM search_index WHERE search_index MATCH ? AND workspace_id = ? AND kind <> 'thread' ORDER BY rank LIMIT ?",
         query, workspaceId, limit,
     ) { it.text(0)!! to it.text(1)!! }
     hits.mapNotNull { (kind, id) ->

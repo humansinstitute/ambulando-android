@@ -7,6 +7,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,11 +33,19 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
         model.store.reader.threadMenu(w.id, threadId) to model.store.reader.thread(w.id, threadId)?.title
     } }.collectAsState(null)
     val record by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.thread(w.id, threadId) } }.collectAsState(null)
+    val participants by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) {
+        model.store.reader.conversationParticipants(w.id, threadId)
+    } }.collectAsState(emptyList())
     var renaming by remember(threadId) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().testTag("thread.header"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text(menu?.second?.let(MentionCodec::plain) ?: "Conversation", maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.weight(1f).padding(start = 12.dp))
+        if (exit != null) IconButton(onClick = exit, modifier = Modifier.testTag("nav.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to conversations") }
+        Column(Modifier.weight(1f).padding(start = 12.dp, top = 6.dp, bottom = 6.dp)) {
+            Text(menu?.second?.let(MentionCodec::plain)?.takeIf { it.isNotBlank() } ?: menu?.first?.root?.body?.let(MentionCodec::plain)?.lineSequence()?.firstOrNull() ?: "Conversation", maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+            Text(listOfNotNull((record?.channelId ?: menu?.first?.root?.channelId)?.let { channelLabels(model)[it] }, participants.joinToString(", ").takeIf { it.isNotBlank() }).joinToString(" · "),
+                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+        }
+        RecordPin(model, PinRecord.ResourceType.THREAD, threadId)
         MessageMenu(model, menu?.first?.root, menu?.first?.rootMessageId, menu?.first?.reference, menu?.first?.autopilotSource,
             enabled, "thread", "Thread menu", conversationThreadId = threadId, onRename = if (record != null) ({ renaming = true }) else null)
         if (exit != null) IconButton(onClick = exit, modifier = Modifier.testTag("thread.close")) { Icon(Icons.Outlined.Close, "Close thread") }

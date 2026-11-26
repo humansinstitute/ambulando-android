@@ -55,13 +55,13 @@ class DeckChatBackTest {
                 model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL)
                 model.section = AppSection.CHAT
             }
-            compose.waitUntil(30_000) { compose.onAllNodesWithTag("chat.messages").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${SampleIds.message(36)}"))
-            compose.onNodeWithTag("chat.message.${SampleIds.message(36)}").performClick()
+            compose.waitUntil(30_000) { compose.onAllNodesWithTag("chat.inbox.rows").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chat.inbox.rows").performScrollToNode(hasTestTag("chat.inbox.row.${SampleIds.thread(36)}"))
+            compose.onNodeWithTag("chat.inbox.row.${SampleIds.thread(36)}").performClick()
             compose.waitUntil(30_000) { compose.onAllNodesWithTag("nav.back").fetchSemanticsNodes().isNotEmpty() }
             androidx.test.espresso.Espresso.pressBack()
             compose.onNodeWithTag("nav.back").assertDoesNotExist()
-            compose.onNodeWithTag("chat.messages").assertExists()
+            compose.onNodeWithTag("chat.inbox").assertExists()
             compose.runOnIdle { assertEquals(AppSection.CHAT, model.section); assertEquals(SampleIds.GENERAL, model.context.channelId) }
         }
     }

@@ -65,7 +65,7 @@ class AgentProgressConversationTest {
             compose.runOnIdle {
                 model.selectContext(SampleIds.SCOPE_AMBULANDO, SampleIds.GENERAL); model.section = AppSection.CHAT
             }
-            compose.waitUntil(30_000) { compose.onAllNodesWithTag("chat.messages").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(30_000) { compose.onAllNodesWithTag("chat.inbox.rows").fetchSemanticsNodes().isNotEmpty() }
             val tower = model.sampleTower!!.surfaces
             val runtime = model.active!!
             val history = (0 until 1050).map { index ->
@@ -90,8 +90,8 @@ class AgentProgressConversationTest {
             assertTrue(tower.requestLog.count { "agent-activities" in it } >= 22)
             compose.onNodeWithText("Activity updates unavailable · retrying").assertDoesNotExist()
             fun openThread() {
-                compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${SampleIds.message(39)}"))
-                compose.onNodeWithTag("chat.message.${SampleIds.message(39)}").performClick()
+                compose.onNodeWithTag("chat.inbox.rows").performScrollToNode(hasTestTag("chat.inbox.row.${SampleIds.thread(39)}"))
+                compose.onNodeWithTag("chat.inbox.row.${SampleIds.thread(39)}").performClick()
                 compose.waitUntil(30_000) { compose.onAllNodesWithTag("chat.agent.current.$id", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
             }
             openThread()
@@ -123,8 +123,8 @@ class AgentProgressConversationTest {
             compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.agent.$id"))
             capture("completed")
             compose.onNodeWithTag("nav.back").performClick()
-            compose.onNodeWithTag("chat.messages").performScrollToNode(hasTestTag("chat.message.${SampleIds.message(39)}"))
-            compose.onNodeWithTag("chat.message.${SampleIds.message(39)}").performClick()
+            compose.onNodeWithTag("chat.inbox.rows").performScrollToNode(hasTestTag("chat.inbox.row.${SampleIds.thread(39)}"))
+            compose.onNodeWithTag("chat.inbox.row.${SampleIds.thread(39)}").performClick()
             compose.waitUntil(30_000) { compose.onAllNodesWithTag("chat.composer").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("chat.composer").assertTextEquals("Keep my draft")
             compose.onNodeWithTag("chat.agent.update.$id.1").assertDoesNotExist()

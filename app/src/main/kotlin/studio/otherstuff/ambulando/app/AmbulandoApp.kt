@@ -315,7 +315,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         }, sectionRoot = { section ->
             if (w == null || screen == null) Text("Discovering workspaces…") else when (section) {
                 AppSection.TASKS -> TasksScreen(remember(screen) { TasksScreenState(model.store, screen, coroutineScope) }, screen, intents)
-                AppSection.CHAT -> ConnectedChat(model, null)
+                AppSection.CHAT -> ConversationInbox(model)
                 AppSection.DOCS -> ConnectedDocuments(model, null)
                 AppSection.FILES -> NativeFiles(model)
                 AppSection.DECK -> ConnectedDeck(model) { channelId ->
@@ -336,7 +336,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 is WorkRoute.DailyMetrics -> DailyMetricsScreen(model)
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)
-                is WorkRoute.Thread -> ConnectedChat(model, route.threadId)
+                is WorkRoute.Thread -> ConnectedChat(model, route.threadId, channelOverride = route.channelId, hitMessageId = route.messageId)
                 is WorkRoute.Channel -> ConnectedChat(model, null, channelOverride = route.channelId)
                 is WorkRoute.Canvas -> ConnectedCanvas(model, route.canvasId)
                 is WorkRoute.HtmlArtefact -> ConnectedHtml(model, route)

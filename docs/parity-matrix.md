@@ -353,3 +353,11 @@ The four stabilisation commits were read line by line against the risks below be
 
 
 Workspace Report: Apps and current-origin direct route, private code File setup/adoption/chooser and separate remembered read-only capability. See [contract and validation](workspace-report.md). Requires the connected Tower report API; missing routes show unavailable. Synthetic checks do not establish live counts.
+
+## Conversation inbox and indexed conversation search
+
+Android now has an app-owned conversation inbox and title/body/phrase search over cached SQLite history. See
+[query syntax, access rules and coverage limits](conversation-search.md). Mac delivery is reviewed separately.
+Web and iPhone parity for this approved presentation/search change remain pending nightly catch-up; shared iOS
+compatibility and Android checks do not establish iPhone delivery. Live authenticated member acceptance is separate
+from the synthetic device regression evidence.
