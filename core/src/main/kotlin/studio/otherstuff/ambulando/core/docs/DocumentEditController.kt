@@ -1205,6 +1205,14 @@ class DocumentEditController(
         return draft to revision
     }
 
+    suspend fun prepareChatReference(): studio.otherstuff.ambulando.core.chat.ArtefactChatReference {
+        check(checkpoint()) { "Document did not confirm pending edits." }
+        check(!saving && !takingOver && !permissionDenied && remoteVersion == null && journal.previewText == null) { "Resolve the document review before Send." }
+        if (dirty) check(save()) { state.value.status ?: "Resolve the document save before Send." }
+        val saved = base ?: error("Document has no saved revision")
+        return studio.otherstuff.ambulando.core.chat.ArtefactChatReference("doc", doc.id, saved.rowVersion.toString(), false, saved.sha)
+    }
+
     /** Saves through Tower (lease, expected version). True when Tower made it the canonical version. */
     suspend fun save(): Boolean = personsAction(false) { saveNow() }
 

@@ -28,8 +28,9 @@ class HtmlSourceSaveTest {
             val pending = reopened.load()!!
             assertTrue(pending.accepted); assertEquals(version,pending.savedVersionId)
             assertEquals(draft.source,pending.source)
-            HtmlSourceSave(reopened).save(pending,{ error("must not upload twice") },{ uploads++; error("must not resubmit") },{ error("no head lookup") },
+            val verifiedVersion = HtmlSourceSave(reopened).save(pending,{ error("must not upload twice") },{ uploads++; error("must not resubmit") },{ error("no head lookup") },
                 { assertEquals(version,it); draft.source.toByteArray() },{})
+            assertEquals(version, verifiedVersion)
             assertEquals(1,uploads); assertNull(reopened.load())
         } finally { root.deleteRecursively() }
     }

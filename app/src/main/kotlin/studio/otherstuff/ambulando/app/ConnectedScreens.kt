@@ -80,6 +80,18 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         } }; return
     }
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
+    if (threadId != null && !family) {
+        val artefacts = remember(target) { model.threadArtefacts.getOrPut(target.draftKey) { ThreadArtefacts() } }
+        ThreadArtefactLayout(model, target, artefacts) { ConnectedConversation(model, target, composeOnly, family, writeAllowed, hitMessageId) }
+    } else ConnectedConversation(model, target, composeOnly, family, writeAllowed, hitMessageId)
+}
+
+@Composable private fun ConnectedConversation(model: AppModel, target: ChatTarget, composeOnly: ComposeOnly?, family: Boolean, writeAllowed: Boolean, hitMessageId: String?) {
+    val w = model.workspace ?: return
+    val c = model.connection ?: return
+    val channel = target.channelId; val threadId = target.threadId
+    val labels = channelLabels(model)
+    val artefacts = LocalThreadArtefacts.current
     val agentProgress by remember(target) { model.store.liveQuery({ it.workspaceId == w.id }) {
         model.store.reader.conversationAgentActivities(w.id, channel, threadId).filter { activity ->
             activity.triggerMessageId?.let { model.store.reader.message(w.id, it) }?.let { activity.belongsToTrigger(it, threadId) } == true
@@ -264,7 +276,9 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     // Editing and delete confirmation belong to the screen, independently of recycled message rows.
     var deleting by remember(target) { mutableStateOf<MessageRecord?>(null) }
     LaunchedEffect(removed) { if (removed && editing != null) finishEdit() }
-    val composing = ready && !removed && !editSaving
+    var sendPending by remember(target) { mutableStateOf(false) }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val composing = !sendPending && artefacts?.busy != true && ready && !removed && !editSaving
     val voiceAction = if (!family) studio.otherstuff.ambulando.app.voice.rememberVoiceRecorderAction(model, c, w, target, composing) else null
     val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
     val composerFocus = remember(target) { androidx.compose.ui.focus.FocusRequester() }
@@ -273,6 +287,11 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         studio.otherstuff.ambulando.app.ui.chat.MentionPills(mentions, androidx.compose.ui.text.SpanStyle(color = amb.primary, background = amb.muted, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
     }
     val listState = remember(target) { androidx.compose.foundation.lazy.LazyListState() }
+    SideEffect { artefacts?.checkpointChat = {
+        val position = ChatPosition(listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key, listState.firstVisibleItemScrollOffset, !listState.canScrollForward)
+        artefacts.chatPosition = position; model.chatPositions[target.draftKey] = position
+    } }
+    DisposableEffect(artefacts, target) { onDispose { artefacts?.checkpointChat = null } }
     val activityDisclosures = remember(target) { mutableMapOf<String, AgentProgressDisclosure>() }
     var activityInteraction by remember(target) { mutableLongStateOf(0L) }
     val activityTail = visibleProgress.map { "${it.activityId}:${it.turnId}:${it.sequence}:${it.progressStatus(agentNow)}" }
@@ -280,7 +299,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         model.chatPositions[target.draftKey] = it
     }
     studio.otherstuff.ambulando.app.ui.chat.ChatComposerLayout(
-        ownsNavigationBar = threadId != null,
+        ownsNavigationBar = threadId != null && artefacts == null,
         header = {
             Column {
                 if (threadId != null && !family) ThreadHeader(model, threadId, !removed)
@@ -426,6 +445,19 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         },
         composer = {
         Column(Modifier.fillMaxWidth().background(amb.card)) {
+        if (artefacts?.discuss == true) {
+            val tab = artefacts.tabs.firstOrNull { it.id == artefacts.selected }
+            if (tab != null) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("thread.artefacts.target"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                TextButton(onClick = { artefacts.shown = true }, modifier = Modifier.weight(1f)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("Selected: ${tab.title}", Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Text(tab.versionLabel, Modifier.padding(start = 6.dp), maxLines = 1, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                TextButton(onClick = { artefacts.browsing = true }) { Text("Switch") }
+                TextButton(onClick = { artefacts.discuss = false }) { Text("Remove") }
+            }
+        }
         editing?.let { message -> Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("chat.edit.banner"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Editing message", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
             TextButton(onClick = { finishEdit() }, modifier = Modifier.testTag("chat.edit.cancel")) { Text("Cancel") }
@@ -464,10 +496,14 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
                             if (editSession == session) { editSaving = false; if (queued) finishEdit() }
                         }
                     }
-                } else model.send(target, body, c, w, mentions, enqueued = { composeOnly?.onEnqueued?.invoke(it) }) {
+                } else {
+                    val savingArtefacts = artefacts?.tabs?.any { it.open } == true
+                    if (savingArtefacts) { sendPending = true; focusManager.clearFocus(force = true); keyboard?.hide() }
+                    model.send(target, body, c, w, mentions, prepareArtefacts = { artefacts?.prepare(target) }, sendFinished = { artefacts?.busy = false; sendPending = false }, sendFailed = artefacts?.let { state -> { e -> state.failure = "Send paused: ${e.message}. Resolve the tab and press Send to retry; your draft is retained." } }, enqueued = { composeOnly?.onEnqueued?.invoke(it) }) {
                     if (editing == null && text == body) text = ""
                     else if (editing != null && replyValue?.text == body) { replyValue = androidx.compose.ui.text.input.TextFieldValue(""); replyMentions = emptyList() }
                     sent++
+                }
                 }
                 Unit
             }

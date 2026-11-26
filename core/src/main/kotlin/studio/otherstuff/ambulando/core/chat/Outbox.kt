@@ -90,6 +90,7 @@ object OutboxRequest {
         // Storage links in the body are attachments too (the web's chat storage attachment merge).
         val attachments = StorageMarkdown.merged(wire, item.body)
         val metadata = linkedMapOf<String, Any?>()
+        item.artefactContext?.let { metadata[ArtefactChatContext.KEY] = ArtefactChatContext.validate(it, item.target) }
         if (attachments.isNotEmpty()) metadata["attachments"] = attachments.map { it.requestObject }
         if (item.threadId != null && item.mentions.isEmpty() && inheritedAgentRecipient != null &&
             studio.otherstuff.ambulando.core.nostr.NostrKeys.isValidNpub(inheritedAgentRecipient)) {
@@ -274,7 +275,7 @@ class OutboxSender(
     /** Composes a message into the outbox (clearing that draft) and starts sending if unlocked. */
     suspend fun send(
         text: String, mentions: List<Mention>, target: ChatTarget, connection: ConnectionRecord, workspace: WorkspaceRecord,
-        attachments: List<PendingAttachment> = emptyList(),
+        attachments: List<PendingAttachment> = emptyList(), artefactContext: String? = null,
     ): OutboxItem? {
         if (target.connectionId != connection.id || target.workspaceId != workspace.id) throw TowerError.UnsafePath
         boundary?.requireOwns(connection, workspace)
@@ -285,7 +286,7 @@ class OutboxSender(
         if (attachments.any { it.staged.isEmpty() || !File(staging ?: throw FileTransferError.NotAttachable, it.staged).isFile }) throw FileTransferError.NotAttachable
         // A pasted item still uploading would otherwise be sent as its placeholder text.
         if (UploadToken.containsAny(body)) throw ComposerUploadException(ComposerUploadError.UNRESOLVED)
-        val item = store.writer.enqueueSend(target, connection.origin, connection.signerNpub, workspace.appNpub, body, encoded.mentions, attachments)
+        val item = store.writer.enqueueSend(target, connection.origin, connection.signerNpub, workspace.appNpub, body, encoded.mentions, attachments, artefactContext = artefactContext)
         kick(connection)
         return item
     }

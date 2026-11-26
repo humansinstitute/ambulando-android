@@ -104,6 +104,11 @@ function BoardEditor({ port, theme }) {
         applyScene(message.scene, { reset });
         root().dataset.boardKey = message.key;
         root().dataset.boardReadonly = String(state.current.readOnly);
+      } else if (message.type === 'viewport') {
+        const v = message.viewport;
+        if (v && [v.scrollX, v.scrollY, v.zoom].every(Number.isFinite) && v.zoom >= 0.1 && v.zoom <= 30) {
+          apiRef.current?.updateScene({ appState: { scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom } }, captureUpdate: CaptureUpdateAction.NEVER });
+        }
       } else if (message.type === 'flush') {
         // Save requested: deliver the debounced change first (port order is preserved).
         clearTimeout(state.current.timer);
@@ -151,6 +156,9 @@ function BoardEditor({ port, theme }) {
     const current = state.current;
     reportCounts(elements, files);
     reportZoom(appState);
+    const viewport = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom?.value };
+    const viewportKey = JSON.stringify(viewport);
+    if (viewportKey !== current.viewportKey) { current.viewportKey = viewportKey; port.postMessage({ type: 'viewport', viewport }); }
     discussionView.current?.update(elements, appState);
     if (current.readOnly) return;
     current.pending = {

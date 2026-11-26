@@ -402,6 +402,8 @@ fun SandboxedHtmlScreen(
     onAnchorMatches: ((Map<String, Boolean>) -> Unit)? = null,
     onBadgeTapped: ((String) -> Unit)? = null,
 ) {
+    val threadTab = studio.otherstuff.ambulando.app.LocalThreadArtefactTab.current
+    val retainedViewport = remember(html) { threadTab?.viewport?.let { runCatching { org.json.JSONObject(it) }.getOrNull() } }
     val amb = Amb.colors
     val context = LocalContext.current
     val stopped = remember(html) { androidx.compose.runtime.mutableStateOf(false) }
@@ -431,6 +433,19 @@ fun SandboxedHtmlScreen(
             reviewBridge = reviewBridge,
             onPageReady = { pageReady.value = true },
         )
+    }
+    LaunchedEffect(view, pageReady.value) {
+        val web = view.getOrNull() ?: return@LaunchedEffect
+        if (pageReady.value) {
+            retainedViewport?.let { v ->
+                val scale = v.optDouble("scale", 1.0).toFloat()
+                if (scale.isFinite() && scale > 0) web.zoomBy((scale / web.scale).coerceIn(.01f, 100f))
+                web.scrollTo(v.optInt("x", 0), v.optInt("y", 0))
+            }
+            web.setOnScrollChangeListener { _, x, y, _, _ ->
+                threadTab?.viewport = org.json.JSONObject().put("x", x).put("y", y).put("scale", web.scale).toString()
+            }
+        }
     }
     LaunchedEffect(view, pageReady.value, commentMode) {
         if (pageReady.value && reviewBridge != null) {

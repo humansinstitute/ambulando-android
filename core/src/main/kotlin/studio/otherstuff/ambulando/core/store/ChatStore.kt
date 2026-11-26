@@ -108,11 +108,12 @@ class OutboxItem(
     val createdAt: String,
     /** Images to upload before the message is signed (their storage ids become part of the signed request). */
     val attachments: List<PendingAttachment> = emptyList(),
+    val artefactContext: String? = null,
 ) {
     val target: ChatTarget get() = ChatTarget(connectionId, workspaceId, channelId, threadId)
 
     private fun fields(): List<Any?> = listOf(id, connectionId, origin, signerNpub, workspaceId, appNpub, channelId, threadId, createThread,
-        body, mentions, request?.toList(), state, attempts, lastStatus, lastCode, lastError, createdAt, attachments)
+        body, mentions, request?.toList(), state, attempts, lastStatus, lastCode, lastError, createdAt, attachments, artefactContext)
 
     override fun equals(other: Any?): Boolean = other is OutboxItem && other.fields() == fields()
     override fun hashCode(): Int = fields().hashCode()
@@ -225,28 +226,29 @@ suspend fun StoreWriter.replaceDraftToken(target: ChatTarget, token: String, rep
 suspend fun StoreWriter.enqueueSend(
     target: ChatTarget, origin: String, signerNpub: String, appNpub: String, body: String, mentions: List<Mention>,
     attachments: List<PendingAttachment> = emptyList(), id: String = UUID.randomUUID().toString().lowercase(),
-    preserveDraft: Boolean = false, once: Boolean = false,
+    preserveDraft: Boolean = false, once: Boolean = false, artefactContext: String? = null,
 ): OutboxItem = write {
+    artefactContext?.let { studio.otherstuff.ambulando.core.chat.ArtefactChatContext.validate(it, target) }
     val stamp = StoreTime.now()
     // External producers can replay a durable handoff after process death, even after sync retired its outbox row.
     val receipt = "outbox.producer.$id"
     if (once && db.textValue("SELECT value FROM app_state WHERE key = ?", receipt) != null) {
         return@write OutboxItem(id, target.connectionId, origin, signerNpub, target.workspaceId, appNpub, target.channelId, target.threadId,
-            target.threadId == null, body, mentions, null, OutboxState.AWAITING_SIGNATURE, 0, null, null, null, stamp, attachments)
+            target.threadId == null, body, mentions, null, OutboxState.AWAITING_SIGNATURE, 0, null, null, null, stamp, attachments, artefactContext)
     }
     db.run(
         """INSERT INTO outbox(id, connection_id, origin, signer_npub, workspace_id, app_npub, channel_id, thread_id, create_thread, body, mentions,
-                              request, state, attempts, created_at, updated_at, attachments)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?,0,?,?,?)""",
+                              request, state, attempts, created_at, updated_at, attachments, artefact_context)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?,0,?,?,?,?)""",
         id, target.connectionId, origin, signerNpub, target.workspaceId, appNpub, target.channelId, target.threadId, target.threadId == null,
-        body, JsonText.mentions(mentions), OutboxState.AWAITING_SIGNATURE.wire, stamp, stamp, JsonText.attachments(attachments),
+        body, JsonText.mentions(mentions), OutboxState.AWAITING_SIGNATURE.wire, stamp, stamp, JsonText.attachments(attachments), artefactContext,
     )
     if (once) db.run("INSERT OR REPLACE INTO app_state(key,value) VALUES(?,?)", receipt, "enqueued")
     if (!preserveDraft) db.run("DELETE FROM drafts WHERE key = ?", target.draftKey)
     emit(StoreTable.OUTBOX, target.workspaceId)
     emit(StoreTable.DRAFTS, target.workspaceId)
     OutboxItem(id, target.connectionId, origin, signerNpub, target.workspaceId, appNpub, target.channelId, target.threadId, target.threadId == null,
-        body, mentions, null, OutboxState.AWAITING_SIGNATURE, 0, null, null, null, stamp, attachments)
+        body, mentions, null, OutboxState.AWAITING_SIGNATURE, 0, null, null, null, stamp, attachments, artefactContext)
 }
 
 /** Records upload progress for an unsigned row's attachments (never after the request is frozen). */
@@ -341,12 +343,12 @@ suspend fun StoreWriter.resetInterruptedSends() = write {
 private fun SqlConnection.outboxWorkspace(id: String): String? = textValue("SELECT workspace_id FROM outbox WHERE id = ?", id)
 
 private const val OUTBOX_COLUMNS = """id, connection_id, origin, signer_npub, workspace_id, app_npub, channel_id, thread_id, create_thread, body,
-    mentions, request, state, attempts, last_status, last_code, last_error, created_at, attachments"""
+    mentions, request, state, attempts, last_status, last_code, last_error, created_at, attachments, artefact_context"""
 
 private fun outboxOf(r: SqlRow) = OutboxItem(
     r.text(0)!!, r.text(1)!!, r.text(2)!!, r.text(3)!!, r.text(4)!!, r.text(5)!!, r.text(6)!!, r.text(7), r.bool(8), r.text(9)!!,
     JsonText.mentions(r.text(10)), if (r.isNull(11)) null else r.blob(11), OutboxState.from(r.text(12)), r.int(13),
-    if (r.isNull(14)) null else r.int(14), r.text(15), r.text(16), r.text(17)!!, JsonText.attachments(r.text(18)),
+    if (r.isNull(14)) null else r.int(14), r.text(15), r.text(16), r.text(17)!!, JsonText.attachments(r.text(18)), r.text(19),
 )
 
 internal fun SqlConnection.outboxRow(id: String): OutboxItem? = first("SELECT $OUTBOX_COLUMNS FROM outbox WHERE id = ?", id, row = ::outboxOf)

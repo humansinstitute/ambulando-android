@@ -13,7 +13,7 @@ class HtmlSourceSave(private val drafts: HtmlDraftStore) {
         head: suspend () -> String?,
         read: suspend (String) -> ByteArray,
         checkCurrent: suspend () -> Unit,
-    ) {
+    ): String {
         checkCurrent()
         var receipt = draft
         // Persist the same mutation id before sending; interrupted submissions can be replayed safely.
@@ -44,6 +44,7 @@ class HtmlSourceSave(private val drafts: HtmlDraftStore) {
             "Saved content could not be verified. Your draft is kept. Retry only verifies the saved content."
         }
         drafts.clear()
+        return version
     }
 }
 

@@ -2,6 +2,7 @@ package studio.otherstuff.ambulando.app
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -49,16 +50,40 @@ import java.util.UUID
     val latest = remember(board.fileId, boundaryId) { arrayOfNulls<BoardState>(1) }
     fun stateNow(): BoardState? = latest[0]
     val controller = remember(board.fileId, boundaryId) { BoardController(board.fileId, title, c.signerNpub, transport, model.boardDrafts(), { value -> scope.launch { state = value } }) }
+    val tab = LocalThreadArtefactTab.current
+    val restoringRevision = remember(controller) { tab?.pinnedRevision ?: tab?.selectedRevision }
+    var restorationComplete by remember(controller) { mutableStateOf(restoringRevision == null) }
+    var restorationFailure by remember(controller) { mutableStateOf(false) }
+    SideEffect {
+        tab?.title = state.title.ifBlank { title }
+        tab?.versionLabel = if (state.viewingVersionId.isNotBlank()) "Pinned v${state.viewingVersionNumber}" else if (state.baseVersionNumber > 0) "v${state.baseVersionNumber}" else "Loading revision…"
+        if (state.status == BoardState.Status.READY && restorationComplete) {
+            tab?.pinnedRevision = state.viewingVersionId.takeIf { it.isNotBlank() }
+            tab?.selectedRevision = state.viewingVersionId.ifBlank { state.baseVersionId }
+        }
+        tab?.prepare = { check(restorationComplete && !restorationFailure) { "Pinned board revision unavailable. Retry opening its exact history." }; controller.prepareChatReference() }
+        tab?.validate = { ref -> val now = controller.current(); !now.dirty && ref.revision == now.viewingVersionId.ifBlank { now.baseVersionId } }
+        tab?.checkpoint = { controller.checkpointChat() }
+    }
+    DisposableEffect(tab, controller) { onDispose { tab?.prepare = null; tab?.checkpoint = null } }
     val directory = peopleDirectory(model)
     val authorNames = remember(controller) { BoardAuthorNames() }
+    val restoringViewport = remember(controller) { tab?.viewport }
+    var viewportRestored by remember(controller) { mutableStateOf(false) }
     var authorRevision by remember(controller) { mutableIntStateOf(0) }
-    fun close() { scope.launch { controller.suspendBoard(); controller.detach(session); done() } }
-    BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current) { close() }
+    val threadState = LocalThreadArtefacts.current
+    fun close() { if (threadState != null) { threadState.shown = false; return }; scope.launch { controller.suspendBoard(); controller.detach(session); done() } }
+    BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current && LocalThreadPaneActive.current) { close() }
     DisposableEffect(controller) {
         var current = true
         EditorWebHost.create(context, "index.html", setOf("board"), 32 * 1024 * 1024) { _, raw ->
             // The page's own Save button (sol `action`) saves only while the controller's state still allows it.
             scope.launch { if (!current || model.activeBoundaryId != boundaryId) return@launch
+                val incoming = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+                if ((incoming?.get("type") as? kotlinx.serialization.json.JsonPrimitive)?.content == "viewport") {
+                    if (viewportRestored) tab?.viewport = incoming["viewport"]?.toString()
+                    return@launch
+                }
                 if (authorNames.request(raw)) { authorRevision++; return@launch }
                 if (isSaveAction(raw)) { if (stateNow()?.saveAction?.enabled == true) controller.save() } else controller.receive(session, raw) }
         }
@@ -73,6 +98,18 @@ import java.util.UUID
             host.call("window.ambulandoBoard.deliver", json)
         } }
         controller.sync(board, title)
+        if (restoringRevision != null && (tab?.pinnedRevision != null || restoringRevision != board.versionId)) {
+            controller.loadVersions()
+            val version = controller.current().versions.firstOrNull { it.id == restoringRevision }
+            if (version != null) { controller.viewVersion(version, forcePinned = true); restorationComplete = true } else { restorationFailure = true; error = "Pinned revision unavailable. Reopen its history; no latest substitution was made." }
+        } else restorationComplete = true
+    }
+    LaunchedEffect(page, state.status, restorationComplete) {
+        if (state.status == BoardState.Status.READY && restorationComplete && !viewportRestored) {
+            kotlinx.coroutines.delay(300)
+            restoringViewport?.let { page?.call("window.ambulandoBoard.deliver", kotlinx.serialization.json.buildJsonObject { put("type", "viewport"); put("viewport", kotlinx.serialization.json.Json.parseToJsonElement(it)) }.toString()) }
+            viewportRestored = true
+        }
     }
     LaunchedEffect(page, directory, authorRevision) {
         val host = page ?: return@LaunchedEffect
@@ -97,7 +134,7 @@ import java.util.UUID
         }.toString()
         host.call("window.ambulandoBoard.deliver", json)
     }
-    LaunchedEffect(controller, state.status) { if (state.status == BoardState.Status.READY && state.versions.isEmpty() && !state.versionsLoading) controller.loadVersions() }
+    LaunchedEffect(controller, state.status, state.baseVersionId) { if (state.status == BoardState.Status.READY && state.versions.isEmpty() && !state.versionsLoading) controller.loadVersions() }
     val amb = studio.otherstuff.ambulando.app.ui.theme.Amb.colors
     Column(Modifier.fillMaxSize().background(amb.background).statusBarsPadding().navigationBarsPadding().imePadding()) {
         if (model.environment.isSample) Text("Sample data on this device. Not connected to a Tower.", fontSize = studio.otherstuff.ambulando.app.ui.theme.AmbType.caption, color = amb.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
@@ -121,7 +158,7 @@ import java.util.UUID
                         val here = version.id == (state.viewingVersionId.ifBlank { state.baseVersionId })
                         DropdownMenuItem(text = { Text(if (version.summary.isBlank()) "v${version.number}" else "v${version.number} · ${version.summary}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             leadingIcon = { Icon(if (here) Icons.Outlined.Check else Icons.Outlined.History, null) },
-                            modifier = Modifier.testTag("board.version"), onClick = { menu = false; scope.launch { controller.viewVersion(version) } })
+                            modifier = Modifier.testTag("board.version"), onClick = { menu = false; scope.launch { controller.viewVersion(version, forcePinned = tab != null) } })
                     }
                     if (!state.dirty && state.viewingVersionId.isBlank()) DropdownMenuItem(text = { Text("Reload latest") }, leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
                         modifier = Modifier.testTag("board.reload"), onClick = { menu = false; scope.launch { controller.loadLatest() } })
@@ -134,7 +171,9 @@ import java.util.UUID
         error?.let { Notice(NoticeTone.WARNING, it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         page?.failure?.let { Notice(NoticeTone.ERROR, it, Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            page?.let { host -> AndroidView({ host.webView }, Modifier.fillMaxSize()) }
+            page?.let { host -> AndroidView({ host.webView }, Modifier.fillMaxSize().testTag("board.canvas")) }
+            if (!restorationComplete && restoringRevision != null) Box(Modifier.fillMaxSize().background(amb.background).clickable { }) { Text("Opening exact saved revision…", Modifier.padding(16.dp)) }
+            if (restorationFailure) Box(Modifier.fillMaxSize().background(amb.background)) { EmptyNote("Pinned revision unavailable", Icons.Outlined.History, "Reconnect and reopen this board. Your draft remains preserved.") }
             when (state.status) {
                 BoardState.Status.LOADING -> Column(Modifier.fillMaxSize().background(amb.background), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     CircularProgressIndicator(Modifier.size(28.dp)); Text("Loading board…", Modifier.padding(top = 12.dp), color = amb.mutedForeground)

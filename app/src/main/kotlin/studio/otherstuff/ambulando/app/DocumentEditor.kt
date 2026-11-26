@@ -29,6 +29,7 @@ import studio.otherstuff.ambulando.core.docs.*
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.sync.downloadAttachment
 import studio.otherstuff.ambulando.core.transport.ConnectionFailure
+import studio.otherstuff.ambulando.core.transport.documentVersions
 import androidx.compose.ui.platform.testTag
 import kotlinx.serialization.json.put
 
@@ -119,6 +120,23 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
         self
     }
     val s by controller.state.collectAsState()
+    val tab = LocalThreadArtefactTab.current
+    val restoredViewport = remember(controller) { tab?.viewport }
+    var viewportRestored by remember(controller) { mutableStateOf(false) }
+    SideEffect {
+        tab?.title = s.title
+        tab?.versionLabel = "v${s.localBaseVersion ?: "…"}"
+        tab?.selectedRevision = s.localBaseVersion?.toString()
+        tab?.prepare = {
+            val current = controller.prepareChatReference()
+            val versions = model.fileNappletAPI(c).documentVersions(w.id, w.appNpub, docId)
+            (versions.firstOrNull { it.rowVersion.toString() == current.revision } ?: error("Saved document snapshot is unavailable. Retry Send.")).reference(docId, false)
+        }
+        tab?.validate = { ref -> val now = controller.state.value; !now.dirty && now.localBaseVersion?.toString() == ref.revision && !now.saving && now.remoteVersion == null }
+        tab?.checkpoint = { controller.checkpoint() && controller.persistReview() }
+    }
+    DisposableEffect(tab, controller) { onDispose { tab?.prepare = null; tab?.checkpoint = null } }
+
 
     // Wiki behaviour for this screen: it reads the local store, keeps the draft safe before leaving and binds through the editor.
     val wiki = remember(controller) {
@@ -189,7 +207,9 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
+    val threadState = LocalThreadArtefacts.current
     fun finish() {
+        if (threadState != null) { scope.launch { if (controller.checkpoint()) close() }; return }
         if (closing) return
         closing = true
         // Nothing is thrown away on the way out: the page's last text is stored as the draft and the review work is kept.
@@ -197,7 +217,7 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
             try { controller.checkpoint(); controller.persistReview(); controller.close() } finally { close() }
         }
     }
-    BackHandler { finish() }
+    BackHandler(enabled = LocalThreadPaneActive.current) { finish() }
 
     LaunchedEffect(controller) {
         try {
@@ -254,7 +274,14 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
                         }
                     }
                     "error" -> controller.pageError(event.optString("message"))
-                    "loaded" -> controller.pageLoaded(event.optBoolean("ok"), event.optString("message").takeIf { it.isNotEmpty() })
+                    "viewport" -> if (viewportRestored) tab?.viewport = JSONObject().put("x", event.optDouble("x", 0.0)).put("y", event.optDouble("y", 0.0)).toString()
+                    "loaded" -> {
+                        controller.pageLoaded(event.optBoolean("ok"), event.optString("message").takeIf { it.isNotEmpty() })
+                        if (!viewportRestored && event.optBoolean("ok")) {
+                            restoredViewport?.let { host?.call("window.ambulandoDocument.restoreViewport", it) }
+                            viewportRestored = true
+                        }
+                    }
                 }
             } catch (e: CancellationException) { throw e } catch (_: Exception) { notice = "Editor message could not be read; the previous draft is preserved." } }
         }

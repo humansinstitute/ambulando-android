@@ -347,6 +347,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var appearance by mutableStateOf(studio.otherstuff.ambulando.app.ui.theme.AppearancePreference.SYSTEM)
     private var observation: Job? = null
     // Draft persistence and enqueue are ordered, so a late draft cannot resurrect already-sent text.
+    internal val threadArtefacts = mutableMapOf<String, ThreadArtefacts>()
+
     private val composerCommands = kotlinx.coroutines.channels.Channel<suspend () -> Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val composerWriter = viewModelScope.launch {
         for (command in composerCommands) try { command() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = ConnectionFailure.userMessage(e) }
@@ -376,12 +378,20 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         }
     }
     /** The composer's staged text attachments are read in the same ordered step, so none added just before Send is missed. */
-    fun send(target: ChatTarget, text: String, connection: ConnectionRecord, workspace: WorkspaceRecord, mentions: List<Mention> = emptyList(), enqueued: (String) -> Unit = {}, accepted: () -> Unit) {
+    fun send(target: ChatTarget, text: String, connection: ConnectionRecord, workspace: WorkspaceRecord, mentions: List<Mention> = emptyList(), prepareArtefacts: suspend () -> String? = { null }, sendFinished: () -> Unit = {}, sendFailed: ((Exception) -> Unit)? = null, enqueued: (String) -> Unit = {}, accepted: () -> Unit) {
         composerCommands.trySend {
-            val owner = runtimeMap.values.firstOrNull { it.boundary == WorkspaceBoundary.of(connection, workspace) } ?: error("That workspace is not open on this device")
-            val item = owner.outbox.send(text, mentions, target, connection, workspace, owner.store.reader.draft(target)?.attachments ?: emptyList()); accepted()
-            // The outbox row's id is the request id Tower replays by: the New thread composer follows exactly this send.
-            item?.let { enqueued(it.id) }
+            try {
+                val owner = runtimeMap.values.firstOrNull { it.boundary == WorkspaceBoundary.of(connection, workspace) }
+                    ?: error("That workspace is not open on this device")
+                val context = prepareArtefacts()
+                val item = owner.outbox.send(text, mentions, target, connection, workspace,
+                    owner.store.reader.draft(target)?.attachments ?: emptyList(), artefactContext = context)
+                accepted()
+                // The durable row owns the exact request id and captured context across every retry.
+                item?.let { enqueued(it.id) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { if (sendFailed != null) sendFailed(e) else throw e }
+            finally { sendFinished() }
         }
     }
     private var voiceSendJob: Job? = null

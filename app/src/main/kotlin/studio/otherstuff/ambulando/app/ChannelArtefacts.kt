@@ -212,7 +212,8 @@ private data class HtmlArtefactRead(
     var verifiedFile by remember(file.id) { mutableStateOf(file) }
     var generic by remember(file.id) { mutableStateOf<GenericNapplet.Binding?>(null) }
     var versions by remember(file.id) { mutableStateOf<FileVersionList?>(null) }
-    var selected by remember(file.id) { mutableStateOf<String?>(null) }
+    val initialThreadPin = LocalThreadArtefactTab.current?.let { it.pinnedRevision ?: it.selectedRevision }
+    var selected by remember(file.id) { mutableStateOf(initialThreadPin) }
     var error by remember(file.id) { mutableStateOf<String?>(null) }
     var source by remember(file.id) { mutableStateOf<String?>(null) }
     var base by remember(file.id) { mutableStateOf<String?>(null) }
@@ -221,6 +222,50 @@ private data class HtmlArtefactRead(
     val drafts = remember(draftFile) { HtmlDraftStore(draftFile) }
     var recovery by remember(draftFile) { mutableStateOf<HtmlDraftStore.Draft?>(null) }
     val sourceSave = remember(drafts) { HtmlSourceSave(drafts) }
+
+    val threadTab = LocalThreadArtefactTab.current
+    var pendingThreadVersion by remember(file.id) { mutableStateOf<String?>(null) }
+    suspend fun saveThreadSource(): String? {
+        val edit = recovery ?: drafts.load() ?: return null
+        check(!saving && currentBoundary()) { "HTML is busy or locked. Retry Send." }
+        saving = true
+        try {
+            val savedVersion = sourceSave.save(edit, upload = { pending -> api.store(w.id, w.appNpub, pending.source.toByteArray(), "text/html", "artefact.html", null) { } },
+                commit = { pending -> api.addFileVersion(w.id, w.appNpub, file.id, pending.base, requireNotNull(pending.uploadedObjectId), pending.mutationId) },
+                head = { api.genericNappletHead(w.id,w.appNpub,file.id).currentVersionId },
+                read = { id -> api.savedHtmlBytes(w.id,w.appNpub,file.id,id) },
+                checkCurrent = { store.reader.withArtefactAccess(w,file.id,::currentBoundary) { Unit } })
+            source = null; recovery = null
+            return savedVersion
+        } catch (e: Exception) { recovery = drafts.load(); throw e }
+        finally { saving = false }
+    }
+    SideEffect {
+        threadTab?.title = file.displayName
+        threadTab?.versionLabel = if (pendingThreadVersion != null) "Saved revision awaiting readback" else htmlPayload?.let { "${if (selected != null) "Pinned " else ""}v${it.versionNumber}" } ?: "Loading revision…"
+        if (htmlPayload != null) { threadTab?.pinnedRevision = selected; threadTab?.selectedRevision = selected ?: pendingThreadVersion ?: htmlPayload?.versionId }
+        threadTab?.checkpoint = { recovery?.let { drafts.checkpoint(it) }; !saving }
+        threadTab?.prepare = {
+            check(currentBoundary()) { "Unlock the original workspace before Send." }
+            val loaded = htmlPayload ?: error("HTML is still loading. Retry Send.")
+            val saved = saveThreadSource()
+            if (saved != null && selected == null) {
+                pendingThreadVersion = saved
+                threadTab?.selectedRevision = saved
+            }
+            val exact = pendingThreadVersion
+            val payload = if (exact != null && selected == null) api.artefactHTMLPayload(w.id,w.appNpub,file.id,exact) else loaded
+            if (exact != null && selected == null) {
+                check(payload.versionId == exact) { "Saved HTML revision readback did not match. Retry Send." }
+                htmlPayload = payload; html = payload.html
+                versions = versions?.copy(currentVersionId = payload.currentVersionId ?: exact)
+                pendingThreadVersion = null
+            }
+            studio.otherstuff.ambulando.core.chat.ArtefactChatReference("file", file.id, payload.versionId, selected != null, payload.digest)
+        }
+        threadTab?.validate = { ref -> pendingThreadVersion == null && !saving && currentBoundary() && htmlPayload?.versionId == ref.revision && recovery == null }
+    }
+    DisposableEffect(threadTab) { onDispose { threadTab?.prepare = null; threadTab?.checkpoint = null; threadTab?.validate = null } }
 
     // Visual review state fenced to (connection, workspace, file, activeBoundaryId) so switching boundaries clears all state.
     val reviewBoundary = listOf(c.id, w.id, file.id, model.activeBoundaryId)

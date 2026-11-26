@@ -279,6 +279,11 @@ Object.defineProperty(window, 'ambulandoDocument', {
       }
       return true;
     },
+    restoreViewport(json) {
+      const v = JSON.parse(json);
+      if (Number.isFinite(v.x) && Number.isFinite(v.y)) window.scrollTo(v.x, v.y);
+      return true;
+    },
     command(name, json) { return command(name, json ? JSON.parse(json) : {}); },
     insertUploads(json) {
       if (!editor) return false;
@@ -361,3 +366,5 @@ Object.defineProperty(window, 'ambulandoDocument', {
 
 window.addEventListener('error', (event) => post({ type: 'error', message: String(event.message || 'Script error') }));
 post({ type: 'ready' });
+
+addEventListener('scroll', () => post({ type: 'viewport', x: scrollX, y: scrollY }), { passive: true });

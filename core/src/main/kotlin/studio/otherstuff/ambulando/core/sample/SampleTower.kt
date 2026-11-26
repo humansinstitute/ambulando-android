@@ -564,7 +564,7 @@ class SampleTower(
                 "id" to id, "workspace_id" to w, "channel_id" to channel, "thread_id" to threadId, "thread_source_message_id" to source.ifEmpty { id },
                 "body" to body, "client_request_id" to requestId, "record_state" to "active", "row_version" to 1L, "sender_npub" to signer,
                 "created_by_actor_label" to SampleContent.YOU_LABEL, "created_at" to now, "updated_at" to now, "attachments" to attachments,
-                "metadata" to mapOf("attachments" to attachments),
+                "metadata" to (o["metadata"].asMap().orEmpty() + mapOf("attachments" to attachments)),
             )
             chat.put("posted", id, row)
             if (requestId != null) chat.put("requests", requestId, linkedMapOf("hash" to hash, "message_id" to id))

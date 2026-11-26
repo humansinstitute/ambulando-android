@@ -3,6 +3,7 @@ package studio.otherstuff.ambulando.core.surfaces
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -240,6 +241,71 @@ class BoardEditingTests {
         assertEquals(BoardState.Status.DENIED, state.status)
         assertEquals("No access", state.headerStatus)
         assertNotNull(outbox.last("clear"))
+    }
+
+    @Test fun chatBarrierSavesUnderlyingDraftButKeepsHistoricalSelection() = runBlocking {
+        val store = Store(sceneJSON(listOf(element("a", 1))))
+        val old = store.head
+        val local = drafts(); val out = Outbox()
+        val board = controller(store, local, out)
+        board.attach("chat") { raw ->
+            val m = JsonFields.parseObject(raw)!!
+            if (JsonFields.string(m["type"]) == "flush") launch { board.receive("chat", BoardController.message(mapOf("type" to JsonPrimitive("flushed"), "token" to m["token"]!!))) }
+        }
+        board.sync(reference(store), "Plan")
+        board.receive("chat", change(listOf(element("a", 2))))
+        board.viewVersion(old, forcePinned = true)
+        val ref = board.prepareChatReference()
+        assertTrue(ref.historical)
+        assertEquals(old.id, ref.revision)
+        assertEquals(old.sha256, ref.digest)
+        assertEquals(2, store.head.number)
+        assertFalse(board.current().dirty)
+        assertEquals(old.id, board.current().viewingVersionId)
+        board.close()
+    }
+
+    @Test fun deniedChatSaveClearsViewerButKeepsUnsentRecovery() = runBlocking {
+        val store = Store(sceneJSON(listOf(element("a", 1))))
+        val local = drafts(); val out = Outbox()
+        val transport = object : BoardController.Transport by store.transport() {
+            override suspend fun publish(baseVersionId: String, bytes: ByteArray, summary: String): BoardVersion = throw SurfaceHttpException(403, "forbidden")
+        }
+        val board = controller(store, local, out, transport)
+        board.attach("chat") { raw ->
+            out.send(raw)
+            val m = JsonFields.parseObject(raw)!!
+            if (JsonFields.string(m["type"]) == "flush") launch { board.receive("chat", BoardController.message(mapOf("type" to JsonPrimitive("flushed"), "token" to m["token"]!!))) }
+        }
+        board.sync(reference(store), "Plan")
+        board.receive("chat", change(listOf(element("a", 2))))
+        assertTrue(runCatching { board.prepareChatReference() }.isFailure)
+        assertEquals(BoardState.Status.DENIED, board.current().status)
+        assertNotNull(local.load(fileId))
+        assertNotNull(out.last("clear"))
+        assertEquals(1, store.head.number)
+        board.close()
+    }
+
+    @Test fun chatBarrierDoesNotPublishOverlappingMergeWithoutExplicitSave() = runBlocking {
+        val store = Store(sceneJSON(listOf(element("a", 1))))
+        val out = Outbox(); val board = controller(store, drafts(), out)
+        board.attach("chat") { raw ->
+            val m = JsonFields.parseObject(raw)!!
+            if (JsonFields.string(m["type"]) == "flush") launch { board.receive("chat", BoardController.message(mapOf("type" to JsonPrimitive("flushed"), "token" to m["token"]!!))) }
+        }
+        board.sync(reference(store), "Plan")
+        board.receive("chat", change(listOf(element("a", 2, mapOf("x" to 70)))))
+        store.external(sceneJSON(listOf(element("a", 3, mapOf("x" to 90)))))
+        board.mergeLatest()
+        assertTrue(board.current().conflicts > 0)
+        assertTrue(runCatching { board.prepareChatReference() }.isFailure)
+        assertEquals(2, store.head.number)
+        assertTrue(board.current().dirty)
+        assertTrue(board.save("Explicitly keep reviewed local proposal"))
+        assertEquals(3, store.head.number)
+        assertEquals(store.head.id, board.prepareChatReference().revision)
+        board.close()
     }
 
     // MARK: Pure scene rules

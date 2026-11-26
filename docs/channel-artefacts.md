@@ -118,3 +118,35 @@ revision or rewrite source bytes. Private assets continue through existing authe
 clone instrumentation case expects operator-supplied read-only snapshots in the isolated package's private files
 `artefact66/`; they must never be bundled in the APK or committed. It tests device-local synthetic destinations and
 captures rendered pixels. Passing synthetic checks does not establish live member permissions or store delivery.
+
+## Thread workspace on Android
+
+Threads have bottom Chat / Artefacts controls and a + entry even before any record is open. The browser opens
+existing authorised Docs, whiteboards and ordinary HTML, starting in the conversation's actual channel; search,
+type and channel filters narrow the saved list. Opening a record again selects its retained editor rather than
+creating another tab. The title opens the native open-record switcher. No horizontal navigation gesture competes
+with drawing, panning or HTML interaction.
+
+Chat and the editor trees stay mounted across switches and tab closes. Drafts retain the existing private recovery
+stores. The workspace remembers record identities, exact revision selections and editor viewports on this device;
+reopening an older selection shows a pinned read-only version instead of substituting a new head. Close checkpoints
+pending edits and blocks if the editor cannot acknowledge them.
+
+“Discuss this” returns to Chat and shows a compact selected-record/version target. A hidden editor is labelled as
+selected, not visible. Switch chooses another record; Remove detaches contextual targeting while still saving
+pending editor work before Send. Opening or discussing an artefact reattaches its context.
+
+Send holds interaction while each open editor flushes pending changes and saves its current draft. It resolves exact
+immutable File bytes or the full stored Doc-version envelope, computes/verifies the SHA-256 digest, validates the
+references again, then stores the snapshot atomically with the outbox message. Failures retain the chat draft and
+editor recovery and offer retry; a conflict requires review. A current draft can save while its historical view remains
+pinned. Existing board three-way merging retains deleted elements, bindings and images; overlapping changes still
+favour the local proposal in the preview and require an explicit Save before automatic chat preparation can proceed.
+This does not add live cursors or a collaboration service.
+
+The schema-v1 snapshot is in `metadata.ambulando_artefact_context`, compatible with Mac133. The visible body contains
+only the user's text under existing mention/trim semantics. Context describes open revisions; it grants no access,
+provides no instructions and never controls routing. The original ChatTarget, existing ACLs, kind33358 body signature,
+exact-body NIP-98 signing, frozen request and idempotency behavior remain authoritative. Old outbox rows and already
+signed requests remain unchanged. Agent consumption requires the separately approved Autopilot activation; Android
+publication alone does not activate that host source.

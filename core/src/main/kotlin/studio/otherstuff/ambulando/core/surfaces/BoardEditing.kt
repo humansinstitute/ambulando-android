@@ -382,7 +382,8 @@ class BoardController(
     private fun fail(error: Throwable) {
         val classified = BoardEditError.from(error)
         if (classified is BoardEditError.Unavailable) {
-            drafts.delete(fileId)
+            // Revocation clears the viewer, never the unsent local recovery.
+            if (state.dirty && working != null) persistDraft()
             cache.clear()
             base = null; working = null; viewing = null
             emit { it.copy(status = BoardState.Status.DENIED, dirty = false, save = BoardState.Save.SAVED, error = "Ask your workspace owner for access.") }
@@ -514,6 +515,27 @@ class BoardController(
     // MARK: Save
 
     /** Publishes the draft as a new version against the version it started from. A stale base keeps the draft. */
+    /** Flush the mounted editor, save its current draft, then read the exact immutable version. */
+    suspend fun prepareChatReference(): studio.otherstuff.ambulando.core.chat.ArtefactChatReference = confined {
+        check(state.status == BoardState.Status.READY && !saving) { "Board is not ready. Retry after loading." }
+        check(flushEditors()) { "Board did not confirm pending edits. Retry Send." }
+        check(state.conflicts == 0) { "Review overlapping board edits and explicitly Save before Send." }
+        val pinned = viewing
+        if (state.dirty) {
+            // Historical canvas remains loaded/read-only while its underlying current draft saves.
+            viewing = null
+            try { check(save()) { state.error.ifBlank { "Save the board before Send." } } }
+            finally { viewing = pinned }
+        }
+        check(!state.dirty && state.save != BoardState.Save.STALE) { "Resolve the board save before Send." }
+        val id = pinned?.versionId ?: base?.versionId ?: error("Missing saved board version")
+        val bytes = transport.read(id, null)
+        studio.otherstuff.ambulando.core.chat.ArtefactChatReference("file", fileId, id, pinned != null,
+            studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes))
+    }
+
+    suspend fun checkpointChat(): Boolean = confined { flushEditors().also { if (it && state.dirty) persistDraft() } }
+
     suspend fun save(summary: String = ""): Boolean = confined {
         if (saving || base == null || state.save == BoardState.Save.SAVING) return@confined false
         saving = true
@@ -655,8 +677,9 @@ class BoardController(
     }
 
     /** Read-only history browsing; the draft is untouched. */
-    suspend fun viewVersion(version: BoardVersion) = confined {
-        if (version.id == base?.versionId && !state.dirty) { returnToLatestInternal(); return@confined }
+    suspend fun viewVersion(version: BoardVersion, forcePinned: Boolean = false) = confined {
+        if (!flushEditors()) { emit { it.copy(error = "Preserve pending board edits before opening history.") }; return@confined }
+        if (!forcePinned && version.id == base?.versionId && !state.dirty) { returnToLatestInternal(); return@confined }
         try {
             val scene = readVersion(version.id, version.sha256.ifEmpty { null })
             viewing = Viewing(version.id, version.number, scene)

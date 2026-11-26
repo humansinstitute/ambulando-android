@@ -19,6 +19,7 @@ object Schema {
 
     val migrations: List<Migration> = listOf(
         Migration(1, v1()),
+        Migration(10, listOf("ALTER TABLE outbox ADD COLUMN artefact_context TEXT")),
         Migration(2, listOf("ALTER TABLE drafts ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'")),
         Migration(3, notificationTables()),
         Migration(4, listOf(
