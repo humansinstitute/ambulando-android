@@ -141,4 +141,36 @@ class ThreadArtefactsTest {
         state.reconcile(ThreadArtefactMembershipSync.Row(5, ThreadArtefactMembership.metadata(metadata, emptyList())))
         assertTrue(state.members.isEmpty()); assertTrue(state.membershipReady)
     }
+    @Test fun viewWithoutEditorNeverBlocksCloseAndUnavailableViewIsLeftOutOfSend() = runBlocking {
+        val state = ThreadArtefacts(); val broken = id(); val board = id()
+        state.open("file", broken, "Projects"); state.open("file", board, "Board")
+        val failed = state.tabs.first { it.id == broken }; val editing = state.tabs.first { it.id == board }
+        // A failed read never composes an editor, so nothing is registered and nothing in memory can be lost.
+        assertNull(failed.checkpoint); assertTrue(failed.preserve())
+        editing.checkpoint = { false }; assertFalse(editing.preserve())
+        failed.unavailable = "This artefact could not be opened"
+        val ref = ArtefactChatReference("file", board, id(), false, "b".repeat(64))
+        editing.prepare = { ref }; editing.validate = { it == ref }
+        assertEquals(listOf(editing), state.sendTabs)
+        val context = state.prepare(ChatTarget(id(), id(), id(), id()))!!
+        assertTrue(context.contains(board)); assertFalse(context.contains(broken))
+        state.busy = false; editing.unavailable = "offline"
+        assertNull(state.prepare(ChatTarget(id(), id(), id(), id())))
+        assertNull(state.failure)
+    }
+    @Test fun unavailableViewWithUnsavedSourceOrHeldRecoveryStillGatesSend() = runBlocking {
+        val state = ThreadArtefacts(); val record = id()
+        state.open("file", record, "Projects")
+        val tab = state.tabs.single()
+        tab.unavailable = "This HTML artefact could not be opened"
+        tab.sourceDirty = { true }
+        assertEquals(listOf(tab), state.sendTabs); assertTrue(state.omittedTabs.isEmpty())
+        assertTrue(runCatching { state.prepare(ChatTarget(id(), id(), id(), id())) }.isFailure)
+        assertTrue(state.failure!!.startsWith("Send paused"))
+        state.busy = false; tab.sourceDirty = { false }; tab.recoveryHeld = true
+        assertEquals(listOf(tab), state.sendTabs)
+        tab.recoveryHeld = false
+        assertNull(state.prepare(ChatTarget(id(), id(), id(), id())))
+        assertEquals("Sent without Projects: unavailable on this device.", state.notice)
+    }
 }

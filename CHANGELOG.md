@@ -1,3 +1,9 @@
+## 0.9.63 (91)
+
+- An artefact attached to a conversation that can no longer be opened (for example after it was updated elsewhere, or while Tower or the network fails) no longer freezes that conversation. Back, Send and the rest of the app keep working, including after closing and reopening Ambulando, and your drafts are kept.
+- The artefact shows why it could not be opened, with Retry; messages you send meanwhile leave it out and say so ("Sent without …"). Unsaved edits in an artefact are still saved, or Send stops and keeps them, as before.
+- Includes 0.9.62 (90): Goals on Home, keyboard-friendly goal forms and the shared goal focus order.
+
 ## 0.9.62 (90)
 
 - Home is its own screen again, separate from Deck: your goals, a Daily Briefing and your latest chats. Opening Ambulando without a scope or channel chosen lands there; choosing a scope or channel opens Deck as before.

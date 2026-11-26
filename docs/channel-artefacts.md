@@ -130,7 +130,10 @@ with drawing, panning or HTML interaction.
 Chat and the editor trees stay mounted across switches and tab closes. Drafts retain the existing private recovery
 stores. The workspace remembers record identities, exact revision selections and editor viewports on this device;
 reopening an older selection shows a pinned read-only version instead of substituting a new head. Close checkpoints
-pending edits and blocks if the editor cannot acknowledge them.
+pending edits and blocks if the editor cannot acknowledge them. Only a composed editor holds unsaved state in memory, so
+a view that is still loading, failed to read or fell back to the saved read-only copy never blocks Back, close or
+removal. Such a view is marked unavailable: it shows the reason with Retry, is left out of Send context and does not
+hold plain Send. A relaunch that restores it behaves the same way, so one unreadable artefact cannot pause the thread.
 
 “Discuss this” returns to Chat and shows a compact selected-record/version target. A hidden editor is labelled as
 selected, not visible. Switch chooses another record; Remove detaches contextual targeting while still saving

@@ -136,10 +136,13 @@ import java.util.UUID
     var error by remember(c.id, w.id, fileId) { mutableStateOf<String?>(null) }
     val services = LocalAppServices.current
     var localOnly by remember(c.id, w.id, fileId) { mutableStateOf(false) }
+    var reload by remember(c.id, w.id, fileId) { mutableIntStateOf(0) }
+    val threadTab = LocalThreadArtefactTab.current
     val retained by remember(c.id, w.id, fileId) {
         store.liveQuery({ it.workspaceId == w.id }) { store.reader.file(w.id, fileId) }
     }.collectAsState(null)
-    LaunchedEffect(runtime, w, fileId, services.unlocked, w.accessRemoved, retained?.accessRemoved == true) {
+    LaunchedEffect(runtime, w, fileId, services.unlocked, w.accessRemoved, retained?.accessRemoved == true, reload) {
+        error = null
         val cached = store.reader.file(w.id, fileId)
         localOnly = !services.unlocked || w.accessRemoved || cached?.accessRemoved == true ||
             cached?.let { store.reader.isChannelAccessRemoved(w.id, it.channelId) } == true
@@ -168,7 +171,23 @@ import java.util.UUID
     }
     val exit = studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit.current
     val current = file
-    if (current == null) { Text(error ?: "Loading artefact…", Modifier.padding(16.dp)); return }
+    // In a thread a view without an editor stays a local condition: it never holds Back and is left out of Send context.
+    val unavailable = when {
+        current == null -> error?.let { "This artefact could not be opened: $it" }
+        localOnly -> "Saved copy only; reconnect to use this artefact in the thread."
+        ArtefactType.of(current) !in listOf(ArtefactType.HTML, ArtefactType.WHITEBOARD) -> "This file type cannot be discussed from the thread."
+        else -> null
+    }
+    if (threadTab != null && unavailable != null) SideEffect { threadTab.unavailable = unavailable }
+    if (current == null) {
+        if (error == null) { Text("Loading artefact…", Modifier.padding(16.dp).testTag("thread.artefact.loading")); return }
+        Column(Modifier.padding(16.dp).testTag("thread.artefact.unavailable")) {
+            Text(error ?: "This artefact is unavailable.")
+            if (threadTab != null) Text("Chat, Back and other artefacts keep working, and Send leaves this one out. Your drafts on this device are kept; close it from the artefacts list.", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { reload++ }, modifier = Modifier.testTag("thread.artefact.retry")) { Text("Retry") }
+        }
+        return
+    }
     // The normal File reader can preview/share retained verified bytes without server authority.
     if (localOnly) { NativeFiles(model, fileId, direct = false); return }
     when (ArtefactType.of(current)) {
@@ -182,6 +201,7 @@ import java.util.UUID
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                 catch (e: Exception) { error = e.message }
             }
+            if (threadTab != null) SideEffect { threadTab.unavailable = if (reference == null) error?.let { "This whiteboard could not be opened: $it" } else null }
             reference?.let { board -> BoardEditor(model, board, current.displayName, provenance = { ArtefactProvenance(current) }, exportFile = current) { exit?.invoke() } } ?: Text(error ?: "Loading whiteboard…")
         }
         ArtefactType.SYSTEM_FLOW -> SystemFlowFile(model, current)
@@ -244,6 +264,7 @@ private data class HtmlArtefactRead(
         threadTab?.title = file.displayName
         threadTab?.versionLabel = if (pendingThreadVersion != null) "Saved revision awaiting readback" else htmlPayload?.let { "${if (selected != null) "Pinned " else ""}v${it.versionNumber}" } ?: "Loading revision…"
         if (htmlPayload != null) { threadTab?.pinnedRevision = selected; threadTab?.selectedRevision = selected ?: pendingThreadVersion ?: htmlPayload?.versionId }
+        threadTab?.unavailable = if (htmlPayload == null && error != null) "This HTML artefact could not be opened: $error" else null
         threadTab?.checkpoint = { recovery?.let { drafts.checkpoint(it) }; !saving }
         threadTab?.sourceDirty = { recovery != null }
         threadTab?.saveSource = {

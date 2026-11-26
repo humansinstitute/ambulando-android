@@ -50,6 +50,15 @@ internal class ThreadArtefactTab(val kind: String, val id: String, title: String
     var reference by mutableStateOf<ArtefactChatReference?>(null)
     var prepare: (suspend () -> ArtefactChatReference)? = null
     var checkpoint: (suspend () -> Boolean)? = null
+    /** Why this open view cannot show its content (read failed, offline-only copy). It is then excluded from Send context. */
+    var unavailable by mutableStateOf<String?>(null)
+    /** Source edits or held recovery that Send must still save or refuse, whatever the view shows. */
+    val holdsUnsavedWork get() = publicationHeld || sourceDirty?.invoke() == true
+    /**
+     * Preserves pending editor changes before close, removal or exit. Only a composed editor holds unsaved state in memory
+     * and registers [checkpoint]; a view that is loading, failed or read-only has nothing to lose, so it never blocks.
+     */
+    suspend fun preserve(): Boolean = checkpoint?.invoke() ?: true
 }
 internal class ThreadArtefacts {
     var membershipReady by mutableStateOf(false)
@@ -79,7 +88,10 @@ internal class ThreadArtefacts {
         if (canonical.isEmpty() && tabs.none { it.open && !it.attached }) shown = false
     }
     val attachedTabs get() = tabs.filter { it.attached }
-    val sendTabs get() = tabs.filter { it.open && it.attached }
+    val sendTabs get() = tabs.filter { it.open && it.attached && (it.unavailable == null || it.holdsUnsavedWork) }
+    /** Open attachments Send leaves out because they cannot be read here; named in [notice] so the omission is visible. */
+    val omittedTabs get() = tabs.filter { it.open && it.attached && it.unavailable != null && !it.holdsUnsavedWork }
+    var notice by mutableStateOf<String?>(null)
 
     var checkpointChat: (() -> Unit)? = null
     var restored by mutableStateOf(false)
@@ -143,6 +155,7 @@ internal class ThreadArtefacts {
     }
     suspend fun prepare(target: ChatTarget): String? {
         check(!busy) { "An artefact operation is already running." }
+        notice = omittedTabs.takeIf { it.isNotEmpty() }?.let { omitted -> "Sent without ${omitted.joinToString { it.title }}: unavailable on this device." }
         if (sendTabs.isEmpty()) return null
         try { refreshMembership?.invoke() } catch (e: Exception) { failure = "Send paused: attachments could not be confirmed. Reconnect and retry."; throw e }
         if (sendTabs.isEmpty()) return null
@@ -231,7 +244,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
         state.reconcile(row)
         previous.filter { (tab, before) -> tab.attached != before.first }.forEach { (tab, before) ->
             val alreadyHeld = before.second
-            val preserved = tab.checkpoint?.invoke() == true
+            val preserved = tab.preserve()
             if (preserved && tab.publicationHeld && tab.sourceDirty?.invoke() == true && tab.holdRecovery != null) {
                 if (tab.holdRecovery?.invoke() != true) state.failure = "${tab.title} recovery could not be held durably. Keep this view open and retry."
             }
@@ -264,7 +277,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
             if (!state.busy) {
                 state.busy = true; state.failure = null
                 try {
-                    check(!tab.open || tab.checkpoint?.invoke() == true) { "Preserve editor changes before removing this attachment." }
+                    check(!tab.open || tab.preserve()) { "Preserve editor changes before removing this attachment." }
                     reconcileMembership(membership.remove(ThreadArtefactMember(tab.kind, tab.id)))
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) { if (e is ThreadArtefactMembershipSync.Uncertain) reconcileMembership(e.observed); state.failure = "Remove not confirmed: ${e.message}. Existing attachments and drafts are retained; retry." }
@@ -312,7 +325,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
         state.checkpointChat?.invoke()
         state.busy = true
         return try {
-            state.tabs.filter { it.open }.forEach { tab -> check(tab.checkpoint?.invoke() == true) { "${tab.title} has not preserved pending changes. Retry closing." } }
+            state.tabs.filter { it.open }.forEach { tab -> check(tab.preserve()) { "${tab.title} has not preserved pending changes. Retry closing." } }
             runtime.store.writer.setState(key, state.snapshot())
             true
         } catch (e: Exception) { state.failure = e.message; false }
@@ -328,7 +341,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
             }
             if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) model.launchDetached {
                 state.checkpointChat?.invoke()
-                state.tabs.forEach { runCatching { it.checkpoint?.invoke() } }
+                state.tabs.forEach { runCatching { it.preserve() } }
                 runtime.store.writer.setState(key, state.snapshot())
             }
         }
@@ -377,7 +390,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
                             IconButton(onClick = { state.listing = true }, enabled = !state.busy, modifier = Modifier.testTag("thread.artefacts.menu")) {
                                 Icon(Icons.Outlined.FolderOpen, "Thread artefacts (${state.members.size})")
                             }
-                            TextButton(onClick = { state.discuss = true; state.shown = false }, enabled = state.tabs.any { it.id == state.selected && it.attached && !it.publicationHeld } && !state.busy, modifier = Modifier.testTag("thread.artefacts.discuss")) { Text("Discuss this") }
+                            TextButton(onClick = { state.discuss = true; state.shown = false }, enabled = state.tabs.any { it.id == state.selected && it.attached && !it.publicationHeld && it.unavailable == null } && !state.busy, modifier = Modifier.testTag("thread.artefacts.discuss")) { Text("Discuss this") }
                         }
                         Box(Modifier.weight(1f)) {
                             state.tabs.filter { it.open }.forEach { tab -> key(tab.kind, tab.id) {
@@ -395,6 +408,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
                 if (state.busy) Box(Modifier.fillMaxSize().clickable { }.background(androidx.compose.ui.graphics.Color.Black.copy(alpha = .08f)))
             }
             state.failure?.let { Text(it, Modifier.padding(8.dp).testTag("thread.artefacts.failure"), style = MaterialTheme.typography.bodySmall) }
+            state.notice?.takeIf { state.failure == null }?.let { Text(it, Modifier.padding(8.dp).testTag("thread.artefacts.notice"), style = MaterialTheme.typography.bodySmall) }
 
         }
     }
@@ -407,11 +421,11 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
             if (state.members.isEmpty()) Text("No attachments in this thread.")
             TextButton(onClick = { scope.launch { try { refreshMembership(); state.failure = null } catch (e: Exception) { state.failure = "Attachments refresh failed: ${e.message}. Retry when connected." } } }, enabled = !state.busy) { Text("Refresh attachments") }
             LazyColumn(Modifier.heightIn(max = 400.dp)) { items(state.tabs.filter { it.attached || it.open || it.publicationHeld }, key = { it.kind + it.id }) { tab -> Column {
-            TextButton(onClick = { if (tab.attached) state.open(tab.kind, tab.id, tab.title) else state.focus(tab.kind, tab.id, tab.title); state.listing = false }, modifier = Modifier.fillMaxWidth().testTag("thread.artefacts.focus.${tab.id}")) { Text(tab.title + (if (!tab.attached) " · Detached recovery" else if (tab.publicationHeld) " · Recovery held" else if (tab.open) " · ${tab.versionLabel}" else "")) }
+            TextButton(onClick = { if (tab.attached) state.open(tab.kind, tab.id, tab.title) else state.focus(tab.kind, tab.id, tab.title); state.listing = false }, modifier = Modifier.fillMaxWidth().testTag("thread.artefacts.focus.${tab.id}")) { Text(tab.title + (if (!tab.attached) " · Detached recovery" else if (tab.publicationHeld) " · Recovery held" else if (tab.open && tab.unavailable != null) " · Unavailable" else if (tab.open) " · ${tab.versionLabel}" else "")) }
             Row { TextButton(onClick = { scope.launch {
                 state.busy = true
                 try {
-                    check(!tab.open || tab.checkpoint?.invoke() == true) { "Editor could not preserve pending changes. Retry close." }
+                    check(!tab.open || tab.preserve()) { "Editor could not preserve pending changes. Retry close." }
                     tab.open = false; state.selected = state.tabs.firstOrNull { it.open }?.id
                     if (state.selected == null) { state.shown = false; state.discuss = false }
                 } catch (e: Exception) { state.failure = "Tab kept open: ${e.message}" }
@@ -440,13 +454,16 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     }
     val body by remember(tab.id) { model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.docBody(w.id, tab.id) } }.collectAsState(null)
     LaunchedEffect(tab.id) { model.sync.refreshDoc(c, w, tab.id); if (pinned != null) load() }
+    val syncStatus by model.engine.status.collectAsState()
+    val openFailure = if (body == null) syncStatus.errors[WorkspaceSync.docKey(w.id, tab.id)] else null
     SideEffect {
+        tab.unavailable = openFailure?.let { "This document could not be opened: $it" }
         editor.attached = tab.attached
         tab.title = selected?.title ?: editor.title
         tab.versionLabel = if (pinned != null) "Pinned v$pinned" else editor.versionLabel
         tab.pinnedRevision = pinned
         tab.selectedRevision = pinned ?: editor.selectedRevision
-        tab.checkpoint = { editor.checkpoint?.invoke() == true }
+        tab.checkpoint = { editor.preserve() }
         tab.sourceDirty = { editor.sourceDirty?.invoke() != false }
         tab.saveSource = { editor.saveSource?.invoke() == true }
         tab.holdRecovery = { editor.holdRecovery?.invoke() == true }
@@ -468,7 +485,13 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
         Box(Modifier.weight(1f)) {
             RetainedPane(pinned == null) {
                 CompositionLocalProvider(LocalThreadArtefactTab provides editor) {
-                    if (body != null) DocumentEditor(model, tab.id) { state?.shown = false } else Text("Opening document…", Modifier.padding(16.dp))
+                    if (body != null) DocumentEditor(model, tab.id) { state?.shown = false }
+                    else if (openFailure == null) Text("Opening document…", Modifier.padding(16.dp).testTag("thread.artefact.loading"))
+                    else Column(Modifier.padding(16.dp).testTag("thread.artefact.unavailable")) {
+                        Text("This document could not be opened: $openFailure")
+                        Text("Chat, Back and other artefacts keep working, and Send leaves this one out. Your drafts on this device are kept; close it from the artefacts list.", style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { scope.launch { model.sync.refreshDoc(c, w, tab.id, force = true) } }, modifier = Modifier.testTag("thread.artefact.retry")) { Text("Retry") }
+                    }
                 }
             }
             if (pinned != null) LazyColumn(Modifier.fillMaxSize().background(studio.otherstuff.ambulando.app.ui.theme.Amb.colors.background)) {

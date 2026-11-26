@@ -83,6 +83,9 @@ class SampleWorkTower(
 
     fun inject(fault: SampleFault, matching: String) = synchronized(lock) { faults.add(matching to fault); Unit }
 
+    /** Removes the injected faults still queued for [matching], so a test phase starts from a known server. */
+    fun clearFaults(matching: String) = synchronized(lock) { faults.removeAll { it.first == matching }; Unit }
+
     val requestLog: List<String> get() = synchronized(lock) { log.toList() }
 
     /** Requests that reached the presigned host carrying an Authorization header or cookie (must stay empty). */
