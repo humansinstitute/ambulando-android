@@ -1,3 +1,22 @@
+## 0.9.54 (82)
+
+- Fix voice recording startup crashes when recording is cancelled before service delivery or its notification channel is disabled.
+- Prepare the foreground notification before validating startup, without opening the microphone; keep permission failures, retained audio and notification Stop safe.
+
+## 0.9.53 (81)
+
+- Pay the setup deposit by Lightning as well as card when your NStack offers it: the invoice, amount in sats and expiry come from NStack, a payment counts only when NStack records it, and setup never starts a workspace or agent by itself.
+- A setup keeps one payment method until NStack has finished with that payment, so a lost connection, restart or second phone can never start a second payment. A new phone resumes the payment NStack already holds, and "Use a different payment method" asks NStack to settle it first.
+
+## 0.9.52 (80)
+
+- Add guided hosted-workspace setup with an invitation, using the identity already on this device (Connect and Settings › Hosted workspace).
+- Review before anything is sent; progress and retry keys survive restarts; payment counts only when NStack confirms it.
+- Card payments, Lightning and funding limits follow what your NStack reports it can do now; when card is off you see "Card payments are unavailable right now. Your setup is saved; try again later or contact your inviter."
+- A chosen agent is shown as "chosen but not running" and stays off until you send its first request.
+- New identities must be backed up to your NStack, locked with a password you choose (no reset if lost), before any payment. Recover an identity on a new phone with the backup username and password.
+- Add credit to your hosted account after setup (Settings › Hosted workspace) by card or Lightning: no new workspace, invitation or agent start. A payment that is under way keeps its amount and method until NStack reports it finished, so a lost connection can never start a second payment; credit appears only when NStack confirms it.
+
 ## 0.9.51 (79)
 
 - Restore the previously approved Android navigation: icons above labels, original sizing and responsive button widths.

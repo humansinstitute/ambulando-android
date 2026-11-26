@@ -25,7 +25,37 @@ class VoiceRecordingService : Service() {
     private var route: HeadsetRoute? = null
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var closing = false
+    private var recordingNotificationsEnabled = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    override fun onCreate() {
+        super.onCreate()
+        // startForegroundService is a promise even if a queued start was cancelled, or setup fails.
+        // Settle it before reading the draft/model or entering a coroutine. This opens no microphone.
+        val manager = getSystemService(NotificationManager::class.java)
+        // Posting an FGS notification may raise an app-created channel's importance. Preserve the
+        // pre-promotion decision; bootstrap must never bypass the recording notification requirement.
+        recordingNotificationsEnabled = manager.getNotificationChannel(CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE &&
+            androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Voice recording", NotificationManager.IMPORTANCE_LOW))
+        val notification = notification(null).build()
+        when {
+            android.os.Build.VERSION.SDK_INT >= 34 -> startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
+            android.os.Build.VERSION.SDK_INT >= 30 -> startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            else -> startForeground(NOTIFICATION, notification)
+        }
+    }
+    private fun notification(draft: VoiceDraft?): NotificationCompat.Builder {
+        val stop = PendingIntent.getService(this, 0, Intent(this, VoiceRecordingService::class.java).setAction(STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(studio.otherstuff.ambulando.app.R.drawable.ic_notification)
+            .setContentTitle(when { draft == null -> "Preparing voice recording"; draft.headsetOnly -> "Preparing headset recording"; else -> "Recording voice message" })
+            .setContentText(if (draft?.headsetOnly == true) "Waiting for verified Bluetooth microphone" else "Return to Ambulando to review and send")
+            .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
+            .setUsesChronometer(draft != null && !draft.headsetOnly).setWhen(System.currentTimeMillis())
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .addAction(0, "Stop", stop)
+    }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) { finish(); return START_NOT_STICKY }
@@ -44,20 +74,10 @@ class VoiceRecordingService : Service() {
         voice.service = this
         scope.launch {
             try {
-                check(ContextCompat.checkSelfPermission(this@VoiceRecordingService, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+                check(ContextCompat.checkSelfPermission(this@VoiceRecordingService, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "Microphone permission is required. Enable it in Android settings and try again." }
                 val manager = getSystemService(NotificationManager::class.java)
-                manager.createNotificationChannel(NotificationChannel(CHANNEL, "Voice recording", NotificationManager.IMPORTANCE_LOW))
-                check(manager.getNotificationChannel(CHANNEL).importance != NotificationManager.IMPORTANCE_NONE) { "Enable voice recording notifications in Android settings." }
-                val stop = PendingIntent.getService(this@VoiceRecordingService, 0, Intent(this@VoiceRecordingService, VoiceRecordingService::class.java).setAction(STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                val open = PendingIntent.getActivity(this@VoiceRecordingService, 1, Intent(this@VoiceRecordingService, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                val notificationBuilder = NotificationCompat.Builder(this@VoiceRecordingService, CHANNEL)
-                    .setSmallIcon(studio.otherstuff.ambulando.app.R.drawable.ic_notification)
-                    .setContentTitle(if (draft.headsetOnly) "Preparing headset recording" else "Recording voice message")
-                    .setContentText(if (draft.headsetOnly) "Waiting for verified Bluetooth microphone" else "Return to Ambulando to review and send")
-                    .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
-                    .setUsesChronometer(!draft.headsetOnly).setWhen(System.currentTimeMillis())
-                    .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                    .addAction(0, "Stop", stop)
+                check(recordingNotificationsEnabled && manager.getNotificationChannel(CHANNEL).importance != NotificationManager.IMPORTANCE_NONE) { "Enable voice recording notifications in Android settings." }
+                val notificationBuilder = notification(draft)
                 val notification = notificationBuilder.build()
                 if (android.os.Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
                 else startForeground(NOTIFICATION, notification)
@@ -201,6 +221,7 @@ class VoiceRecordingService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
+    override fun onTimeout(startId: Int) { finish("Recording startup timed out. Cancel this draft and try again.") }
     override fun onDestroy() { finish(); super.onDestroy() }
     companion object {
         private const val CHANNEL = "voice_recording_v1"

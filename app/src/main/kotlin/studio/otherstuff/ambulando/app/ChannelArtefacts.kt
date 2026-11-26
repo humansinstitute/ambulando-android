@@ -191,7 +191,13 @@ import java.util.UUID
 }
 
 
-private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVersionList, val html: String, val binding: GenericNapplet.Binding?)
+private data class HtmlArtefactRead(
+    val file: FileRecord,
+    val versions: FileVersionList,
+    val payload: HtmlArtefactPayload,
+    val html: String,
+    val binding: GenericNapplet.Binding?,
+)
 
 @Composable internal fun HtmlFileArtefact(model: AppModel, file: FileRecord, appMode: Boolean = false) {
     val c = model.connection ?: return; val w = model.workspace ?: return
@@ -202,6 +208,7 @@ private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVers
     val api = remember(runtime,c,w,file.id) { model.fileNappletAPI(c).fencedArtefactAPI(store.reader,w,file.id,::currentBoundary) }
     var reload by remember(file.id) { mutableStateOf(0) }
     var html by remember(file.id) { mutableStateOf<String?>(null) }
+    var htmlPayload by remember(file.id) { mutableStateOf<HtmlArtefactPayload?>(null) }
     var verifiedFile by remember(file.id) { mutableStateOf(file) }
     var generic by remember(file.id) { mutableStateOf<GenericNapplet.Binding?>(null) }
     var versions by remember(file.id) { mutableStateOf<FileVersionList?>(null) }
@@ -214,6 +221,24 @@ private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVers
     val drafts = remember(draftFile) { HtmlDraftStore(draftFile) }
     var recovery by remember(draftFile) { mutableStateOf<HtmlDraftStore.Draft?>(null) }
     val sourceSave = remember(drafts) { HtmlSourceSave(drafts) }
+
+    // Visual review state fenced to (connection, workspace, file, activeBoundaryId) so switching boundaries clears all state.
+    val reviewBoundary = listOf(c.id, w.id, file.id, model.activeBoundaryId)
+    var commentMode by remember(reviewBoundary) { mutableStateOf(false) }
+    var commentsSheetOpen by remember(reviewBoundary) { mutableStateOf(false) }
+    var showEarlierUnresolved by remember(reviewBoundary) { mutableStateOf(true) }
+    var pendingTarget by remember(reviewBoundary) { mutableStateOf<HtmlCommentAnchor?>(null) }
+    var focusedThreadId by remember(reviewBoundary) { mutableStateOf<String?>(null) }
+    var focusThreadNonce by remember(reviewBoundary) { mutableStateOf<Pair<String, Int>?>(null) }
+    var commentList by remember(reviewBoundary) { mutableStateOf<FileCommentList?>(null) }
+    var commentsBusy by remember(reviewBoundary) { mutableStateOf(false) }
+    var commentsError by remember(reviewBoundary) { mutableStateOf<String?>(null) }
+    var commentsReload by remember(reviewBoundary) { mutableStateOf(0) }
+    var anchorMatches by remember(reviewBoundary) { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    val commentDraftStore = remember(draftFile) { FileCommentDraftStore(File(draftFile.parentFile, "${file.id}-comments.json")) }
+    var commentDrafts by remember(draftFile) { mutableStateOf<Map<String, FileCommentDraftStore.Draft>>(emptyMap()) }
+    var versionMenu by remember(reviewBoundary) { mutableStateOf(false) }
+
     fun preserveSource(text: String) {
         val expected = base ?: return
         if (recovery?.accepted == true) return
@@ -228,14 +253,18 @@ private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVers
             catch (e: Exception) { if (currentBoundary()) error = e.message ?: "Could not preserve your HTML source." }
         }
     }
+    LaunchedEffect(commentDraftStore) {
+        commentDrafts = commentDraftStore.loadAll()
+    }
     LaunchedEffect(runtime, w, file.id, selected, reload) {
         try {
-            html = null; generic = null; error = null
+            html = null; htmlPayload = null; generic = null; error = null; anchorMatches = emptyMap()
             val received = runtime.sync.genericNappletRead(file.id) {
               store.reader.withArtefactAccess(w, file.id, ::currentBoundary) {
                 val verified = api.artefactFile(w.id,w.appNpub,file.id)
                 val history = if(selected==null && verified.raw.obj("metadata")?.obj("napplet")?.get("version")==JsonPrimitive(2)) api.genericNappletHead(w.id,w.appNpub,file.id) else try { api.fileVersions(w.id, w.appNpub, file.id) } catch (_: TowerError.ListLimitReached) { api.genericNappletHead(w.id,w.appNpub,file.id) }
-                val rendered = api.artefactHTML(w.id, w.appNpub, file.id, selected ?: history.currentVersionId)
+                val payload = api.artefactHTMLPayload(w.id, w.appNpub, file.id, selected ?: history.currentVersionId)
+                val rendered = payload.html
                 val parsed = GenericNapplet.parse(rendered, verified.raw.obj("metadata") ?: JsonObject(emptyMap()))
                 val manifest = nappletManifest(rendered)
                 val bound = manifest?.let { runCatching { FileNapplet.binding(file.raw.getValue("metadata").jsonObject, it) }.getOrNull() }
@@ -249,7 +278,7 @@ private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVers
                 } else rendered
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 check(currentBoundary())
-                HtmlArtefactRead(verified,history,preview,parsed)
+                HtmlArtefactRead(verified,history,payload,preview,parsed)
               }
             }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -259,9 +288,49 @@ private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVers
                     store.writer.cacheVerifiedArtefact(received.file,::currentBoundary)
                 }
             }
-            verifiedFile = received.file; versions = received.versions; generic = received.binding; html = received.html
+            verifiedFile = received.file; versions = received.versions; htmlPayload = received.payload; generic = received.binding; html = received.html
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { error = e.message; html = null }
+    }
+    var commentsAccessRevoked by remember(model.activeBoundaryId, file.id) { mutableStateOf(false) }
+    LaunchedEffect(runtime, w, file.id, commentsReload, reload, commentsSheetOpen) {
+        if (appMode) return@LaunchedEffect
+        suspend fun fetchAllComments() {
+            try {
+                val list = runtime.sync.genericNappletRead("comments:${file.id}") {
+                    store.reader.withArtefactAccess(w, file.id, ::currentBoundary) {
+                        api.allFileComments(w.id, w.appNpub, file.id)
+                    }
+                }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                check(currentBoundary())
+                commentList = list
+                commentsAccessRevoked = false
+                commentsError = null
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) {
+                if (!currentBoundary()) return
+                if (e is TowerError.Http && (e.status == 403 || e.status == 404)) {
+                    commentList = null
+                    pendingTarget = null
+                    focusedThreadId = null
+                    anchorMatches = emptyMap()
+                    commentMode = false
+                    commentDrafts = emptyMap()
+                    commentsAccessRevoked = true
+                    commentsError = "Comments are unavailable for this artefact."
+                } else {
+                    commentsError = e.message
+                }
+            }
+        }
+        fetchAllComments()
+        // Lifecycle-bounded periodic refresh so concurrent reviewers' comments appear without reopening, preserving local drafts.
+        while (currentBoundary()) {
+            kotlinx.coroutines.delay(15_000)
+            if (!currentBoundary()) break
+            fetchAllComments()
+        }
     }
     if(error != null && (verifiedFile.raw.obj("metadata")?.obj("napplet")?.get("version") == JsonPrimitive(2) || generic != null)) {
         Text("This napplet is invalid or unavailable. Close and reopen to verify it.", Modifier.padding(16.dp)); return
@@ -298,21 +367,124 @@ private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVers
     BackHandler(enabled = studio.otherstuff.ambulando.app.ui.shell.LocalEditorActive.current && source == null) { exit?.invoke() }
     var menu by remember(file.id) { mutableStateOf(false) }
     var exporting by remember(file.id) { mutableStateOf(false) }
+    val viewedVersionId = htmlPayload?.versionId?.takeIf { it.isNotBlank() } ?: selected ?: versions?.currentVersionId
+    val viewedVersionNumber: Int = htmlPayload?.versionNumber ?: versions?.versions?.firstOrNull { it.id == viewedVersionId }?.versionNumber?.toInt() ?: 1
+    val isViewingLatest = selected == null || (versions?.currentVersionId != null && selected == versions?.currentVersionId)
+    val availableVersions = remember(htmlPayload, versions) {
+        val fromPayload = htmlPayload?.versions.orEmpty()
+        if (fromPayload.isNotEmpty()) fromPayload.sortedByDescending { it.versionNumber }
+        else versions?.versions?.map {
+            HtmlArtefactVersion(it.id, it.versionNumber.toInt(), it.createdAt, null, it.contentType, it.sizeBytes)
+        }?.sortedByDescending { it.versionNumber }.orEmpty()
+    }
+    val visibleThreads = remember(commentList, viewedVersionId, isViewingLatest, showEarlierUnresolved) {
+        groupFileCommentThreads(
+            comments = commentList?.comments.orEmpty(),
+            viewedVersionId = viewedVersionId,
+            isViewingLatest = isViewingLatest,
+            includeEarlierUnresolved = showEarlierUnresolved,
+        )
+    }
+    val openThreadCount = remember(visibleThreads) { visibleThreads.count { !it.root.isResolved } }
+    val anchorSpecs = remember(visibleThreads) {
+        visibleThreads.mapNotNull { thread ->
+            val anchor = thread.root.anchor ?: return@mapNotNull null
+            if (anchor.kind != "html_element") return@mapNotNull null
+            studio.otherstuff.ambulando.app.web.HtmlAnchorTargetSpec(
+                threadId = thread.root.id,
+                anchor = anchor,
+                resolved = thread.root.isResolved,
+                replyCount = thread.replies.size,
+            )
+        }
+    }
+    val effectivePermissions = when {
+        commentsAccessRevoked -> FileCommentPermissions(canRead = false, canComment = false, canResolveAny = false, canEditSource = false)
+        else -> commentList?.permissions ?: FileCommentPermissions(
+            canRead = true,
+            canComment = verifiedFile.raw.bool("can_write") == true,
+            canResolveAny = verifiedFile.raw.bool("can_write") == true,
+            canEditSource = verifiedFile.raw.bool("can_write") == true,
+        )
+    }
+    fun shortAuthor(npub: String?): String {
+        val clean = npub?.trim().orEmpty()
+        if (clean.isEmpty()) return "Member"
+        return if (clean.length > 16) "${clean.take(10)}…${clean.takeLast(4)}" else clean
+    }
+
     if (exporting) ArtefactFileActions(model, verifiedFile) { exporting = false }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             IconButton(onClick = { exit?.invoke() }, modifier = Modifier.testTag("artefacts.back")) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
             Text(file.displayName, Modifier.weight(1f).testTag("artefacts.fileTitle"), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (selected != null || file.raw.bool("can_write") != true) Text("Read-only", style = MaterialTheme.typography.labelSmall, modifier = Modifier.testTag("artefacts.readOnly"))
+            // Compact version selector directly in control bar; browsing history never mutates current head.
+            Box {
+                TextButton(
+                    onClick = { versionMenu = true },
+                    enabled = !saving && availableVersions.isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("artefacts.versionPicker"),
+                ) {
+                    Text(
+                        text = if (isViewingLatest) "v$viewedVersionNumber" else "v$viewedVersionNumber · History",
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                    )
+                    Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Switch version", modifier = Modifier.size(18.dp))
+                }
+                DropdownMenu(versionMenu, { versionMenu = false }) {
+                    availableVersions.forEach { v ->
+                        val isHead = v.id == (htmlPayload?.currentVersionId ?: versions?.currentVersionId)
+                        DropdownMenuItem(
+                            text = { Text(if (isHead) "v${v.versionNumber} (Latest)" else "v${v.versionNumber}") },
+                            enabled = !saving,
+                            onClick = {
+                                selected = if (isHead) null else v.id
+                                commentMode = false
+                                pendingTarget = null
+                                versionMenu = false
+                            },
+                            modifier = Modifier.testTag("artefacts.version.v${v.versionNumber}"),
+                        )
+                    }
+                }
+            }
+            // Explicit Comment mode toggle for Android tap-to-target review.
+            IconButton(
+                onClick = { commentMode = !commentMode },
+                enabled = html != null && !saving && !commentsAccessRevoked,
+                modifier = Modifier.testTag("artefacts.commentMode"),
+            ) {
+                Icon(
+                    imageVector = if (commentMode) Icons.Outlined.Close else Icons.Outlined.AddComment,
+                    contentDescription = if (commentMode) "Exit comment mode" else "Comment mode",
+                    tint = if (commentMode) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                )
+            }
+            // Threads button with open count.
+            TextButton(
+                onClick = { commentsSheetOpen = true },
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier.testTag("artefacts.threads"),
+            ) {
+                Icon(Icons.Outlined.Forum, contentDescription = "Comments", modifier = Modifier.size(18.dp))
+                if (openThreadCount > 0) {
+                    Spacer(Modifier.width(3.dp))
+                    Text("$openThreadCount", style = MaterialTheme.typography.labelMedium)
+                }
+            }
             Box {
                 IconButton(onClick = { menu = true }, modifier = Modifier.testTag("artefacts.menu")) { Icon(Icons.Outlined.MoreHoriz, "Artefact options") }
                 DropdownMenu(menu, { menu = false }) {
                     ArtefactProvenance(file)
                     DropdownMenuItem(text = { Text("Download / share File") }, onClick = { menu = false; exporting = true }, modifier = Modifier.testTag("artefacts.export"))
                     RecordPin(model, PinRecord.ResourceType.FILE, file.id, inMenu = true)
-                    Text("Versions", Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("artefacts.history"), style = MaterialTheme.typography.labelMedium)
-                    DropdownMenuItem(text = { Text("Latest") }, enabled = !saving, onClick = { selected = null; menu = false })
-                    versions?.versions?.asReversed()?.forEach { v -> DropdownMenuItem(text = { Text("v${v.versionNumber}") }, enabled = !saving, onClick = { selected = v.id; menu = false }) }
+                    DropdownMenuItem(text = { Text("Refresh comments") }, onClick = { menu = false; commentsReload++ }, modifier = Modifier.testTag("artefacts.refreshComments"))
                     DropdownMenuItem(text = { Text(if (selected == null) "Edit source" else "Restore source") }, enabled = verifiedFile.raw.bool("can_write") == true && !saving, onClick = {
                         menu = false
                         model.act {
@@ -340,9 +512,223 @@ private data class HtmlArtefactRead(val file: FileRecord, val versions: FileVers
                 }
             }
         }
+        if (commentMode) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.fillMaxWidth().testTag("artefacts.commentModeBanner"),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Comment mode: tap any element in the HTML to attach feedback",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { commentMode = false }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                        Text("Done")
+                    }
+                }
+            }
+        }
         error?.let { Text(it, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error) }
-        html?.let { key(file.id, selected, it) { studio.otherstuff.ambulando.app.web.SandboxedHtmlScreen(it, file.displayName, showLabel = false) } }
+        html?.let { renderedHtml ->
+            val capturedVersionId = viewedVersionId
+            val capturedVersionNumber = viewedVersionNumber
+            key(file.id, capturedVersionId, renderedHtml) {
+                studio.otherstuff.ambulando.app.web.SandboxedHtmlScreen(
+                    html = renderedHtml,
+                    label = file.displayName,
+                    showLabel = false,
+                    commentMode = commentMode,
+                    anchorSpecs = anchorSpecs,
+                    focusThreadNonce = focusThreadNonce,
+                    onTargetSelected = { anchor ->
+                        // Fence against late callbacks from an older WebView after switching versions or boundary.
+                        if (!currentBoundary() || viewedVersionId != capturedVersionId) return@SandboxedHtmlScreen
+                        val enriched = anchor.copy(
+                            fileVersionId = capturedVersionId,
+                            fileVersionNumber = capturedVersionNumber,
+                            versionDigest = htmlPayload?.digest?.takeIf { it.length == 64 },
+                        )
+                        pendingTarget = enriched
+                        commentMode = false
+                        commentsSheetOpen = true
+                    },
+                    onAnchorMatches = { matches ->
+                        if (currentBoundary() && viewedVersionId == capturedVersionId) anchorMatches = matches
+                    },
+                    onBadgeTapped = { threadId ->
+                        if (currentBoundary() && viewedVersionId == capturedVersionId) {
+                            focusedThreadId = threadId
+                            commentsSheetOpen = true
+                        }
+                    },
+                )
+            }
+        }
         if (html == null && error == null) Text("Loading HTML…")
+    }
+    if (commentsSheetOpen && viewedVersionId != null) {
+        HtmlArtefactCommentsSheet(
+            viewedVersionId = viewedVersionId,
+            viewedVersionNumber = viewedVersionNumber,
+            isViewingLatest = isViewingLatest,
+            threads = visibleThreads,
+            permissions = effectivePermissions,
+            anchorMatches = anchorMatches,
+            pendingTarget = pendingTarget,
+            focusedThreadId = focusedThreadId,
+            showEarlierUnresolved = showEarlierUnresolved,
+            onToggleShowEarlier = { showEarlierUnresolved = it },
+            drafts = commentDrafts,
+            busy = commentsBusy,
+            error = commentsError,
+            authorLabel = ::shortAuthor,
+            onClearPendingTarget = { pendingTarget = null },
+            onDraftChange = { key, body, parentId, anchor ->
+                val existing = commentDrafts[key]
+                val next = FileCommentDraftStore.Draft(
+                    key = key,
+                    body = body,
+                    clientRequestId = existing?.clientRequestId ?: UUID.randomUUID().toString(),
+                    fileVersionId = viewedVersionId,
+                    parentCommentId = parentId,
+                    anchor = anchor,
+                )
+                commentDrafts = if (body.isBlank()) commentDrafts - key else commentDrafts + (key to next)
+                model.act {
+                    runCatching { commentDraftStore.save(next) }
+                }
+            },
+            onSubmitRoot = { anchor, body, reqId ->
+                val targetVersionId = anchor?.fileVersionId ?: viewedVersionId
+                val rootKey = (anchor ?: HtmlCommentAnchor(kind = "document")).draftKey(targetVersionId)
+                commentsBusy = true; commentsError = null
+                model.act {
+                    try {
+                        api.createFileComment(
+                            workspaceId = w.id,
+                            appNpub = w.appNpub,
+                            fileId = file.id,
+                            body = body,
+                            fileVersionId = targetVersionId,
+                            anchor = anchor,
+                            clientRequestId = reqId,
+                        )
+                        commentDraftStore.remove(rootKey)
+                        commentDrafts = commentDrafts - rootKey
+                        pendingTarget = null
+                        commentsReload++
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (currentBoundary()) commentsError = "Could not post comment (your draft is preserved): ${e.message ?: "offline"}"
+                    } finally {
+                        if (currentBoundary()) commentsBusy = false
+                    }
+                }
+            },
+            onSubmitReply = { parentId, body, reqId ->
+                val replyKey = "reply:$parentId"
+                commentsBusy = true; commentsError = null
+                model.act {
+                    try {
+                        api.createFileComment(
+                            workspaceId = w.id,
+                            appNpub = w.appNpub,
+                            fileId = file.id,
+                            body = body,
+                            parentCommentId = parentId,
+                            clientRequestId = reqId,
+                        )
+                        commentDraftStore.remove(replyKey)
+                        commentDrafts = commentDrafts - replyKey
+                        commentsReload++
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (currentBoundary()) commentsError = "Could not post reply (your draft is preserved): ${e.message ?: "offline"}"
+                    } finally {
+                        if (currentBoundary()) commentsBusy = false
+                    }
+                }
+            },
+            onToggleResolve = { comment ->
+                val nextStatus = if (comment.isResolved) "open" else "resolved"
+                commentsBusy = true; commentsError = null
+                model.act {
+                    try {
+                        api.updateFileComment(
+                            workspaceId = w.id,
+                            appNpub = w.appNpub,
+                            fileId = file.id,
+                            commentId = comment.id,
+                            rowVersion = comment.rowVersion,
+                            commentStatus = nextStatus,
+                        )
+                        commentsReload++
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (currentBoundary()) commentsError = e.message ?: "Could not update comment status; refresh and retry."
+                    } finally {
+                        if (currentBoundary()) commentsBusy = false
+                    }
+                }
+            },
+            onEditComment = { comment, body ->
+                commentsBusy = true; commentsError = null
+                model.act {
+                    try {
+                        api.updateFileComment(
+                            workspaceId = w.id,
+                            appNpub = w.appNpub,
+                            fileId = file.id,
+                            commentId = comment.id,
+                            rowVersion = comment.rowVersion,
+                            body = body,
+                        )
+                        commentsReload++
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (currentBoundary()) commentsError = e.message ?: "Could not edit comment; refresh and retry."
+                    } finally {
+                        if (currentBoundary()) commentsBusy = false
+                    }
+                }
+            },
+            onDeleteComment = { comment ->
+                commentsBusy = true; commentsError = null
+                model.act {
+                    try {
+                        api.deleteFileComment(
+                            workspaceId = w.id,
+                            appNpub = w.appNpub,
+                            fileId = file.id,
+                            commentId = comment.id,
+                            rowVersion = comment.rowVersion,
+                        )
+                        commentsReload++
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (currentBoundary()) commentsError = e.message ?: "Could not delete comment."
+                    } finally {
+                        if (currentBoundary()) commentsBusy = false
+                    }
+                }
+            },
+            onJumpToVersion = { versionId ->
+                val headId = htmlPayload?.currentVersionId ?: versions?.currentVersionId
+                selected = if (versionId == headId) null else versionId
+                commentsSheetOpen = false
+            },
+            onFocusTarget = { threadId ->
+                val nextNonce = (focusThreadNonce?.second ?: 0) + 1
+                focusThreadNonce = threadId to nextNonce
+            },
+            onRefresh = { commentsReload++ },
+            onDismiss = { commentsSheetOpen = false },
+        )
     }
     source?.let { text -> AlertDialog(onDismissRequest = { if (!saving) source = null }, title = { Text("Edit HTML source") }, text = {
         Column { OutlinedTextField(text, { preserveSource(it) }, enabled = !saving && recovery?.accepted != true, modifier = Modifier.heightIn(max = 400.dp).testTag("artefacts.source")); error?.let { Text(it) } }

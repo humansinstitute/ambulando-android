@@ -41,7 +41,7 @@ once Send is running, wait for its outcome. Cancel never deletes an uploaded Tow
 ## Android requirements and validation
 
 The manifest declares `RECORD_AUDIO`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `POST_NOTIFICATIONS`
-and `WAKE_LOCK`; the non-exported service declares `foregroundServiceType="microphone"`. Runtime microphone permission
+and `WAKE_LOCK`; the non-exported service declares `foregroundServiceType="microphone|shortService"`. Runtime microphone permission
 and a visible/resumed activity are required before starting. These follow the official Android guidance on
 [microphone foreground services](https://developer.android.com/develop/background-work/services/fgs/service-types#microphone),
 [background start and while-in-use restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)
@@ -115,3 +115,37 @@ Microphone choice is locked during recording, with an explanation to stop/review
 updates, rotation, callback cleanup, retained audio and a deliberately absent device ID falling back to an observed
 route. The absent-ID test is a simulation, not a physical unplug test. Physical USB/Bluetooth selection, unplugging,
 speech/silence response, privacy switching and live authenticated upload/transcription require intended-device review.
+
+### Foreground startup and failure handling
+
+Service creation immediately posts **Preparing voice recording**, before reading the model or draft and before any
+cancelled/stale/Stop path can exit. On Android 14+ this uses the bounded `shortService` type, which opens no microphone
+and needs no microphone runtime grant. A valid current draft with microphone permission and enabled recording
+notifications changes to the `microphone` type before creating the single MediaRecorder. Older Android versions
+promote immediately using their supported foreground type. Short-service timeout stops and releases the service.
+
+This order matters even for immediate failure: Android can crash an app that calls `stopSelf()` before fulfilling a
+`startForegroundService()` request. Cancellation, disabled notifications and denied permission must not acquire a
+microphone merely to settle that request. The pre-promotion notification setting is retained because Android can
+raise an app-created channel's importance while posting a foreground notification. The existing blocked-channel
+error still prevents recording. Metering, selected-versus-actual routing and finalized audio handling are unchanged.
+
+`VoiceServiceStartupTest` exercises production intent/service startup on host API 29 and 35, including promotion
+before capture, duplicate starts, cancellation, stale/Stop requests, retained bytes, revoked permission, blocked
+notifications and timeout. `VoiceServiceStartupDeviceTest` exercises the real Android service and MediaRecorder in
+the production environment of the **isolated** debug package; it never sends its synthetic destination or uses a real
+account. Its disabled-channel test runs last. Run on an existing dedicated test device with a fresh disposable
+`studio.otherstuff.ambulando.android.watchtest` installation and microphone permission initially absent:
+
+```sh
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -PisolatedWatchTest=true
+# Install those two APKs into the disposable test package, then:
+adb shell am instrument -w -r \
+  -e class studio.otherstuff.ambulando.app.integration.VoiceServiceStartupDeviceTest \
+  studio.otherstuff.ambulando.android.watchtest.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The suite checks a genuine denied-runtime-permission service launch, cancel-before-delivery, first capture and
+repeated starts, actual output-open failure, stale/Stop requests and disabled notifications. Reset only that disposable
+fixture package before another full run or the separate sample-data UI suite. These checks establish behavior on the
+Android version actually used; they do not replace physical-phone, microphone hardware or live-upload acceptance.

@@ -45,35 +45,5 @@ suspend fun TowerAPI.artefactFile(workspaceId: String, appNpub: String, fileId: 
     return file
 }
 
-suspend fun TowerAPI.artefactHTML(workspaceId: String, appNpub: String, fileId: String, versionId: String? = null): String {
-    val query = versionId?.let { listOf("version_id" to TowerAPI.uuid(it)) } ?: emptyList()
-    val o = obj(client.request(path = TowerAPI.base(workspaceId) + "/files/" + TowerAPI.uuid(fileId) + "/html", query = query, appNpub = appNpub), "HTML artefact")
-    if (lowerUUID(o.string("workspace_id")) != workspaceId || lowerUUID(o.obj("source")?.string("id")) != fileId.lowercase()) throw TowerError.Malformed("HTML artefact")
-    val content = o.obj("content") ?: throw TowerError.Malformed("HTML artefact")
-    val html = content.string("html") ?: throw TowerError.Malformed("HTML artefact")
-    val resolved = buildJsonObject {
-        var total = 0L
-        (content["assets"] as? JsonArray)?.take(32)?.forEach { entry ->
-            val asset = entry as? JsonObject ?: return@forEach
-            if (asset.string("status") != "ready") return@forEach
-            val mime = asset.string("content_type") ?: return@forEach
-            if (mime !in setOf("image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/svg+xml")) return@forEach
-            val name = asset.string("name") ?: return@forEach
-            val id = lowerUUID(asset.string("file_id")) ?: return@forEach
-            val version = lowerUUID(asset.string("version_id")) ?: return@forEach
-            val size = flexibleLong(asset["size_bytes"]) ?: return@forEach
-            val sha = asset.string("sha256") ?: return@forEach
-            if (size !in 1..(8 * 1024 * 1024) || total + size > 32 * 1024 * 1024) return@forEach
-            try {
-                val bytes = client.request(path = TowerAPI.base(workspaceId) + "/files/$id/versions/$version/object", appNpub = appNpub)
-                if (bytes.size.toLong() != size || Sha256Hex.of(bytes) != sha) return@forEach
-                total += size
-                put(name, "data:$mime;base64," + Base64.getEncoder().encodeToString(bytes))
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { /* A revoked or unavailable asset contributes no bytes. */ }
-        }
-    }
-    if (resolved.isEmpty()) return html
-    val json = resolved.toString().replace("<", "\\u003c")
-    return html + "<script>(()=>{const assets=$json;document.querySelectorAll('img[data-asset]').forEach(img=>{const src=assets[img.getAttribute('data-asset')];if(src)img.src=src;else img.removeAttribute('src')})})();</script>"
-}
+suspend fun TowerAPI.artefactHTML(workspaceId: String, appNpub: String, fileId: String, versionId: String? = null): String =
+    artefactHTMLPayload(workspaceId, appNpub, fileId, versionId).html

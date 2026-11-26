@@ -21,9 +21,11 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 79
-        versionName = "0.9.51"
+        versionCode = 82
+        versionName = "0.9.54"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
+        // Exact HOSTING_STRIPE_RETURN_URLS member for invited-onboarding card checkout. Empty keeps card checkout visibly switched off.
+        buildConfigField("String", "ONBOARDING_RETURN_URL", "\"${(project.findProperty("ambulandoOnboardingReturnUrl") as String?).orEmpty()}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Zapstore distributes arm64-v8a only; the test emulator is arm64 as well.
         ndk { abiFilters += "arm64-v8a" }
@@ -63,6 +65,9 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("test").kotlin.directories.add("src/testFamily/kotlin")
+    // The in-process NStack double is shared with the core suite so UI tests exercise the same strict contract.
+    sourceSets.getByName("test").kotlin.directories.add("../core/src/test/kotlin/studio/otherstuff/ambulando/core/onboarding/fixtures")
+    sourceSets.getByName("androidTest").kotlin.directories.add("../core/src/test/kotlin/studio/otherstuff/ambulando/core/onboarding/fixtures")
     sourceSets.getByName("androidTest").assets.directories.add("../core/src/test/resources")
     testOptions { unitTests.isIncludeAndroidResources = true }
     packaging { resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/versions/**") }

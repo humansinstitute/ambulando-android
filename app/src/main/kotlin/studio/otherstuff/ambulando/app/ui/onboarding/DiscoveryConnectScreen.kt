@@ -19,7 +19,9 @@ fun DiscoveryConnectScreen(model: AppModel, done: () -> Unit = {}) {
     var manual by remember { mutableStateOf(false) }
     var connecting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var invitation by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    if (invitation) { InvitedOnboardingFlow(model, null, onConnected = { invitation = false; done() }, onClose = { invitation = false }); return }
     DiscoveryOnboardingFrame(manual = manual && !model.environment.isSample, onBack = { manual = false }) {
         if (manual || model.environment.isSample) {
             ConnectScreen(model.identityState?.npub, model.notice, { origin -> runCatching {
@@ -46,6 +48,7 @@ fun DiscoveryConnectScreen(model: AppModel, done: () -> Unit = {}) {
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 TextButton(enabled = !connecting && !model.towerDiscoveryBusy, onClick = model::discoverTowers, modifier = Modifier.testTag("discovery.retry")) { Text("Discover Towers again") }
                 TextButton(enabled = !connecting, onClick = { manual = true }, modifier = Modifier.testTag("discovery.manual")) { Text("Enter a Tower address") }
+                if (!studio.otherstuff.ambulando.app.BuildConfig.GRANDPARENT_CHAT) TextButton(enabled = !connecting, onClick = { invitation = true }, modifier = Modifier.testTag("discovery.invitation")) { Text("I have an invitation to a hosted workspace") }
                 Text("Discovery never enables a workspace automatically. Choose which workspaces to enable after selecting a Tower.", style = MaterialTheme.typography.bodySmall)
             }
         }

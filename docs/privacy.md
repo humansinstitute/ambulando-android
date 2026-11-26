@@ -16,6 +16,10 @@ unrecoverable. Creation refuses an existing vault, including a damaged one, and 
 Trusted-session material and optional background-read credentials are separately sealed. No raw key is placed in
 WebViews, shared storage, crash reports or application logs.
 
+Hosted-workspace setup keeps a small draft per Tower and identity in no-backup app storage: your choices, retry keys and, until the Tower accepts it, the invitation code (a bearer secret). Removing the identity deletes these drafts. The code is sent only in the signed request body to the Tower you chose; card payment happens on Stripe's own page in your browser.
+
+If you create a new identity here and set up a hosted workspace, the app uploads one thing to your Tower: your key encrypted on this phone with a backup password you choose (an `ncryptsec`), stored under a username that cannot be changed. The password, PIN and key are never sent, and nobody can reset the password. Anyone who learns the username can download the locked copy and try passwords offline, so choose a long, unique phrase. A copy of the same locked text stays in app storage and, if you choose, in a file you save. Adding credit later keeps only a retry key, amount and order id until NStack reports the payment.
+
 Messages, documents, files, drafts and queued writes are stored in private app storage. The SQLite database is not
 separately encrypted by this app; it relies on Android's sandbox and device storage protection. Downloaded files and
 avatars use app-private cache storage. Cloud backup and device transfer are disabled. An explicit Android share action

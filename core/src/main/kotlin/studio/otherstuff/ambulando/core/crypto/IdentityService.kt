@@ -191,6 +191,34 @@ class IdentityService(
         }
     }
 
+    /**
+     * Imports a key recovered from an encrypted hosted backup. Same refusals as [importIdentity]: never replaces an existing
+     * identity. The caller keeps ownership of [secret] and clears it.
+     */
+    suspend fun importRecovered(secret: ByteArray, pin: String): IdentityState = locked {
+        if (vault.exists) throw IdentityError.Exists
+        vault.create(secret, pin)
+        storeSession()
+        stateLocked()
+    }
+
+    /**
+     * Encrypts the unlocked identity's key as an `ncryptsec` under [password] and proves the result before returning it: it must
+     * decrypt again, with that password, to exactly this identity's public key. The plaintext key never leaves this method.
+     */
+    suspend fun encryptedBackup(password: CharSequence, logN: Int, expectedNpub: String): String = locked {
+        requireSignerLocked(expectedNpub)
+        val secret = vault.secretCopy()
+        try {
+            val text = Nip49.encrypt(secret, password, logN)
+            val back = Nip49.decrypt(text, password, logN)
+            try {
+                if (!java.security.MessageDigest.isEqual(back.secret, secret)) throw Nip49Error.DecryptionFailed
+            } finally { back.secret.fill(0) }
+            text
+        } finally { secret.fill(0) }
+    }
+
     suspend fun unlock(pin: String): IdentityState = locked {
         vault.unlock(pin)
         storeSession()

@@ -69,6 +69,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     val family by lazy { FamilyCoordinator(this) }
     val browser by lazy { studio.otherstuff.ambulando.app.browser.BrowserModel(androidContext) }
     val identity = dependencies?.identity ?: environment.identityService()
+    /** Invited onboarding (existing signer only). Not available in sample data or the family build. */
+    val onboarding by lazy { OnboardingHost(identity, transport, File(environment.baseDir, "onboarding")) }
     private val privateIndexRelay = dependencies?.indexRelay ?: studio.otherstuff.ambulando.core.discovery.OkHttpPrivateIndexRelay()
     var discoveredTowers by mutableStateOf(emptyList<studio.otherstuff.ambulando.core.discovery.DiscoveredTower>()); private set
     var towerDiscoveryBusy by mutableStateOf(false); private set
@@ -532,11 +534,24 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     fun act(block: suspend () -> Unit) = viewModelScope.launch {
         try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = ConnectionFailure.userMessage(e) }
     }
-    suspend fun import(nsec: String, pin: String) { identityState = identity.importIdentity(nsec, pin); restore() }
+    suspend fun import(nsec: String, pin: String) { onboarding.abandonNewIdentity(); identityState = identity.importIdentity(nsec, pin); restore() }
     suspend fun createIdentity(pin: String) {
         // A missing vault must never let a new identity take over retained Tower accounts.
         if (catalog.reader.connections().isNotEmpty()) throw IdentityError.AccountMismatch
-        identityState = identity.createIdentity(pin)
+        // The "generated here" mark is durable before the key exists, so a crash cannot leave a new key that looks imported.
+        onboarding.beginNewIdentity()
+        val created = try { identity.createIdentity(pin) } catch (e: Exception) { onboarding.abandonNewIdentity(); throw e }
+        identityState = created
+        onboarding.completeNewIdentity(created)
+        restore()
+    }
+    /** Restores an identity from a hosted ncryptsec backup (username + password); never replaces an existing identity. */
+    suspend fun recoverIdentity(address: String, username: String, password: String, pin: String) {
+        if (catalog.reader.connections().isNotEmpty()) throw IdentityError.AccountMismatch
+        val origin = studio.otherstuff.ambulando.core.transport.TowerOrigin(address)
+        val state = onboarding.recovery().recover(origin, username, password, pin)
+        onboarding.abandonNewIdentity()
+        identityState = state
         restore()
     }
     suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); resumeEnabled(force = true); refresh(); androidPush?.launch { reconcile(this@AppModel) }; resolvePushTap() }
@@ -627,6 +642,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         catalog.writer.setState(WorkspacePreferences.STATE_KEY, null); catalog.writer.setState(WorkspaceCatalog.SELECTED_KEY, null)
         if (!environment.isSample) androidPush?.removeIdentity()
         pendingPushTap = null; pushDestination = null
+        withContext(Dispatchers.IO) { onboarding.wipe() }
         identityState = identity.remove()
         stopAllEntries(); entries = emptyList(); connections = emptyList(); activeBoundaryId = null; preferences = WorkspacePreferences()
         catalogObservation?.cancel(); catalogObservation = null

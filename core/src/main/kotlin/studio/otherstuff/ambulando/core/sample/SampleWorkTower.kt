@@ -675,7 +675,27 @@ class SampleWorkTower(
                 val obj = objectId?.let { state.row("objects", it) } ?: return errorReply(404, "file_not_found")
                 if (obj["content_type"] != "text/html") return errorReply(404, "file_not_found")
                 val html = obj["bytes"].asString()?.let { String(Base64.getDecoder().decode(it), Charsets.UTF_8) } ?: ""
-                200 to mapOf("workspace_id" to workspaceId, "title" to row["display_name"], "source" to mapOf("type" to "html", "id" to p[1]), "content" to mapOf("html" to html, "assets" to emptyList<Any>()), "versions" to versions)
+                val headVersion = versions.lastOrNull()
+                val versionId = version?.get("id").asString() ?: row["current_version_id"].asString() ?: p[1]
+                val versionNumber = (version?.get("version_number") as? Number)?.toInt() ?: 1
+                val currentVersionId = row["current_version_id"].asString() ?: headVersion?.get("id").asString() ?: versionId
+                val currentVersionNumber = (headVersion?.get("version_number") as? Number)?.toInt() ?: versionNumber
+                200 to mapOf(
+                    "workspace_id" to workspaceId,
+                    "title" to row["display_name"],
+                    "source" to mapOf("type" to "html", "id" to p[1]),
+                    "content" to mapOf(
+                        "html" to html,
+                        "file_id" to p[1],
+                        "version_id" to versionId,
+                        "version_number" to versionNumber,
+                        "current_version_id" to currentVersionId,
+                        "current_version_number" to currentVersionNumber,
+                        "digest" to (obj["sha256_hex"].asString() ?: ""),
+                        "assets" to emptyList<Any>(),
+                    ),
+                    "versions" to versions,
+                )
             }
             method == "GET" && n == 3 && head == "files" && p[2] == "versions" && state.row("files", p[1]) != null -> {
                 val rows = fileVersionRows(p[1]).asReversed().take(url.query("limit")?.toIntOrNull()?.coerceIn(1, 200) ?: 50)

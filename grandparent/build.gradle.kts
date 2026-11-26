@@ -17,6 +17,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "true")
+        // Exact HOSTING_STRIPE_RETURN_URLS member for invited-onboarding card checkout. Empty keeps card checkout visibly switched off.
+        buildConfigField("String", "ONBOARDING_RETURN_URL", "\"${(project.findProperty("ambulandoOnboardingReturnUrl") as String?).orEmpty()}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Uses the same native core as Ambulando.
         ndk { abiFilters += "arm64-v8a" }

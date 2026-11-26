@@ -22,7 +22,7 @@ class IdentityCreationUiTest {
             calls++; finish.await()
         }) } }
         compose.onNodeWithTag("identity.mode").performClick()
-        compose.onNodeWithTag("create.recovery").assertTextContains("no key export or recovery", substring = true)
+        compose.onNodeWithTag("create.recovery").assertTextContains("no password reset", substring = true)
         compose.onNodeWithTag("import.nsec").assertDoesNotExist()
         compose.onNodeWithTag("import.submit").assertIsNotEnabled()
         compose.onNodeWithTag("import.pin").performTextInput("246810")

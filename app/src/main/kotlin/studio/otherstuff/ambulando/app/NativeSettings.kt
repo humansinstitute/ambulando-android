@@ -34,6 +34,10 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
     var confirm by remember { mutableStateOf(false) }
     var remove by remember { mutableStateOf(false) }
     var profiles by remember { mutableStateOf(true) }
+    var hosted by remember { mutableStateOf(false) }
+    var topup by remember { mutableStateOf(false) }
+    if (topup) { studio.otherstuff.ambulando.app.ui.onboarding.TopupFlow(model, onClose = { topup = false }); return }
+    if (hosted) { studio.otherstuff.ambulando.app.ui.onboarding.InvitedOnboardingFlow(model, model.connection?.origin, onConnected = { hosted = false }, onClose = { hosted = false }); return }
     LaunchedEffect(model) { background = model.identity.backgroundReadEnabled(); profiles = studio.otherstuff.ambulando.core.profiles.ProfileSync.isEnabled(model.catalog) }
     val c = model.connection
     val w = model.workspace
@@ -75,6 +79,10 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
                 FormDivider(); SettingsValue("Status", studio.otherstuff.ambulando.core.sync.connectionStatus(failing, syncStatus), tag = "settings.status")
                 FormDivider(); SettingsAction("Retry", tag = "settings.retry") { model.retryConnection() }
                 FormDivider(); SettingsAction("Disconnect and remove downloaded history", destructive = true, tag = "settings.disconnect") { confirm = true }
+            }
+            if (!BuildConfig.GRANDPARENT_CHAT) FormGroup("Hosted workspace", "Set up a workspace on an NStack with an invitation, using the identity on this device. Payment is confirmed by the NStack itself, never by returning to the app.") {
+                SettingsAction("Set up with an invitation", tag = "settings.hosted") { hosted = true }
+                FormDivider(); SettingsAction("Add credit to your hosted account", tag = "settings.topup") { topup = true }
             }
             FormGroup("Ambulando Voice") { Column(Modifier.padding(16.dp)) { studio.otherstuff.ambulando.app.garmin.GarminSetup(model) } }
             FormGroup("Diagnostics", "Diagnostics stay on this device until you choose to share. The newest 300 entries are kept in private app storage until replaced or cleared. No keys, tokens, message text or user identifiers are included.") {

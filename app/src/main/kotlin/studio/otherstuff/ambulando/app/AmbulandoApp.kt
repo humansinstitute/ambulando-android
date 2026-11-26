@@ -31,7 +31,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
     model.editorDoc?.let { id -> DocumentEditor(model, id) { model.editorDoc = null }; return }
     when (val identity = model.identityState) {
         null -> CircularProgressIndicator()
-        IdentityState.None -> ImportIdentityScreen(model.notice, model::import, model::createIdentity)
+        IdentityState.None -> ImportIdentityScreen(model.notice, model::import, model::createIdentity, model::recoverIdentity)
         IdentityState.Unavailable -> IdentityUnavailableScreen(false) { model.identity.refreshAvailability() }
         is IdentityState.Locked -> LockScreen(identity.npub, model.notice, model::unlock)
         is IdentityState.Unlocked -> if (model.connections.isEmpty()) {
