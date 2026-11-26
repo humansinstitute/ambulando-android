@@ -282,14 +282,14 @@ internal class ChunkPageEdit(private val doc: ChunkedText, private val page: Int
 ) {
     val compact = LocalConfiguration.current.screenWidthDp < 600
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
             Surface(
                 modifier = (if (compact) Modifier.fillMaxSize() else Modifier.widthIn(max = 800.dp).fillMaxWidth(0.92f).fillMaxHeight(0.9f))
                     .testTag(if (compact) "text.sheet" else "text.modal"),
                 shape = if (compact) RoundedCornerShape(0.dp) else RoundedCornerShape(16.dp),
                 tonalElevation = 6.dp,
             ) {
-                Column(Modifier.padding(16.dp).imePadding().systemBarsPadding().fillMaxSize()) {
+                Column(Modifier.padding(16.dp).fillMaxSize()) {
                     if (onFilenameChange != null) OutlinedTextField(filename, onFilenameChange, label = { Text("File name") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("text.filename"))
                     else Text(filename, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("text.filename"))
                     Text(

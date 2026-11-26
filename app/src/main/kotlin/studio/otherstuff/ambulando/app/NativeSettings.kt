@@ -43,7 +43,7 @@ import studio.otherstuff.ambulando.core.sync.setNotificationInbox
     val w = model.workspace
     val people by remember(c?.id, w?.id) { model.store.liveQuery({ it.workspaceId == w?.id || it.table == StoreTable.PROFILES }) { if (c != null && w != null) model.store.reader.people(c.id, w.id) else null } }.collectAsState(null)
     val npub = model.identityState?.npub
-    Column(Modifier.fillMaxSize().background(amb.canvas).statusBarsPadding().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(amb.canvas).safeDrawingPadding()) {
         Row(Modifier.fillMaxWidth().background(amb.background).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Settings", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.weight(1f))
             TextButton(onClick = done, modifier = Modifier.testTag("settings.done")) { Text("Done", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) }

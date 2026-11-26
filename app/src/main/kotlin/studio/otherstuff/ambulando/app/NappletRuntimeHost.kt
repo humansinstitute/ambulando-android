@@ -129,7 +129,7 @@ import studio.otherstuff.ambulando.core.surfaces.*
         },onStopped={ stop() }).fold(onSuccess={page=it},onFailure={stop()})
         }
     }
-    Column(Modifier.fillMaxSize().imePadding()) {
+    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Row {
             TextButton(enabled=!busy,onClick={act(onClose)},modifier=Modifier.testTag("runtime.close")) { Text("Close") }
             Text(installation?.manifest?.get("title")?.jsonPrimitive?.content ?: id,Modifier.weight(1f).padding(12.dp))

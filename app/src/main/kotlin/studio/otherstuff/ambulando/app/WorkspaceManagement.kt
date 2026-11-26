@@ -24,6 +24,13 @@ internal data class ManagementTarget(val route: AdminRoute, val boundaryId: Stri
  * reports into another.
  */
 @Composable internal fun WorkspaceManagement(model: AppModel, target: ManagementTarget = ManagementTarget(AdminRoute.Home), done: () -> Unit) {
+    // This route replaces the shell. Own and consume safe/IME insets once for every management page.
+    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+        WorkspaceManagementContent(model, target, done)
+    }
+}
+
+@Composable private fun WorkspaceManagementContent(model: AppModel, target: ManagementTarget, done: () -> Unit) {
     val initial = target.route
     // Opened for a named workspace that is still being brought to the front: nothing is bound until it is the one in front.
     if (target.boundaryId != null && model.activeBoundaryId != target.boundaryId) {

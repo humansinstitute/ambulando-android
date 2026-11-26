@@ -1,3 +1,8 @@
+## 0.9.55 (83)
+
+- Keep workspace settings, scope/channel configuration and full-screen form controls clear of Android status bars, display cutouts, navigation bars and the keyboard.
+- Apply each safe-area inset once, including nested configuration pages and sheets.
+
 ## 0.9.54 (82)
 
 - Fix voice recording startup crashes when recording is cancelled before service delivery or its notification channel is disabled.
