@@ -1,3 +1,7 @@
+## 0.9.68 (96)
+
+- Open existing Goals during workspace preparation: read independently of write readiness, restore verified older downloaded content, and hydrate automatically when reads resume.
+
 ## 0.9.67 (95)
 
 - Home’s Daily Briefing reads your private saved morning overview: progress, changes, attention and suggested focus, with the author, Perth publication time and useful record links.

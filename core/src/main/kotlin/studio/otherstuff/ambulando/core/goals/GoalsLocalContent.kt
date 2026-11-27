@@ -5,13 +5,14 @@ import kotlinx.coroutines.CancellationException
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.transport.*
 import studio.otherstuff.ambulando.core.surfaces.*
+import studio.otherstuff.ambulando.core.sync.FileCache
 
 /** Content in the existing workspace partition, never a grant for server requests or writes. */
-class GoalsLocalContent(private val store: LocalStore, private val workspace: String, private val viewer: String, private val binding: String = "") {
+class GoalsLocalContent(private val store: LocalStore, private val workspace: String, private val viewer: String, private val binding: String = "", private val fileCache: FileCache? = null) {
     private val key = "goals.content.v1:$viewer:$workspace:$binding"
     var lastLoadIssue: String? = null; private set
     suspend fun load(): GoalsController.State? = runCatching {
-        val raw = store.reader.state(key) ?: return null
+        val raw = store.reader.state(key) ?: return canonical()
         val o = Json.parseToJsonElement(raw).jsonObject
         require(o.string("viewer") == viewer && o.string("workspace") == workspace) { "snapshot identity" }
         val channel = ChannelRecord.parse(o.getValue("channel").jsonObject)
@@ -35,6 +36,32 @@ class GoalsLocalContent(private val store: LocalStore, private val workspace: St
         }, ownerOnly))
     }.onFailure { if(it is CancellationException) throw it; lastLoadIssue=it.message ?: it.javaClass.simpleName }.getOrNull()
 
+    /** Pre-snapshot installs already have canonical rows and verified downloaded bytes. Read them in this partition;
+     * do not promote channel metadata into a verified write location or persist an incomplete list as a snapshot. */
+    private suspend fun canonical(): GoalsController.State? {
+        val cache = fileCache ?: return null
+        val channels = store.reader.channels(workspace).filter { channel ->
+            !channel.accessRemoved && channel.raw.string("record_state") != "deleted" && channel.raw.string("archived_at") == null &&
+                (GoalsSpace.isOwnedBy(channel, viewer) || channel.kind == "dm" && channel.raw["participant_npubs"] == JsonArray(listOf(JsonPrimitive(viewer))))
+        }
+        val goals = mutableListOf<GoalDocument>()
+        for (channel in channels) {
+            if (store.reader.isChannelAccessRemoved(workspace, channel.id)) continue
+            for (file in store.reader.files(workspace, channel.id)) {
+                if (!GoalFiles.isGoal(file) || file.accessRemoved || file.sha256 == null || (file.sizeBytes ?: 0) > Goal.MAX_BYTES) continue
+                val version = lowerUUID(file.raw.string("current_version_id") ?: file.raw.obj("current_version")?.string("id")) ?: continue
+                val document = runCatching {
+                    val bytes = cache.cached(file)?.takeIf { it.length() <= Goal.MAX_BYTES }?.readBytes() ?: return@runCatching null
+                    require(studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(bytes) == file.sha256)
+                    GoalDocument(file, version, Goal.parse(bytes))
+                }.getOrNull() ?: continue
+                // Access can be withdrawn while disk bytes are being read.
+                val current = store.reader.file(workspace, file.id)
+                if (!store.reader.isChannelAccessRemoved(workspace, channel.id) && current?.accessRemoved == false && current.storageObjectId == file.storageObjectId && current.sha256 == file.sha256 && current.raw.string("current_version_id") == file.raw.string("current_version_id") && current.raw.obj("current_version")?.string("id") == file.raw.obj("current_version")?.string("id") && GoalFiles.isGoal(current)) goals += document
+            }
+        }
+        return goals.takeIf { it.isNotEmpty() }?.let { GoalsController.State(loaded = true, goals = it.sortedWith(GoalFocus.comparator)) }
+    }
     suspend fun save(state: GoalsController.State) {
         val space = state.space as? GoalsSpaceState.Ready
         if (space == null) { store.writer.setState(key, null); return }
@@ -54,12 +81,15 @@ class GoalsLocalContent(private val store: LocalStore, private val workspace: St
     suspend fun token(): String? = store.reader.state(key)
     suspend fun remove(file: String) = store.writer.markAccessRemoved(workspace,AccessTarget.File(file))
     suspend fun visible(state: GoalsController.State): GoalsController.State {
-        val space=state.space as? GoalsSpaceState.Ready ?: return state
-        val known=store.reader.channel(workspace,space.channel.id)
-        if(store.reader.isChannelAccessRemoved(workspace,space.channel.id) || known?.raw?.string("record_state")=="deleted" || known?.raw?.string("archived_at")!=null) return GoalsController.State()
+        val space=state.space as? GoalsSpaceState.Ready
+        if (space != null) {
+            val known=store.reader.channel(workspace,space.channel.id)
+            if(store.reader.isChannelAccessRemoved(workspace,space.channel.id) || known?.raw?.string("record_state")=="deleted" || known?.raw?.string("archived_at")!=null) return GoalsController.State()
+        }
         return state.copy(goals=state.goals.filter { doc ->
             val file=store.reader.file(workspace,doc.id)
-            file?.accessRemoved!=true && file?.archived!=true && file?.raw?.string("record_state")!="deleted"
+            val channel=store.reader.channel(workspace,doc.file.channelId)
+            channel?.raw?.string("record_state")!="deleted" && channel?.raw?.string("archived_at")==null && !store.reader.isChannelAccessRemoved(workspace,doc.file.channelId) && file?.accessRemoved!=true && file?.archived!=true && file?.raw?.string("record_state")!="deleted"
         })
     }
     suspend fun clear() = store.writer.setState(key, null)

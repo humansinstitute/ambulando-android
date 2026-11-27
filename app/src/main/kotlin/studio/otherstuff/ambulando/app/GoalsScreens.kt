@@ -131,7 +131,8 @@ import java.util.UUID
 @Composable internal fun GoalsRefresh(model: AppModel, goals: GoalsController) {
     val w = model.workspace ?: return
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(goals) { goals.refresh() }
+    val runtime = model.active ?: return
+    LaunchedEffect(goals, runtime) { goals.followReadiness(runtime.activity) }
     DisposableEffect(lifecycle, goals) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) model.act { goals.refresh() } }
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer) }
