@@ -109,7 +109,7 @@ import java.util.UUID
         } }
         Row(verticalAlignment = androidx.compose.ui.Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             studio.otherstuff.ambulando.app.ui.work.MentionTextEntry(draft.text, { draft.text = it }, draft.mentions, { draft.mentions = it },
-                { query -> model.store.reader.mentionCandidates(w.id, query, viewerNpub = c.signerNpub) }, if (replyTo != null) "Reply" else "Comment on this document", Modifier.weight(1f).padding(vertical = 8.dp), Modifier.fillMaxWidth().testTag("doc.comment.field"), enabled = enabled)
+                { query -> model.mentionCandidates(query) }, if (replyTo != null) "Reply" else "Comment on this document", Modifier.weight(1f).padding(vertical = 8.dp), Modifier.fillMaxWidth().testTag("doc.comment.field"), enabled = enabled, lookupBoundary = model.activeBoundaryId to docId)
             IconButton(enabled = enabled && !draft.isBlank, modifier = Modifier.testTag("doc.comment.send"), onClick = {
                 val encoded = draft.encoded()
                 if (model.submit(WriteIntent(WriteKind.DOC_COMMENT, docId, buildJsonObject {

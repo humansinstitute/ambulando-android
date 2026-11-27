@@ -275,7 +275,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 } catch (e: studio.otherstuff.ambulando.core.surfaces.TaskTreeError.Unavailable) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.RESTRICTED
                 } catch (e: Exception) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.OFFLINE }
             }
-            override suspend fun mentionCandidates(query: String) = if (w == null) emptyList() else model.store.reader.mentionCandidates(w.id, query, viewerNpub = c.signerNpub)
+            override suspend fun mentionCandidates(query: String) = if (w == null) emptyList() else model.mentionCandidates(query)
             override fun retryWrite(item: WriteItem) { model.act { model.writes.retry(item.id, c) } }
             override fun applyMine(item: WriteItem) { model.act { model.writes.retry(item.id, c, true) } }
             override fun discardWrite(item: WriteItem) { model.act { model.store.writer.discardWrite(item.id) } }

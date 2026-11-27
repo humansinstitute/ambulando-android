@@ -8,7 +8,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -29,23 +28,23 @@ import studio.otherstuff.ambulando.core.store.MentionCandidate
 /**
  * A comment text field with the chat composer's `@` lookahead (task and document comments, as on iPhone and Mac). Only
  * the `@query` at the caret is completed; the picked mention is drawn as a pill and encoded to its canonical token by
- * [MentionCodec.encode] when the comment is sent. [lookup] answers from the local workspace directory, never the network.
+ * [MentionCodec.encode] when the comment is sent. [lookup] combines the local directory with authorized personal goals.
  */
 @Composable
 fun MentionTextEntry(
     text: TextFieldValue, onValue: (TextFieldValue) -> Unit, mentions: List<Mention>, onMentions: (List<Mention>) -> Unit,
     lookup: suspend (String) -> List<MentionCandidate>, placeholder: String, modifier: Modifier = Modifier, fieldModifier: Modifier = Modifier,
-    minLines: Int = 1, maxLines: Int = 5, enabled: Boolean = true,
+    minLines: Int = 1, maxLines: Int = 5, enabled: Boolean = true, lookupBoundary: Any? = null,
 ) {
     val amb = Amb.colors
     val active = text.selection.takeIf { it.collapsed }?.let { MentionCodec.activeQuery(text.text, it.end) }
         ?.takeIf { query -> mentions.none { text.text.startsWith(it.visible, query.start) } }
-    val results by produceState<List<MentionCandidate>?>(null, active?.query) { value = active?.let { lookup(it.query) } }
+    val results = studio.otherstuff.ambulando.app.ui.chat.rememberMentionLookup(active?.query, lookupBoundary, lookup)
     val pills = remember(mentions, amb) { MentionPills(mentions, SpanStyle(color = amb.primary, background = amb.muted, fontWeight = FontWeight.SemiBold)) }
     // [modifier] places the whole entry (a weight in a row, for instance); [fieldModifier] dresses the text field itself.
     Column(modifier) {
-        if (enabled && active != null) results?.let { list ->
-            MentionLookahead(list, onPick = { mention ->
+        if (enabled && active != null) results.let { result ->
+            MentionLookahead(result.candidates, status = if (result.loading) "Searching…" else result.error, onPick = { mention ->
                 onValue(ComposerInsert.mention(text, mention))
                 onMentions(mentions.filter { it.npub != mention.npub || it.type != mention.type } + mention)
             })

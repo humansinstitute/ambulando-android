@@ -20,7 +20,15 @@ private val controllers = HashMap<String, GoalsController>()
     val boundary = model.activeBoundaryId ?: return null
     val runtime = model.active ?: return null
     val owner=studio.otherstuff.ambulando.core.surfaces.localContentOwner(c,w)
-    return remember(runtime, boundary, c.id, c.signerNpub, w.id, owner) {
+    return remember(runtime, boundary, c.id, c.signerNpub, w.id, owner) { model.goalsController() }
+}
+
+internal fun AppModel.goalsController(): GoalsController? {
+    val model = this
+    val c = connection ?: return null; val w = workspace ?: return null
+    val boundary = activeBoundaryId ?: return null; val runtime = active ?: return null
+    val owner = studio.otherstuff.ambulando.core.surfaces.localContentOwner(c, w)
+    return run {
         val key = "$boundary|${c.id}|${c.signerNpub}|${w.id}|$owner|${System.identityHashCode(runtime)}"
         synchronized(controllers) {
             controllers.keys.removeAll { it.startsWith("$boundary|") && it != key }

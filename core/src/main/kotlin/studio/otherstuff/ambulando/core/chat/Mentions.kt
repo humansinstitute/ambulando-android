@@ -182,7 +182,7 @@ object MentionCodec {
             if (!(isWhitespace(before) || before == '(')) return null
         }
         val query = text.substring(at + 1)
-        if (TextSupport.graphemeCount(query) > 40 || query.any { TextSupport.isNewline(it) } || query.count { it == ' ' } > 2) return null
+        if (TextSupport.graphemeCount(query) > 160 || query.any { TextSupport.isNewline(it) }) return null
         return query
     }
 

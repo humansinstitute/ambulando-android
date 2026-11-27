@@ -6,7 +6,7 @@ import studio.otherstuff.ambulando.core.chat.MentionCodec
 import studio.otherstuff.ambulando.core.chat.MentionType
 
 /** One `@` lookahead result: the mention it inserts and a short description of what it is. */
-data class MentionCandidate(val mention: Mention, val sublabel: String)
+data class MentionCandidate(val mention: Mention, val sublabel: String, val badge: String? = null)
 
 /**
  * The composer's `@` lookahead over this device's store (never the network). As on the web, every type filters on its

@@ -123,11 +123,12 @@ class MentionPills(private val mentions: List<Mention>, private val style: SpanS
 
 /** The `@` lookahead list shown above the composer while a query is being typed. */
 @Composable
-fun MentionLookahead(candidates: List<MentionCandidate>, onPick: (Mention) -> Unit, modifier: Modifier = Modifier) {
+fun MentionLookahead(candidates: List<MentionCandidate>, onPick: (Mention) -> Unit, modifier: Modifier = Modifier, status: String? = null) {
     val amb = Amb.colors
     Column(modifier.fillMaxWidth().background(amb.card).testTag("chat.mentions")) {
         HorizontalDivider(thickness = 0.5.dp, color = amb.border)
-        if (candidates.isEmpty()) {
+        status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground, modifier = Modifier.padding(12.dp).testTag("chat.mentions.status")) }
+        if (candidates.isEmpty() && status == null) {
             Text("No matches", style = MaterialTheme.typography.bodySmall, color = amb.mutedForeground,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp).testTag("chat.mentions.empty"))
             return@Column
@@ -140,7 +141,7 @@ fun MentionLookahead(candidates: List<MentionCandidate>, onPick: (Mention) -> Un
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Box(Modifier.widthIn(min = 40.dp).background(amb.muted, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp), contentAlignment = Alignment.Center) {
-                        Text(candidate.mention.type.badge(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = amb.primary, maxLines = 1)
+                        Text(candidate.badge ?: candidate.mention.type.badge(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = amb.primary, maxLines = 1)
                     }
                     Column(Modifier.weight(1f)) {
                         Text(candidate.mention.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)

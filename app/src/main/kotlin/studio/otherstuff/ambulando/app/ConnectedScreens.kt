@@ -149,13 +149,12 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     val draftScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     var mentions by remember(target) { mutableStateOf(emptyList<Mention>()) }
-    // The `@` lookahead: the query at the caret, answered from the local store as it is typed.
+    // The `@` lookahead combines the local directory with verified personal goal discovery.
     // A query that is just a chosen mention's own text (right after picking it) is not a new search.
     val activeMention = field.value.selection.takeIf { it.collapsed }?.let { MentionCodec.activeQuery(field.value.text, it.end) }
         ?.takeIf { active -> mentions.none { field.value.text.startsWith(it.visible, active.start) } }
-    val mentionResults by produceState<List<studio.otherstuff.ambulando.core.store.MentionCandidate>?>(null, w.id, activeMention?.query) {
-        value = activeMention?.let { model.store.reader.mentionCandidates(w.id, it.query, viewerNpub = c.signerNpub) }
-    }
+    val mentionLookup = studio.otherstuff.ambulando.app.ui.chat.rememberMentionLookup(activeMention?.query, model.activeBoundaryId to target) { model.mentionCandidates(it) }
+
     val threadRemoved by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.isAccessRemoved(w.id, FlaggedTable.THREADS, it) } ?: false } }.collectAsState(false)
     var editing by remember(target) { mutableStateOf<MessageRecord?>(null) }
     var replyValue by remember(target) { mutableStateOf<androidx.compose.ui.text.input.TextFieldValue?>(null) }
@@ -433,8 +432,8 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
             Text("${added.filename} added from your paste", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).testTag("chat.paste.notice"))
             TextButton(onClick = { model.removeDraftAttachment(target, added.id); justAdded = null }, modifier = Modifier.testTag("chat.paste.undo")) { Text("Undo") }
         } }
-        if (!family && composing && activeMention != null) mentionResults?.let { results ->
-            studio.otherstuff.ambulando.app.ui.chat.MentionLookahead(results, onPick = { mention ->
+        if (!family && composing && activeMention != null) mentionLookup.let { result ->
+            studio.otherstuff.ambulando.app.ui.chat.MentionLookahead(result.candidates, status = if (result.loading) "Searching…" else result.error, onPick = { mention ->
                 field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.mention(field.value, mention)
                 mentions = (mentions.filter { it.npub != mention.npub || it.type != mention.type } + mention)
                 persistComposer()

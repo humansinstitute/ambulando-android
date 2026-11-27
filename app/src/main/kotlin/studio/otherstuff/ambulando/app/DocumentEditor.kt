@@ -405,7 +405,7 @@ internal class WebDocumentPage(private val host: () -> EditorWebHost?) : Documen
         Column {
             Text("“" + anchor.optString("anchor_quote").take(160) + "”", style = MaterialTheme.typography.bodySmall, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
             studio.otherstuff.ambulando.app.ui.work.MentionTextEntry(draft.text, { draft.text = it }, draft.mentions, { draft.mentions = it },
-                { query -> model.store.reader.mentionCandidates(w.id, query, viewerNpub = model.connection?.signerNpub) }, "Add comment", Modifier.fillMaxWidth().padding(top = 8.dp), Modifier.fillMaxWidth().testTag("doc.selection.field"))
+                { query -> model.mentionCandidates(query) }, "Add comment", Modifier.fillMaxWidth().padding(top = 8.dp), Modifier.fillMaxWidth().testTag("doc.selection.field"), lookupBoundary = model.activeBoundaryId to docId)
         }
     }, confirmButton = { TextButton(enabled = !draft.isBlank, modifier = Modifier.testTag("doc.selection.send"), onClick = {
         val encoded = draft.encoded()

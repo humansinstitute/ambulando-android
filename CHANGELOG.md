@@ -1,3 +1,8 @@
+## 0.9.69 (97)
+
+- Mention personal goals from chat, task comments and document comments. Browse your Goals home with `@goal:` or type a multiword goal title, then open the saved reference in the native goal view.
+- Show loading and read failures separately from an empty goal search, and discard superseded results. Large homes still require complete server pagination; incomplete lists are reported rather than silently cut off.
+
 ## 0.9.68 (96)
 
 - Open existing Goals during workspace preparation: read independently of write readiness, restore verified older downloaded content, and hydrate automatically when reads resume.
