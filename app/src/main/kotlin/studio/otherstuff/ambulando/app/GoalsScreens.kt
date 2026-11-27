@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import studio.otherstuff.ambulando.app.ui.nav.LocalAppServices
@@ -135,6 +136,11 @@ import java.util.UUID
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val runtime = model.active ?: return
     LaunchedEffect(goals, runtime) { goals.followReadiness(runtime.activity) }
+    LaunchedEffect(lifecycle, goals, runtime) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) { delay(30_000); if(runtime.activity.isOpen) goals.refresh() }
+        }
+    }
     DisposableEffect(lifecycle, goals) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) model.act { goals.refresh() } }
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer) }
