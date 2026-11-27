@@ -35,7 +35,7 @@ internal fun AppModel.goalsController(): GoalsController? {
             controllers.keys.removeAll { it.startsWith("$boundary|") && it != key }
             controllers.getOrPut(key) {
                 val reads = object : HttpTransport {
-                    override suspend fun send(request: HttpRequest): HttpResponse = runtime.engine.perform("goals-read:${request.method}:${request.url}", SyncPriority.USER) {
+                    override suspend fun send(request: HttpRequest): HttpResponse = runtime.engine.perform("goals-read:${request.method}:${request.url}:${request.body?.let { studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(it) }.orEmpty()}", SyncPriority.USER) {
                         runtime.readTransport.send(request)
                     }
                 }
