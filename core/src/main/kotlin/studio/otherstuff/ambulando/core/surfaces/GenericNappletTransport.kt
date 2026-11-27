@@ -13,8 +13,14 @@ class GenericNappletTransport(private val api: TowerAPI,private val workspace: S
     private val query: suspend (String) -> JsonObject) {
     data class Snapshot(val version: String,val value: JsonObject,val canWrite: Boolean,val objectId: String,val bytes: ByteArray)
     class Conflict: Exception("A newer version exists.")
+    var authorizedData: FileRecord?=null; private set
     private var delivered: Snapshot?=null
     private var uncertain=false
+    /** A displayed verified local snapshot supplies the expected base only; save still reauthorizes and reads server head. */
+    fun restore(snapshot: Snapshot) {
+        require(binding.capability=="private-json-file" && GenericNapplet.uuid.matches(snapshot.version))
+        GenericJson.validate(snapshot.value); delivered=snapshot; uncertain=false
+    }
     fun clear() { delivered=null; uncertain=true }
     private suspend fun file(id: String): FileRecord = api.artefactFile(workspace,app,id).also {
         require(it.id==id && it.workspaceId==workspace && !it.accessRemoved && !it.archived && it.raw.string("record_state")!="deleted" && it.raw.string("deleted_at")==null)
@@ -39,6 +45,7 @@ class GenericNappletTransport(private val api: TowerAPI,private val workspace: S
             require(data.contentType?.substringBefore(';')=="application/json"); channel(data,true)
             if(expectedDataVersion!=null && data.raw.string("current_version_id")!=expectedDataVersion) throw Conflict()
             require(api.storageObject(requireNotNull(data.storageObjectId))?.bool("is_public")==false)
+            authorizedData=data
             grant && binding.saves
         } else { require(binding.resource==workspace); false }
         check(current()); return writable

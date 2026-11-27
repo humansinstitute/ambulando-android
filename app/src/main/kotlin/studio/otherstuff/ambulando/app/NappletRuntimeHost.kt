@@ -41,9 +41,11 @@ import studio.otherstuff.ambulando.core.surfaces.*
     var checking by remember(authorityKey) { mutableStateOf(true) }; var failure by remember(authorityKey) { mutableStateOf<String?>(null) }
     var notice by remember(authorityKey) { mutableStateOf<String?>(null) }; var confirm by remember(authorityKey) { mutableStateOf<(() -> Unit)?>(null) }
     var job by remember(authorityKey) { mutableStateOf<Job?>(null) }; var epoch by remember(authorityKey) { mutableIntStateOf(0) }
+    var displayedData by remember(authorityKey) { mutableStateOf(false) }
+    var newerData by remember(authorityKey) { mutableStateOf(false) }
     var access by remember(authorityKey) { mutableStateOf(false) }; var updatePending by remember(authorityKey) { mutableStateOf(false) }
     fun current()=model.activeBoundaryId==boundary && model.connection?.id==c.id && model.workspace?.id==w.id && model.workspace?.accessRemoved==false && services.unlocked && model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked && model.identityState?.npub==c.signerNpub && runCatching {NappletRuntimeContext.create(requireNotNull(model.connection),requireNotNull(model.workspace))==authority}.getOrDefault(false)
-    fun clear() { job?.cancel(); job=null; page?.destroy(); page=null; busy=false; dirty=false }
+    fun clear() { displayedData=false; job?.cancel(); job=null; page?.destroy(); page=null; busy=false; dirty=false }
     fun stop() { clear(); sync.invalidate(id); trusted=false; html=null; failure="This napplet is unavailable. Reopen it to verify current access." }
     fun act(action: ()->Unit) { if(!busy) { if(dirty) confirm=action else { clear(); action() } } }
     suspend fun refresh() {
@@ -66,7 +68,12 @@ import studio.otherstuff.ambulando.core.surfaces.*
                 installation=fresh
                 if(trusted && !approvals.approved(fresh)) { clear(); trusted=false }
             }
-        } catch(e: CancellationException) { throw e } catch(_: Exception) { stop() } finally { checking=false; if(foreground && visible && trusted && failure==null && current()) page?.resume() }
+        } catch(e: CancellationException) { throw e } catch(e: Exception) {
+            if(!transientNappletFailure(e) || installation==null || !trusted) {
+                if(!transientNappletFailure(e) && current()) sync.forgetLocal(id,installation)
+                stop()
+            } else notice="Showing saved content. The app could not be refreshed."
+        } finally { checking=false; if(foreground && visible && trusted && failure==null && current()) page?.resume() }
     }
     LaunchedEffect(updatePending,busy,dirty,foreground,visible) { if(updatePending && !busy && !dirty && foreground && visible) gate.withLock { refresh() } }
     BackHandler { act(onClose) }
@@ -76,7 +83,7 @@ import studio.otherstuff.ambulando.core.surfaces.*
                 foreground=false; checking=true; page?.pause()
                 if(busy) { job?.cancel(); job=null; busy=false; notice="An operation was interrupted. Reload records before retrying a change; it may already have saved." }
             }
-            if(event==Lifecycle.Event.ON_RESUME) { foreground=true }
+            if(event==Lifecycle.Event.ON_RESUME) { foreground=true; if(current()) page?.resume() }
         }
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer); clear() }
     }
@@ -86,26 +93,50 @@ import studio.otherstuff.ambulando.core.surfaces.*
         onDispose { host?.view?.viewTreeObserver?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(listener) }
     }
     LaunchedEffect(services.unlocked,w.accessRemoved,model.activeBoundaryId,authorityKey) { if(!current()) stop() }
+    AppDiscoveryEffect(trusted && foreground && visible,sync,id) {
+        model.store.changes.stream().collect {
+            val mounted=installation ?: return@collect
+            try {
+                model.store.reader.withArtefactAccess(w,NappletRuntimeProtocol.text(mounted.bundle,"file_id"),::current) { Unit }
+            } catch(e: CancellationException) { throw e } catch(_: Exception) { stop() }
+        }
+    }
     AppDiscoveryEffect(foreground && visible, sync,id,boundary,authorityKey) {
+        if(installation==null) try {
+            sync.cachedOpen(id)?.let { cached ->
+                check(current()); installation=cached.first; html=cached.second; trusted=approvals.approved(cached.first); checking=false
+            }
+        } catch(e: CancellationException) {throw e} catch(_: Exception) {if(!current()) {stop();return@AppDiscoveryEffect}}
         gate.withLock { refresh() }
         while(isActive) { delay(30000); gate.withLock { refresh() } }
     }
     LaunchedEffect(visible) { if(!visible) { checking=true; page?.pause() } }
     LaunchedEffect(sync,trusted,foreground,html,epoch,access,checking,visible) {
         val i=installation; val bytes=html
-        if(!visible || checking || page!=null || !trusted || !foreground || !current() || failure!=null || i==null || bytes==null || access) return@LaunchedEffect
+        if(!visible || page!=null || !trusted || !foreground || !current() || failure!=null || i==null || bytes==null || access) return@LaunchedEffect
         if(NappletRuntimeProtocol.support(i.manifest)!=null) return@LaunchedEffect
         withContext(Dispatchers.Main.immediate) {
         NappletRuntimeWebHost.create(context,bytes,i.manifest,accept={ request ->
             val op=NappletRuntimeProtocol.text(request,"operation"); val session=NappletRuntimeProtocol.text(request,"session")
             if(!trusted || !foreground || !visible || !current() || failure!=null || page?.session?.let { it!=session }==true) false
             else if(op=="dirty") { dirty=request["dirty"]==JsonPrimitive(true); dirtyRevision++; true }
-            else if(busy || (checking && op !in setOf("list","get"))) false
+            else if(busy || checking && op !in setOf("list","get") && !displayedData) false
             else {
                 busy=true; val revisionAtRequest=dirtyRevision
                 job=scope.launch {
                     var host: NappletRuntimeWebHost?=null
+                    var cached: JsonObject?=null
                     try {
+                        if(op in setOf("list","get")) {
+                            cached=sync.cachedRead(i,request)
+                            if(cached!=null) {
+                                yield(); host=page?.takeIf { it.session==session }
+                                if(host!=null && trusted && foreground && visible && current()) {
+                                    host?.deliver(NappletRuntimeProtocol.result(session,NappletRuntimeProtocol.text(request,"requestId"),cached))
+                                    displayedData=true; busy=false
+                                }
+                            }
+                        }
                         val result=withTimeout(45000) {
                             yield()
                             gate.withLock {
@@ -114,13 +145,14 @@ import studio.otherstuff.ambulando.core.surfaces.*
                                 sync.execute(i,request)
                             }
                         }
-                        ensureActive(); if(page===host && current() && foreground && visible && trusted) host?.deliver(NappletRuntimeProtocol.result(session,NappletRuntimeProtocol.text(request,"requestId"),result))
+                        if(cached!=null && cached!=result) newerData=true
+                        ensureActive(); if(page===host && current() && foreground && visible && trusted && (!dirty || op !in setOf("list","get")) && cached==null) {displayedData=true;host?.deliver(NappletRuntimeProtocol.result(session,NappletRuntimeProtocol.text(request,"requestId"),result))}
                         if(op in setOf("create","update","delete")) { if(dirtyRevision==revisionAtRequest) dirty=false }
                     } catch(_: TimeoutCancellationException) {
-                        if(page===host && current() && foreground && visible && trusted) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),"unavailable"))
+                        if(page===host && current() && foreground && visible && trusted && cached==null) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),"unavailable"))
                     } catch(e: CancellationException) { throw e }
                     catch(e: Exception) {
-                        if(page===host && current() && foreground && visible && trusted) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),if(e is NappletRuntimeAPI.Conflict) "conflict" else "unavailable"))
+                        if(page===host && current() && foreground && visible && trusted && cached==null) host?.deliver(NappletRuntimeProtocol.error(session,NappletRuntimeProtocol.text(request,"requestId"),if(e is NappletRuntimeAPI.Conflict) "conflict" else "unavailable"))
                         if(e is NappletRuntimeSync.Compatibility) notice=e.message
                         else if(foreground && visible && e !is NappletRuntimeAPI.Conflict) gate.withLock { refresh() }
                     } finally { if(job===currentCoroutineContext()[Job]) { busy=false; job=null } }
@@ -139,6 +171,7 @@ import studio.otherstuff.ambulando.core.surfaces.*
             TextButton(enabled=!busy && installation!=null,onClick={act { access=true; epoch++ }},modifier=Modifier.testTag("runtime.access")) { Text("Access and data") }
         }
         if(trusted) TextButton(enabled=!busy,onClick={act { installation?.let { notice=if(approvals.forget(it)) "Approval forgotten. Saved data is unchanged." else "Approval could not be forgotten." }; sync.invalidate(id); trusted=false }},modifier=Modifier.testTag("runtime.forget")) { Text("Forget approval") }
+        if(newerData) TextButton(enabled=!busy,onClick={act { newerData=false; epoch++ }},modifier=Modifier.testTag("runtime.reloadSaved")) {Text("New saved data available · Reload")}
         if(dirty) Text("Unsaved changes")
         if(updatePending) TextButton(enabled=!busy,onClick={act { scope.launch { gate.withLock {refresh()} } }}) { Text("Load available update") }
         notice?.let { Text(it,Modifier.padding(12.dp)) }
@@ -160,7 +193,7 @@ import studio.otherstuff.ambulando.core.surfaces.*
                     }
                 }}},modifier=Modifier.testTag("runtime.trust")) { Text("Trust and open") }
             }
-            else -> page?.let { host -> key(host.session) { AndroidView(factory={host.view},update={it.visibility=if(checking || !foreground) android.view.View.INVISIBLE else android.view.View.VISIBLE},modifier=Modifier.fillMaxWidth().weight(1f).testTag("runtime.host")) } }
+            else -> page?.let { host -> key(host.session) { AndroidView(factory={host.view},update={it.visibility=if(!foreground || !visible) android.view.View.INVISIBLE else android.view.View.VISIBLE},modifier=Modifier.fillMaxWidth().weight(1f).testTag("runtime.host")) } }
         }
     }
     confirm?.let { action -> AlertDialog(onDismissRequest={confirm=null},title={Text("Discard unsaved changes?")},text={Text("Saved records and history remain in NStack.")},confirmButton={TextButton(onClick={confirm=null; clear(); action()}) {Text("Discard and continue")}},dismissButton={TextButton(onClick={confirm=null}) {Text("Keep editing")}}) }

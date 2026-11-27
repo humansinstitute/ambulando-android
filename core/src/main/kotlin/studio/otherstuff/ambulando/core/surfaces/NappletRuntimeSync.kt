@@ -18,6 +18,16 @@ import studio.otherstuff.ambulando.core.nostr.*
 class NappletRuntimeSync(private val sync: WorkspaceSync,private val connection: ConnectionRecord,
     private val workspace: WorkspaceRecord,private val current: ()->Boolean) {
     val context=NappletRuntimeContext.create(connection,workspace)
+    private val local=LocalRuntimeContent(sync.store,connection,workspace,current)
+    suspend fun hydrate() {
+        checkContext()
+        val saved=local.installations()
+        checkContext()
+        if(projection.value.installations.isEmpty()) projection.value=projection.value.copy(installations=saved,available=saved.isNotEmpty())
+    }
+    suspend fun cachedOpen(id: String): Pair<NappletRuntimeInstallation,String>? { checkContext(); return local.open(id) }
+    suspend fun cachedRead(i: NappletRuntimeInstallation,request: JsonObject): JsonObject? { checkContext(); return local.read(i,request) }
+    suspend fun forgetLocal(id: String,expected: NappletRuntimeInstallation?=null) = local.invalidate(id,expected?.raw)
     class Compatibility: Exception("The stored collection uses a different schema or scope. A reviewed migration is required before this app can use it.")
     data class Projection(val installations: List<NappletRuntimeInstallation> = emptyList(),val records: Map<String,JsonObject> = emptyMap(),val available: Boolean=false)
     private val projection=MutableStateFlow(Projection())
@@ -58,17 +68,26 @@ class NappletRuntimeSync(private val sync: WorkspaceSync,private val connection:
         } while(cursor!=null)
         return result
     }
-    suspend fun refresh() = command { api ->
+    suspend fun refresh() { hydrate(); refreshOnline() }
+    private suspend fun refreshOnline() = command { api ->
         try {
             val installations=rows({ api.installations(it) },"installations").map { NappletRuntimeInstallation(it).validate(workspace.id,workspace.appNpub) }
             installations.forEach { it.requireAudience(connection.signerNpub) }
             require(installations.none { it.removed } && installations.map { it.id }.distinct().size==installations.size)
-            checkContext(); synchronized(stateLock) { check(!stopped && current()); projection.value=projection.value.copy(installations=installations,available=true) }
-        } catch(e: Exception) { projection.value=Projection(); throw e }
+            checkContext()
+            val missing=local.installations().map { it.id }.filter { id -> installations.none { it.id==id } }
+            missing.forEach { local.invalidate(it) }; local.saveInstallations(installations)
+            synchronized(stateLock) { check(!stopped && current()); projection.value=projection.value.copy(installations=installations,available=true) }
+        } catch(e: Exception) {
+            if(e !is CancellationException && !transientNappletFailure(e)) {
+                local.installations().forEach { local.invalidate(it.id) }; projection.value=Projection()
+            }
+            throw e
+        }
     }
     suspend fun open(id: String): Pair<NappletRuntimeInstallation,String> = command { api ->
         val i=api.installation(id); i.requireAudience(connection.signerNpub); val html=api.bundle(i)
-        require(api.installation(id).raw==i.raw); checkContext(); i to html
+        require(api.installation(id).raw==i.raw); checkContext(); local.saveBundle(i,html); i to html
     }
     suspend fun authority(i: NappletRuntimeInstallation): NappletRuntimeInstallation = command { api ->
         val fresh=api.installation(i.id); fresh.requireAudience(connection.signerNpub); require(fresh.publisher==i.publisher)
@@ -116,7 +135,7 @@ class NappletRuntimeSync(private val sync: WorkspaceSync,private val connection:
     suspend fun select(i: NappletRuntimeInstallation,name: String,id: String) = command { api ->
         val declaration=i.manifest.getValue("collections").jsonObject.getValue(name).jsonObject
         val row=rows({ api.collections(i.id,it) },"collections").single { it["id"]==JsonPrimitive(id) && matches(it,i.id,name,declaration) }
-        selected[i.id+":"+name]=row; projection.value=projection.value.copy(records=emptyMap())
+        local.invalidate(i.id); selected[i.id+":"+name]=row; projection.value=projection.value.copy(records=emptyMap())
     }
     suspend fun collections(i: NappletRuntimeInstallation): List<JsonObject> = command { api -> rows({ api.collections(i.id,it) },"collections") }
     suspend fun execute(i: NappletRuntimeInstallation,request: JsonObject): JsonObject = command { api ->
@@ -160,11 +179,14 @@ class NappletRuntimeSync(private val sync: WorkspaceSync,private val connection:
             check(!stopped && current())
             projection.value=projection.value.copy(records=projection.value.records+records.associateBy { i.id+":"+id+":"+NappletRuntimeProtocol.text(it,"id") })
         }
-        // Acknowledge only the server-confirmed value read back from the local projection.
-        if(op=="list") response else buildJsonObject { put("record",projection.value.records.getValue(i.id+":"+id+":"+NappletRuntimeProtocol.text(records.single(),"id"))) }
+        // Retain exact verified read pages; writes invalidate cached pages so removed/updated rows cannot reappear.
+        if(isWrite) local.savedRecord(i,request,records.single())
+        val result=if(op=="list") response else buildJsonObject { put("record",projection.value.records.getValue(i.id+":"+id+":"+NappletRuntimeProtocol.text(records.single(),"id"))) }
+        if(!isWrite) local.saveRead(i,request,result)
+        result
     }
     suspend fun remove(i: NappletRuntimeInstallation,delete: Boolean) = command { api ->
-        val result=api.remove(i,delete); checkContext(); selected.keys.removeAll { it.startsWith(i.id+":") }
+        val result=api.remove(i,delete); checkContext(); local.invalidate(i.id); selected.keys.removeAll { it.startsWith(i.id+":") }
         projection.value=projection.value.copy(installations=projection.value.installations.filterNot { it.id==i.id },records=projection.value.records.filterKeys { !it.startsWith(i.id+":") }); result
     }
     suspend fun audience(i: NappletRuntimeInstallation,npubs: List<String>) = command { api -> api.audience(i,JsonArray(npubs.map(::JsonPrimitive))) }
@@ -172,6 +194,7 @@ class NappletRuntimeSync(private val sync: WorkspaceSync,private val connection:
         val updated=api.collectionGrant(i.id,c,JsonArray(read.map(::JsonPrimitive)),JsonArray(write.map(::JsonPrimitive)))
         val name=NappletRuntimeProtocol.text(updated,"name")
         require(matches(updated,i.id,name,i.manifest.getValue("collections").jsonObject.getValue(name).jsonObject) && updated["id"]==c["id"])
+        local.invalidate(i.id)
         selected[i.id+":"+name]=updated
         projection.value=projection.value.copy(records=emptyMap()); updated
     }
@@ -220,6 +243,7 @@ class NappletRuntimeSync(private val sync: WorkspaceSync,private val connection:
         val result=api.migrate(i.id,c,preview.source,preview.value)
         val updated=result.getValue("collection").jsonObject
         require(result["source_preserved"]==JsonPrimitive(true) && result["imported"]==JsonPrimitive(1) && updated["id"]==c["id"] && matches(updated,i.id,name,declaration))
+        local.invalidate(i.id)
         selected[i.id+":"+name]=updated
         projection.value=projection.value.copy(records=emptyMap()); result
     }

@@ -1,0 +1,17 @@
+# Saved Goals and napplet content
+
+On an unlocked device, previously verified content is read from the existing private workspace store before a fresh server request completes. This includes the Goals documents and private location, File napplet code and data, and installed v3 runtime bundles and previously read collection pages. The store remains in app storage excluded from backup; disconnect and workspace partition retirement keep their existing lifecycle. No additional signing or encryption identity is created.
+
+Local content is scoped to the existing origin, viewer, workspace and app partition and further bound to the connection and pinned service identity. Code keeps its verified version, digest, manifest, resource binding and existing consent policy. Cached code is checked again against its digest before mounting in the existing network-isolated WebView. A newly observed code version is verified before it replaces cached code; newer access declarations still follow the host's consent policy.
+
+Refreshing does not hide or destroy usable content because a connection is offline, times out, fails authentication or returns a temporary server error. First-time or damaged caches show an ordinary loading/reconnect state. An explicit access denial, known removal, invalid code authority or boundary change blocks execution. Locking stops the active host and signing authority but preserves durable content for a later unlock.
+
+Goals snapshots contain the whole goal document, including dates, checkpoints, links, history and focus order. The saved location is a previously checked private channel, not a channel-name lookup or a new access grant. A successful complete refresh replaces the snapshot, so removed goals disappear. Local drafts and existing expectation-checked edits are separate from these snapshots.
+
+Napplet reads can deliver cached content before the background read finishes. Hosts preserve dirty notifications during that refresh and do not apply a late read over known unsaved edits. Private JSON transports retain the version actually displayed as the expected save base; saves still freshly check code, permissions and server head and use the existing compare-and-set contract. An outage does not create an offline write queue or imply that an operation was saved.
+
+A napplet controls how it handles repeated read results. Workspace Report supports clean refreshes. File, generic and v3 hosts complete each read request once; refreshed snapshots are retained for the next read/open and a native newer-data reload action is offered. Dirty content requires the existing discard confirmation before remounting. Previously installed code bytes are not silently rewritten to add refresh support.
+
+V3 collection snapshots retain exact verified read pages with their request, installation and schema context. Confirmed mutations update a previously complete first page and matching single-record reads; incomplete pages are discarded rather than guessed. Collection selection, known grant changes, migration and removal invalidate the affected local snapshots. Mutations retain their existing online authority, revision, readback and no-automatic-retry contracts.
+
+Validation distinguishes JVM storage/transport tests and synthetic Android UI tests from live-member or store-delivery evidence. A successful local build does not establish publication, download, upgrade or behavior on a user's device.

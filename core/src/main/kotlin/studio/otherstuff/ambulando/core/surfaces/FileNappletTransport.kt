@@ -17,6 +17,8 @@ class FileNappletTransport(
     class Conflict : Exception("A newer version exists. Reload explicitly before saving.")
     private var delivered: Snapshot? = null
     private var uncertain = false
+    /** Displayed local base, never write authority; save still checks current code, ACL and version. */
+    fun restore(snapshot: Snapshot) { FileNapplet.model(snapshot.value); delivered=snapshot; uncertain=false }
     /** Release private in-memory snapshots when the host loses authority or is disposed. */
     fun clear() { delivered = null; uncertain = true }
 

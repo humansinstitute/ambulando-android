@@ -56,6 +56,8 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     val boundary = model.activeBoundaryId
     fun updater(writable: Boolean) = FileNappletUpdate(model.fileNappletAPI(c), w.id, w.appNpub,
         c.signerNpub, file.id, codeVersion, file.raw.getValue("metadata").jsonObject, manifest, dataId, writable) { model.activeBoundaryId == boundary && model.connection?.id == c.id && model.workspace?.id == w.id }
+    var frameEpoch by remember { mutableIntStateOf(0) }
+    var newerData by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf<FileNappletWebHost?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(true) }
@@ -68,6 +70,9 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     var discard by remember { mutableStateOf(false) }
     var operationJob by remember { mutableStateOf<Job?>(null) }
     val gate = remember { Mutex() }
+    val local=remember(boundary,file.id,codeVersion) { LocalNappletContent(model.store,w,localContentOwner(c,w), { model.activeBoundaryId==boundary && model.workspace?.accessRemoved==false && model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked }) }
+    val authorityPart="$codeVersion:authority"
+    val dataPart="$codeVersion:data:$dataId"
     val transport = remember(model.activeBoundaryId, file.id, codeVersion, dataId) {
         FileNappletTransport(model.fileNappletAPI(c), w.id, w.appNpub, c.signerNpub, file.id, codeVersion, manifest, dataId)
     }
@@ -87,11 +92,13 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
             if (updating) return@withLock
             checking = true
             try {
+                local.check(file.id); local.check(dataId)
                 val writable = transport.authorize()
+                local.put(file.id,authorityPart,buildJsonObject { put("writable",writable) })
                 if (lastWritable != null && lastWritable != writable) stop() else lastWritable = writable
             }
             catch (e: CancellationException) { throw e }
-            catch (_: Exception) { stop() }
+            catch (e: Exception) { if(!transientNappletFailure(e) || !consentReady || !trusted) { if(model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked && model.activeBoundaryId==boundary) { local.forget(file.id,authorityPart); local.forgetCode(file.id,codeVersion) }; stop() } }
             finally { checking = false }
         }
     }
@@ -100,6 +107,12 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         file.raw.getValue("metadata").jsonObject, manifest, dataId, writable)
     AppDiscoveryEffect(foreground && visible, transport) {
         if (consentReady) return@AppDiscoveryEffect
+        local.get(file.id,authorityPart)?.let { cached ->
+            local.check(dataId); lastWritable=cached.bool("writable")
+            val saved=receipt(lastWritable==true)
+            if(approvals.approved(saved)) { approval=saved; trusted=true; consentReady=true; checking=false }
+        }
+        if(consentReady) return@AppDiscoveryEffect
         authorize()
         if (failure == null) {
             val current = receipt(lastWritable == true)
@@ -116,7 +129,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
     DisposableEffect(lifecycle, transport) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                foreground = true
+                foreground = true; page?.view?.onResume()
             }
             if (event == Lifecycle.Event.ON_PAUSE) {
                 foreground = false; checking = true
@@ -144,15 +157,26 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
             ) }) authorize()
         }
     }
-    AppDiscoveryEffect(trusted && foreground && visible && !checking, transport) {
+    AppDiscoveryEffect(trusted && foreground && visible, transport, frameEpoch) {
         if (page != null || failure != null) return@AppDiscoveryEffect
         withContext(Dispatchers.Main.immediate) { FileNappletWebHost.create(context, html, onMessage = { request ->
-            if (foreground && visible && !busy && !updating && failure == null) {
+            if(request.string("operation")=="dirty" && foreground && visible && failure==null) dirty=request.bool("dirty")==true
+            else if (foreground && visible && !busy && !updating && failure == null) {
                 val operation = request.string("operation")
                 if (operation == "dirty") dirty = request.bool("dirty") == true
                 else {
                     busy = true
                     operationJob = scope.launch {
+                        var cachedResult: JsonObject?=null
+                        if(operation=="read") local.get(file.id,dataPart)?.let { cached ->
+                            cachedResult=cached
+                            local.check(dataId); yield()
+                            page?.let { target -> if(foreground && visible) {
+                                transport.restore(FileNappletTransport.Snapshot(cached.getValue("baseVersionId").jsonPrimitive.content,cached.getValue("value").jsonObject,cached.bool("canWrite")==true,""))
+                                target.deliver(JsonObject(cached+mapOf("session" to JsonPrimitive(target.session),"requestId" to request.getValue("requestId"))))
+                                busy=false
+                            } }
+                        }
                         gate.withLock {
                             val host = page
                             try {
@@ -166,7 +190,11 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                                         put("type", "wingman-napplet-result"); put("version", 1); put("session", host.session); put("requestId", request.getValue("requestId"))
                                         put("status", "ready"); put("baseVersionId", value.version); put("value", value.value); put("canWrite", value.canWrite); put("privacy", "self-channel")
                                     }
-                                    if (foreground && visible && !checking) host.deliver(result) else deferredResult = result
+                                    local.put(file.id,dataPart,result)
+                                    if(operation=="read" && cachedResult?.get("value")!=null && cachedResult?.get("value")!=result["value"]) newerData=true
+                                    if(operation=="save" || cachedResult==null) {
+                                        if (foreground && visible && !checking && (operation=="save" || !dirty)) host.deliver(result) else if(!dirty) deferredResult = result
+                                    }
                                     if (operation == "save") dirty = false
                                 }
                             } catch (e: CancellationException) { throw e }
@@ -175,10 +203,18 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                                     val result = buildJsonObject {
                                         put("type", "wingman-napplet-result"); put("version", 1); put("session", host.session); put("requestId", request.getValue("requestId")); put("status", "error"); put("code", "conflict"); put("message", "A newer save exists. Reload explicitly before saving.")
                                     }
-                                    if (foreground && visible && !checking) host.deliver(result) else deferredResult = result
+                                    if (foreground && visible) host.deliver(result) else deferredResult = result
                                 }
-                            } catch (_: Exception) { stop() }
-                            finally { busy = false }
+                            } catch (e: Exception) {
+                                if(!transientNappletFailure(e)) { local.forget(file.id,authorityPart); stop() }
+                                else if(operation!="read" || local.get(file.id,dataPart)==null) {
+                                    host?.deliver(buildJsonObject {
+                                        put("type","wingman-napplet-result"); put("version",1); put("session",host.session); put("requestId",request.getValue("requestId"))
+                                        put("status","error"); put("code","unavailable"); put("message","Operation could not be confirmed. Your draft is kept.")
+                                    })
+                                }
+                            }
+                            finally { if(operationJob===currentCoroutineContext()[Job]) { busy = false; operationJob=null } }
                         }
                     }
                 }
@@ -208,6 +244,9 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
                 onClick = { updateConfirmation = true }, modifier = Modifier.testTag("napplet.update")) { Text("Update app") }
             TextButton(enabled = !busy && !remembering && !updating, onClick = { if (dirty) forgetting = true else forget() }, modifier = Modifier.testTag("napplet.forget")) { Text("Forget approval") }
         }
+        if(newerData) TextButton(enabled=!busy && !dirty,onClick={
+            operationJob?.cancel();transport.clear();deferredResult=null;page?.destroy();page=null;newerData=false;frameEpoch++
+        },modifier=Modifier.testTag("napplet.reloadSaved")) {Text("New saved data available · Reload")}
         approvalNotice?.let { Text(it, Modifier.padding(12.dp).testTag("napplet.approvalNotice")) }
         if (failure != null) Text(failure!!, Modifier.padding(16.dp))
         else if (!consentReady) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -231,7 +270,7 @@ internal fun nappletManifest(html: String): JsonObject? = runCatching {
         } else {
             if (checking) LinearProgressIndicator(Modifier.fillMaxWidth())
             // Keep DOM and memory drafts during periodic checks, but stop interaction until reauthorized.
-            page?.let { host -> AndroidView(factory = { host.view }, update = { it.visibility = if (checking || !foreground || updating) android.view.View.INVISIBLE else android.view.View.VISIBLE }, modifier = Modifier.weight(1f).fillMaxWidth().testTag("napplet.host")) }
+            page?.let { host -> AndroidView(factory = { host.view }, update = { it.visibility = if (!foreground || !visible || updating) android.view.View.INVISIBLE else android.view.View.VISIBLE }, modifier = Modifier.weight(1f).fillMaxWidth().testTag("napplet.host")) }
         }
     }
     if (updateConfirmation) AlertDialog(onDismissRequest = { if (!updating) updateConfirmation = false },

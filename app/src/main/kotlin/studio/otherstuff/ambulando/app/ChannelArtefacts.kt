@@ -151,6 +151,7 @@ import java.util.UUID
             error = if (cached == null) "Unlock and reconnect to open this artefact." else null
             return@LaunchedEffect
         }
+        file = cached // Render retained metadata before a fresh network check.
         try {
             val received = runtime.sync.genericNappletRead(fileId) {
                 store.reader.withArtefactAccess(w, fileId, ::currentBoundary) { api.artefactFile(w.id, w.appNpub, fileId) }
@@ -162,10 +163,10 @@ import java.util.UUID
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) {
             if (currentBoundary() && cached != null &&
-                (e is java.io.IOException || e is TowerError.Http && e.status in setOf(403,404))) {
+                (transientNappletFailure(e) || e is TowerError.Http && e.status in setOf(403,404))) {
                 if (e is TowerError.Http) store.writer.markAccessRemoved(w.id, AccessTarget.File(fileId))
                 file = store.reader.file(w.id,fileId) ?: cached
-                localOnly = true
+                localOnly = e is TowerError.Http && e.status in setOf(403,404)
             } else error = e.message ?: "This artefact is unavailable."
         }
     }
@@ -226,6 +227,7 @@ private data class HtmlArtefactRead(
     fun currentBoundary() = model.active === runtime && !runtime.workspace.accessRemoved &&
         model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked && model.identityState?.npub == c.signerNpub
     val api = remember(runtime,c,w,file.id) { model.fileNappletAPI(c).fencedArtefactAPI(store.reader,w,file.id,::currentBoundary) }
+    val localContent = remember(runtime) { LocalNappletContent(store, w, localContentOwner(c,w), ::currentBoundary) }
     var reload by remember(file.id) { mutableStateOf(0) }
     var html by remember(file.id) { mutableStateOf<String?>(null) }
     var htmlPayload by remember(file.id) { mutableStateOf<HtmlArtefactPayload?>(null) }
@@ -330,7 +332,15 @@ private data class HtmlArtefactRead(
     }
     LaunchedEffect(runtime, w, file.id, selected, reload) {
         try {
-            html = null; htmlPayload = null; generic = null; error = null; anchorMatches = emptyMap()
+            error = null; anchorMatches = emptyMap()
+            if (selected == null && html == null) localContent.code(file.id)?.let { cached ->
+                verifiedFile = cached.file
+                versions = FileVersionList(file.id, cached.version.id, listOf(cached.version))
+                htmlPayload = HtmlArtefactPayload(file.id, cached.version.id, cached.version.versionNumber.toInt(), cached.version.id, cached.version.versionNumber.toInt(), requireNotNull(cached.version.sha256), cached.html, emptyList(), null)
+                generic = GenericNapplet.parse(cached.html, cached.file.raw.obj("metadata") ?: JsonObject(emptyMap()))
+                html = cached.html
+            }
+            if (selected != null) { html = null; htmlPayload = null; generic = null }
             val received = runtime.sync.genericNappletRead(file.id) {
               store.reader.withArtefactAccess(w, file.id, ::currentBoundary) {
                 val verified = api.artefactFile(w.id,w.appNpub,file.id)
@@ -360,9 +370,18 @@ private data class HtmlArtefactRead(
                     store.writer.cacheVerifiedArtefact(received.file,::currentBoundary)
                 }
             }
+            if (selected == null) {
+                store.writer.cacheVerifiedArtefact(received.file, ::currentBoundary)
+                localContent.saveCode(received.file, received.versions.versions.first { it.id == received.versions.currentVersionId }, received.html)
+            }
             verifiedFile = received.file; versions = received.versions; htmlPayload = received.payload; generic = received.binding; html = received.html
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { error = e.message; html = null }
+        catch (e: Exception) {
+            if (html == null || !transientNappletFailure(e)) {
+                error = e.message; html = null
+                if (currentBoundary() && !transientNappletFailure(e)) localContent.forgetCode(file.id, htmlPayload?.versionId ?: file.raw.string("current_version_id") ?: "")
+            }
+        }
     }
     var commentsAccessRevoked by remember(model.activeBoundaryId, file.id) { mutableStateOf(false) }
     LaunchedEffect(runtime, w, file.id, commentsReload, reload, commentsSheetOpen) {

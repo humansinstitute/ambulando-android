@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class GenericNappletAuthorityRaceTest {
     @get:Rule val compose=createEmptyComposeRule()
     private val i get()=InstrumentationRegistry.getInstrumentation()
-    @Test fun firstReadWaitsForHealthyAuthorityAndDenialDestroysQueuedRead() {
+    @Test fun firstReadWaitsAndCachedReadRemainsUsableUntilKnownDenial() {
         val context=i.targetContext; check(BuildConfig.DEBUG)
         if((context.applicationContext as AmbulandoApplication).activeModel==null) {
             val dir=AppEnvironment.Sample(context).baseDir; check(dir.parentFile==context.cacheDir); check(!dir.exists() || dir.deleteRecursively())
@@ -103,7 +103,10 @@ class GenericNappletAuthorityRaceTest {
                         tower.requestGate={ r -> count(r); if(r.method=="GET" && URI(r.url).path==TowerAPI.base(w.id)+"/files/${code.id}" && denyArm.compareAndSet(true,false)) { denyEntered.countDown(); check(denyRelease.await(15,TimeUnit.SECONDS)) } }
                         triggerFocusCheck()
                         assertTrue(denyEntered.await(5,TimeUnit.SECONDS)); page(web!!,"requestRead('denied')")
-                        compose.waitUntil(5000) { runCatching { compose.onNodeWithTag("generic.close").assertIsNotEnabled() }.isSuccess }
+                        // Previously authorized local data is immediately usable while this check is delayed.
+                        compose.waitUntil(5000) { page(web!!,"document.getElementById('state').textContent")=="denied|4" }
+                        compose.onNodeWithTag("generic.close").assertIsEnabled()
+                        assertEquals(before,dataReads.get())
                         tower.revokedWorkspaces=setOf(w.id); denyRelease.countDown()
                         compose.waitUntil(15000) { compose.onAllNodes(hasTestTag("generic.host")).fetchSemanticsNodes().isEmpty() }
                         i.runOnMainSync { assertNull(find(window.decorView)) }

@@ -41,6 +41,7 @@ import studio.otherstuff.ambulando.core.transport.*
     var busy by remember { mutableStateOf(false) }
     var operation by remember { mutableStateOf<Job?>(null) }
     fun current()=model.activeBoundaryId==boundary && model.connection?.id==c.id && model.workspace?.id==w.id && model.workspace?.accessRemoved==false && services.unlocked
+    val local=remember(boundary,file.id,version) { LocalNappletContent(model.store,w,localContentOwner(c,w),::current) }
     val transport=remember(boundary,file.id,version) {
         WorkspaceReportTransport(model.fileNappletAPI(c),w.id,w.appNpub,c.signerNpub,file.id,version,html,
             file.raw.getValue("metadata").jsonObject,manifest,::current) { range -> model.sync.readWorkspaceReport(c,w,range) }
@@ -50,19 +51,20 @@ import studio.otherstuff.ambulando.core.transport.*
     fun stop() { approvals.forget(receipt); clear(); trusted=false; ready=false; failure="This report is unavailable. Close and reopen it to verify access." }
     suspend fun authorize(): Boolean {
         checking=true
-        return try { withTimeout(45000) { transport.authorize() }; true }
-            catch(_: TimeoutCancellationException) { stop(); false }
+        return try { local.check(file.id); withTimeout(45000) { transport.authorize() }; local.put(file.id,"$version:authority",buildJsonObject { put("verified",true) }); true }
+            catch(_: TimeoutCancellationException) { ready && trusted }
             catch(e: CancellationException) { throw e }
-            catch(e: Exception) { android.util.Log.w("WorkspaceReportHost","Code authority check failed",e); stop(); false }
+            catch(e: Exception) { if(!current()) { stop(); false } else if(transientNappletFailure(e) && ready && trusted) true else { local.forget(file.id,"$version:authority"); local.forgetCode(file.id,version); stop(); false } }
             finally { checking=false }
     }
     AppDiscoveryEffect(foreground && visible, transport) {
+        if(!ready && local.get(file.id,"$version:authority")!=null && approvals.approved(receipt)) { trusted=true; ready=true; checking=false }
         if(!ready && authorize()) { trusted=withContext(Dispatchers.IO) { approvals.approved(receipt) }; ready=true }
     }
     DisposableEffect(lifecycle,transport) {
         val observer=LifecycleEventObserver { _,event ->
-            if(event==Lifecycle.Event.ON_PAUSE) { foreground=false; checking=true; clear() }
-            if(event==Lifecycle.Event.ON_RESUME) foreground=true
+            if(event==Lifecycle.Event.ON_PAUSE) { foreground=false; page?.view?.onPause() }
+            if(event==Lifecycle.Event.ON_RESUME) { foreground=true; if(current()) page?.view?.onResume() }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); clear() }
@@ -76,7 +78,7 @@ import studio.otherstuff.ambulando.core.transport.*
                 studio.otherstuff.ambulando.core.store.StoreTable.CONNECTIONS) }) gate.withLock { if(!authorize()) return@withLock }
         }
     }
-    AppDiscoveryEffect(trusted && foreground && visible && !checking, transport) {
+    AppDiscoveryEffect(trusted && foreground && visible, transport) {
         if(page!=null || failure!=null) return@AppDiscoveryEffect
         withContext(Dispatchers.Main.immediate) { WorkspaceReportWebHost.create(context,html,onMessage={ request ->
             val requestSession = WorkspaceReport.text(request,"session")
@@ -86,10 +88,19 @@ import studio.otherstuff.ambulando.core.transport.*
                 operation=scope.launch {
                     // Preserve the first read while focus/store authority is being checked, as the generic host does.
                     yield()
+                    val range=WorkspaceReport.text(request,"range")
+                    val part="$version:data:$range"
+                    local.get(file.id,part)?.let { cached ->
+                        if(page===host && foreground && visible && current() && trusted) host.deliver(buildJsonObject {
+                            put("type","wingman-napplet-result"); put("version",1); put("session",host.session); put("requestId",request.getValue("requestId"))
+                            put("status","ready"); put("value",cached); put("canWrite",false); put("privacy","viewer-channels")
+                        })
+                    }
                     gate.withLock {
                         try {
                             check(page === host && trusted && foreground && visible && current() && failure == null)
-                            val value=transport.read(WorkspaceReport.text(request,"range"))
+                            val value=transport.read(range)
+                            local.put(file.id,part,value)
                             ensureActive(); check(current())
                             if(foreground && visible && page===host) host?.deliver(buildJsonObject {
                                 put("type","wingman-napplet-result"); put("version",1); put("session",host.session)
@@ -97,9 +108,9 @@ import studio.otherstuff.ambulando.core.transport.*
                                 put("canWrite",false); put("privacy","viewer-channels")
                             })
                         } catch(e: CancellationException) { throw e }
-                        catch(_: Exception) {
+                        catch(e: Exception) {
                             // A missing API/offline response is unavailable, never a zero report. Recheck code authority first.
-                            if(page===host && foreground && visible && current() && authorize() && page===host) host?.deliver(buildJsonObject {
+                            if(page===host && foreground && visible && current() && authorize() && page===host && (!transientNappletFailure(e) || local.get(file.id,part)==null)) host?.deliver(buildJsonObject {
                                 put("type","wingman-napplet-result"); put("version",1); put("session",host.session)
                                 put("requestId",request.getValue("requestId")); put("status","error"); put("code","unavailable")
                                 put("message","The workspace report is unavailable. Refresh when access is available.")
@@ -134,7 +145,7 @@ import studio.otherstuff.ambulando.core.transport.*
                 } } },modifier=Modifier.testTag("report.trust")) { Text("Trust and open") }
             }
             else -> page?.let { host -> key(host.session) {
-                AndroidView(factory={host.view},update={ it.visibility=if(checking || !foreground || !visible) android.view.View.INVISIBLE else android.view.View.VISIBLE },modifier=Modifier.fillMaxWidth().weight(1f).testTag("report.host"))
+                AndroidView(factory={host.view},update={ it.visibility=if(!foreground || !visible) android.view.View.INVISIBLE else android.view.View.VISIBLE },modifier=Modifier.fillMaxWidth().weight(1f).testTag("report.host"))
             } }
         }
     }

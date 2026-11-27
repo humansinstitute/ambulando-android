@@ -8,6 +8,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Rule
@@ -83,8 +84,23 @@ class GenericNappletFlowTest {
             } }
             open(a); compose.waitUntil(20000) { compose.onAllNodes(hasTestTag("generic.trust")).fetchSemanticsNodes().isNotEmpty() }; compose.onNodeWithTag("generic.trust").performClick(); loaded("{}")
             page(web!!,"document.getElementById('save').click()"); loaded("{\"answered\":false,\"zero\":0}")
-            val saved=runBlocking { api.fileVersions(w.id,w.appNpub,a.data.id) }
+            var saved=runBlocking { api.fileVersions(w.id,w.appNpub,a.data.id) }
             compose.onNodeWithTag("generic.close").performClick(); reopen(a); loaded("{\"answered\":false,\"zero\":0}"); compose.onAllNodesWithTag("generic.trust").assertCountEquals(0)
+            // Cached code and data render while every network request is still delayed.
+            compose.onNodeWithTag("generic.close").performClick()
+            val release=CompletableDeferred<Unit>()
+            model.sampleTower!!.requestGate={ release.await() }
+            val cachedStart=android.os.SystemClock.elapsedRealtime()
+            reopen(a); loaded("{\"answered\":false,\"zero\":0}")
+            val cachedMillis=android.os.SystemClock.elapsedRealtime()-cachedStart
+            assertFalse(release.isCompleted)
+            context.getExternalFilesDir(null)!!.resolve("cached-generic-timing.json").writeText(buildJsonObject { put("evidence","synthetic native WebView, verified durable code and data");put("usableMillis",cachedMillis);put("network","all requests gated");put("versionCode",BuildConfig.VERSION_CODE) }.toString())
+            // Queue the first save from the displayed cached base while validation is still delayed.
+            page(web!!,"document.getElementById('save').click()")
+            model.sampleTower!!.requestGate=null; release.complete(Unit)
+            compose.waitUntil(25000) { runBlocking { api.fileVersions(w.id,w.appNpub,a.data.id).versions.size>saved.versions.size } }
+            saved=runBlocking {api.fileVersions(w.id,w.appNpub,a.data.id)}
+            compose.waitForIdle()
             // A healthy authority check must preserve the current document's draft.
             page(web!!,"document.getElementById('draft').value='keep';document.getElementById('draft').dispatchEvent(new Event('input'))")
             val nonce=page(web!!,"nappletSession"); Thread.sleep(31000)
@@ -103,7 +119,7 @@ class GenericNappletFlowTest {
             val evidenceFile=context.getExternalFilesDir(null)!!.resolve("generic-unknown-apps.json")
             evidenceFile.writeText(JsonObject(proof+("backgroundResume" to JsonPrimitive("pending"))).toString())
             i.uiAutomation.takeScreenshot().let { bitmap -> context.getExternalFilesDir(null)!!.resolve("generic-loaded-before-resume.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
-            val priorNonce=page(web!!,"nappletSession"); scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED); scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED); loaded("{\"answered\":false,\"zero\":0}"); assertNotEquals(priorNonce,page(web!!,"nappletSession"))
+            val priorNonce=page(web!!,"nappletSession"); scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED); scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED); loaded("{\"answered\":false,\"zero\":0}"); assertEquals(priorNonce,page(web!!,"nappletSession"))
             evidenceFile.writeText(JsonObject(proof+("backgroundResume" to JsonPrimitive("passed"))).toString())
             i.uiAutomation.takeScreenshot().let { bitmap -> context.getExternalFilesDir(null)!!.resolve("generic-loaded.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
             }

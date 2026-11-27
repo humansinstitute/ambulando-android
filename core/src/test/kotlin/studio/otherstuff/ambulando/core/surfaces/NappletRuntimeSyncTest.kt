@@ -44,6 +44,45 @@ class NappletRuntimeSyncTest {
         put("type","wingman-napplet-data");put("version",3);put("session",session);put("requestId",UUID.randomUUID().toString());put("operation",operation);put("collection","entries")
         if(operation=="list"){put("limit",1);put("cursor",JsonNull)}else{put("record_id","note");if(operation!="get"){put("base_revision",revision);if(operation!="delete")put("value",value)}}
     }
+    @Test fun durableBundleAndCollectionReadSurviveNewRuntimeAndDeniedNetwork(): Unit=runBlocking {
+        val h=harness()
+        try {
+            val a=h.fixture.publish(html("cached-"+UUID.randomUUID()),TestKeys.NPUB)
+            h.runtime.refresh(); h.runtime.open(a.id)
+            val read=request("list")
+            h.runtime.execute(a,read)
+            h.runtime.execute(a,request("create"))
+            val reopened=NappletRuntimeSync(h.sync,h.connection,h.workspace) { h.current }
+            h.fixture.deny=true
+            reopened.hydrate()
+            assertEquals(a,reopened.state.value.installations.single())
+            assertEquals(html(a.id),reopened.cachedOpen(a.id)!!.second)
+            val cached=reopened.cachedRead(a,read)!!
+            assertEquals("note",cached.getValue("records").jsonArray.single().jsonObject.getValue("id").jsonPrimitive.content)
+            assertEquals(1,cached.getValue("records").jsonArray.single().jsonObject.getValue("revision").jsonPrimitive.int)
+            h.current=false
+            assertTrue(runCatching {reopened.cachedOpen(a.id)}.isFailure)
+            h.current=true
+            reopened.forgetLocal(a.id)
+            assertNull(reopened.cachedOpen(a.id))
+            assertNull(NappletRuntimeSync(h.sync,h.connection.copy(id=UUID.randomUUID().toString()),h.workspace) {true}.cachedOpen(a.id))
+            reopened.clear()
+        } finally {h.close()}
+    }
+    @Test fun oldReleaseInvalidationCannotEvictNewVerifiedBundle(): Unit=runBlocking {
+        val h=harness()
+        try {
+            val old=h.fixture.publish(html("versioned-"+UUID.randomUUID()),TestKeys.NPUB)
+            h.runtime.refresh();h.runtime.open(old.id)
+            val fresh=h.fixture.publish(html(old.id,"1.0.1"),TestKeys.NPUB)
+            h.runtime.open(fresh.id)
+            h.runtime.forgetLocal(old.id,old)
+            assertEquals(fresh,h.runtime.cachedOpen(old.id)!!.first)
+            assertTrue(h.runtime.cachedOpen(old.id)!!.second.contains("1.0.1"))
+            h.runtime.forgetLocal(fresh.id,fresh)
+            assertNull(h.runtime.cachedOpen(fresh.id))
+        } finally {h.close()}
+    }
     @Test fun twoUnknownAppsSaveReopenCodeUpdateHistoryKeepReinstallAndDelete(): Unit=runBlocking {
         val h=harness()
         try {

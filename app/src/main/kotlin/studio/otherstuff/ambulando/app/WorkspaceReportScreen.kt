@@ -20,7 +20,7 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntime
     val services = studio.otherstuff.ambulando.app.ui.nav.LocalAppServices.current
     // An uncertain create must survive pause, relock, validation retries and generation changes.
     var setupUncertain by remember(runtime.boundary.id) { mutableStateOf(false) }
-    key(runtime, readiness, services.unlocked) {
+    key(runtime, services.unlocked) {
         ReportBootstrapScreen(model, runtime, readiness, services.unlocked, setupUncertain) { setupUncertain = it }
     }
 }
@@ -51,8 +51,14 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntime
         currentCoroutineContext().ensureActive()
         if (!current()) throw studio.otherstuff.ambulando.core.sync.WorkspacePaused()
     }
-    val diagnostics = remember { ReportDiagnostics(model.diagnostics, ::current) }
-    val api = remember { model.fileNappletAPI(c, runtime.directTransport, ::checkCurrent) }
+    val local = remember(runtime) { LocalNappletContent(runtime.store,w,localContentOwner(c,w), { alive && model.active === runtime && services.unlocked && !w.accessRemoved }) }
+    val locationKey="napplet.report.location.v1:${c.id}:${w.id}"
+    LaunchedEffect(runtime) {
+        val id=runtime.store.reader.state(locationKey)
+        if(id!=null) local.code(id)?.let { opened=it.file }
+    }
+    val diagnostics = ReportDiagnostics(model.diagnostics, ::current)
+    val api = model.fileNappletAPI(c, runtime.directTransport, ::checkCurrent)
     suspend fun discover(): List<FileRecord> {
         diagnostics.at(ReportStage.IDENTITY) { checkCurrent() }
         return api.workspaceReportInstances(w.id, w.appNpub, c.signerNpub, diagnostics).also { checkCurrent() }
@@ -68,14 +74,16 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntime
         }
         checkCurrent()
         opened = fresh
+        runtime.store.writer.setState(locationKey,fresh.id)
     }
-    LaunchedEffect(refresh) {
+    LaunchedEffect(refresh, readiness) {
         if (!readiness.ready || !unlocked) return@LaunchedEffect
-        candidates = null; opened = null; failure = null; busy = true
+        failure = null; busy = true
         var metadata = false
         try {
             val found = discover()
             checkCurrent(); candidates = found
+            if(opened!=null && found.none { it.id==opened!!.id }) { opened=null; runtime.store.writer.setState(locationKey,null) }
             if (found.size == 1) { metadata = true; open(found.single()) }
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) {
@@ -83,7 +91,7 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntime
                 else "Could not verify your existing reports. No replacement was created. Retry when access is available."
         } finally { if (currentCoroutineContext().isActive && current()) busy = false }
     }
-    if (current()) opened?.let { file ->
+    if (alive && model.active === runtime && unlocked && services.unlocked && !w.accessRemoved && model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked) opened?.let { file ->
         key(boundary, file.id) { HtmlFileArtefact(model, file, appMode = true) }
         return
     }
@@ -93,9 +101,9 @@ import studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntime
             !unlocked || w.accessRemoved || !services.unlocked -> Text("Unlock an accessible workspace to open Workspace Report.")
             !readiness.ready -> {
                 if (readiness.issue != null) {
-                    Text("Workspace validation failed. Refresh the connection before opening your report.", modifier = Modifier.testTag("apps.reportValidationError"))
-                    TextButton(onClick = { scope.launch { if (alive && model.active === runtime) runtime.start(foreground = true, force = true) } }) { Text("Retry validation") }
-                } else Text("Waiting for workspace access to be confirmed…", modifier = Modifier.testTag("apps.reportWaiting"))
+                    Text("This report has not been saved on this device yet. Reconnect and retry.", modifier = Modifier.testTag("apps.reportValidationError"))
+                    TextButton(onClick = { scope.launch { if (alive && model.active === runtime) runtime.start(foreground = true, force = true) } }) { Text("Retry") }
+                } else Text("Loading Workspace Report…", modifier = Modifier.testTag("apps.reportWaiting"))
             }
             busy -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Checking your private reports…") }
             failure != null -> {

@@ -49,11 +49,17 @@ import studio.otherstuff.ambulando.app.ui.nav.*
         FileNapplet.verifiedHTML(bytes,html,requireNotNull(version.sizeBytes),requireNotNull(version.sha256))
         file to requireNotNull(GenericNapplet.parse(html,file.raw.obj("metadata") ?: JsonObject(emptyMap())))
     }
+    val local=remember(runtime) { LocalNappletContent(runtime.store,w,localContentOwner(c,w), { model.active === runtime && services.unlocked }) }
     // Launcher descriptors only; opening always verifies code and current authority in the host.
     val verifiedPins = remember(boundary) { FileDescriptorCache<Pair<FileRecord,GenericNapplet.Binding>>() }
     val ids=(pins.visibleItems.filter { it.pin.resourceType==PinRecord.ResourceType.FILE }.map { it.pin.resourceId } + pins.pending.values.filter { it.isPending && it.payloadObject["pinned"]==JsonPrimitive(true) && it.string("resource_type")=="file" }.mapNotNull { it.targetId }).distinct()
     AppDiscoveryEffect(active && services.unlocked && !w.accessRemoved,boundary,ids,files.filter { it.id in ids }.map { Triple(it.id,it.raw,it.accessRemoved) }) {
         val result=mutableListOf<Pair<FileRecord,GenericNapplet.Binding>>()
+        for(id in ids) local.code(id)?.let { cached ->
+            GenericNapplet.parse(cached.html,cached.file.raw.obj("metadata") ?: JsonObject(emptyMap()))?.let { result += cached.file to it }
+        }
+        installed=result.toList()
+        result.clear()
         verifiedPins.retain(ids.toSet())
         for(id in ids) try {
             val known = files.firstOrNull { it.id == id }
@@ -65,7 +71,12 @@ import studio.otherstuff.ambulando.app.ui.nav.*
                 verifiedPins.put(it.first,it)
             }
             result += verified
-        } catch(e: CancellationException) { throw e } catch(_: Exception) { verifiedPins.remove(id) }
+        } catch(e: CancellationException) { throw e } catch(e: Exception) {
+            verifiedPins.remove(id)
+            if(transientNappletFailure(e)) local.code(id)?.let { cached ->
+                GenericNapplet.parse(cached.html,cached.file.raw.obj("metadata") ?: JsonObject(emptyMap()))?.let { result += cached.file to it }
+            }
+        }
         if(model.activeBoundaryId==boundary) installed=result
     }
     Column(Modifier.fillMaxWidth().padding(horizontal=16.dp)) {

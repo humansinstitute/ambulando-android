@@ -17,8 +17,11 @@ class GoalsController(
     private val workspace: String,
     private val app: String,
     private val viewer: String,
+    private val local: GoalsLocalContent? = null,
     private val current: () -> Boolean,
 ) {
+    constructor(api: TowerAPI, workspace: String, app: String, viewer: String, current: () -> Boolean) : this(api, workspace, app, viewer, null, current)
+
     /** A goal file that exists but cannot be shown (newer app version, damaged content). It is never rewritten. */
     data class Unreadable(val fileId: String, val name: String, val reason: String)
 
@@ -40,8 +43,21 @@ class GoalsController(
 
     fun goal(fileId: String): GoalDocument? = _state.value.goals.firstOrNull { it.id == fileId }
 
-    suspend fun refresh() = gate.withLock {
+    /** Local hydration never queues behind an in-flight online refresh. */
+    suspend fun hydrate() {
+        if (local != null && current()) {
+            val expected=_state.value
+            val saved=local.load()
+            val cached = saved ?: local.visible(expected)
+            if (current() && _state.compareAndSet(expected,cached.copy(loading=expected.loading))) {
+                (saved?.space as? GoalsSpaceState.Ready)?.let { ownerOnly=it.ownerOnly }
+            }
+        }
+    }
+    suspend fun refresh() { hydrate(); refreshOnline() }
+    private suspend fun refreshOnline() = gate.withLock {
         _state.update { it.copy(loading = true) }
+        val localToken=local?.token()
         try {
             check(current()) { "Unlock an accessible workspace to open goals." }
             val space = api.goalsSpace(workspace, app, viewer, ownerOnly)
@@ -50,12 +66,22 @@ class GoalsController(
             for (file in files) {
                 check(current())
                 try { goals += api.readGoal(workspace, app, file) }
+                catch(e: TowerError.Http) { if(e.status in setOf(403,404)) local?.remove(file.id) else throw e }
                 catch (e: GoalError) { unreadable += Unreadable(file.id, file.displayName, e.message ?: "Could not be read.") }
             }
             check(current())
+            if(local!=null && local.token()!=localToken) {
+                hydrate(); _state.update { it.copy(loading=false) }; return@withLock
+            }
             _state.value = State(loaded = true, goals = goals.sortedWith(order), space = space, unreadable = unreadable)
+            local?.save(_state.value)
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { _state.update { it.copy(loading = false, error = userMessage(e)) } }
+        catch (e: Exception) {
+            if (!current()) _state.value = State(error = userMessage(e))
+            else if(e is TowerError.Http && e.status in setOf(403, 404)) {
+                local?.clear(); _state.value = State(error = userMessage(e))
+            } else _state.update { it.copy(loading = false, error = userMessage(e)) }
+        }
     }
 
     /** Creates the private Goals channel (null [scopeId]: the disclosed owner-only fallback) and loads it. */
@@ -118,11 +144,13 @@ class GoalsController(
     /** Re-reads one goal from Tower (e.g. after a conflict or an agent edit). */
     suspend fun reload(fileId: String): GoalDocument = gate.withLock {
         check(current())
-        api.readGoal(workspace, app, fileId).also(::publish)
+        api.readGoal(workspace, app, fileId).also { publish(it) }
     }
 
-    private fun publish(doc: GoalDocument) = _state.update { s ->
-        s.copy(goals = (s.goals.filterNot { it.id == doc.id } + doc).sortedWith(order), loading = false, loaded = true, error = null)
+    private suspend fun publish(doc: GoalDocument) {
+        check(current())
+        _state.update { s -> s.copy(goals = (s.goals.filterNot { it.id == doc.id } + doc).sortedWith(order), loading = false, loaded = true, error = null) }
+        local?.save(_state.value)
     }
 
     /** The shared focus order (status, chosen rank, then date and name), the same on every client. */

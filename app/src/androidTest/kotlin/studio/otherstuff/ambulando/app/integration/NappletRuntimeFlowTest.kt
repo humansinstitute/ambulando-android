@@ -8,6 +8,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Rule
@@ -31,6 +32,8 @@ class NappletRuntimeFlowTest {
     private val instrumentation get()=InstrumentationRegistry.getInstrumentation()
     @Test fun twoPostbuildAppsSaveReopenAutomaticUpdateHistoryAndRemoval() {
         val context=instrumentation.targetContext;check(BuildConfig.DEBUG)
+        val cachePhase=InstrumentationRegistry.getArguments().getString("runtimeCachePhase")
+        if(cachePhase=="relaunch") { readCachedAfterRestart();return }
         val hostFile=java.io.File(context.applicationInfo.sourceDir)
         val hostBefore=studio.otherstuff.ambulando.core.nostr.Sha256Hex.of(hostFile.readBytes())
         if((context.applicationContext as AmbulandoApplication).activeModel==null) {
@@ -61,7 +64,11 @@ class NappletRuntimeFlowTest {
                 fun install(app: Cartridge) {
                     compose.runOnIdle {model.section=AppSection.TOOLBOX}
                     compose.onNodeWithTag("runtime.add").performClick();compose.onNodeWithTag("runtime.file").performTextReplacement(app.file.id)
-                    instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                    instrumentation.runOnMainSync {
+                        android.view.inspector.WindowInspector.getGlobalWindowViews().forEach { view ->
+                            androidx.core.view.ViewCompat.getWindowInsetsController(view)?.hide(androidx.core.view.WindowInsetsCompat.Type.ime())
+                        }
+                    }
                     compose.onNodeWithText("Install and review").performClick()
                     compose.waitUntil(20000) {compose.onAllNodesWithTag("runtime.trust").fetchSemanticsNodes().isNotEmpty()}
                     compose.onNodeWithTag("runtime.trust").performClick()
@@ -84,7 +91,18 @@ class NappletRuntimeFlowTest {
                 fun collection(id: String)=runBlocking {runtimeAPI.collections(id).getValue("collections").jsonArray.single().jsonObject}
                 val ac=collection(a.id);val aid=NappletRuntimeProtocol.text(ac,"id")
                 val before=fixture.history(aid,"note");assertEquals(1,before.size)
-                compose.onNodeWithTag("runtime.close").performClick();reopen(a);loaded("First saved note");compose.onAllNodesWithTag("runtime.trust").assertCountEquals(0)
+                compose.onNodeWithTag("runtime.close").performClick()
+                val release=CompletableDeferred<Unit>(); model.sampleTower!!.requestGate={release.await()}
+                val cachedStart=android.os.SystemClock.elapsedRealtime()
+                reopen(a);loaded("First saved note");compose.onAllNodesWithTag("runtime.trust").assertCountEquals(0)
+                val cachedMillis=android.os.SystemClock.elapsedRealtime()-cachedStart
+                assertFalse(release.isCompleted)
+                context.getExternalFilesDir(null)!!.resolve("cached-runtime-timing.json").writeText(buildJsonObject {put("evidence","synthetic native v3 code and collection data");put("usableMillis",cachedMillis);put("network","all requests gated");put("versionCode",BuildConfig.VERSION_CODE)}.toString())
+                model.sampleTower!!.requestGate=null;release.complete(Unit)
+                if(cachePhase=="warm") {
+                    context.getExternalFilesDir(null)!!.resolve("cached-runtime-id.json").writeText(buildJsonObject {put("id",a.id)}.toString())
+                    return@captureOnFailure
+                }
                 val originalNonce=page(web()!!,"nappletSession")
                 page(web()!!,"document.querySelector('textarea').value='Unsaved draft';document.querySelector('textarea').dispatchEvent(new Event('input',{bubbles:true}))")
                 fixture.publish(a.html.replace("1.0.0","1.0.1"),c.signerNpub)
@@ -122,6 +140,32 @@ class NappletRuntimeFlowTest {
                 val evidence=buildJsonObject {put("host_apk_sha256_before",hostBefore);put("host_apk_sha256_after",hostAfter);put("evidence","synthetic Android native v3 flow; not live/store proof");put("firstApp",a.id);put("secondApp",b.id);put("firstCollection",aid);put("versionCode",BuildConfig.VERSION_CODE);put("twoPostBuildApps",true);put("dirtyUpdateDeferred",true);put("backgroundDraftPreserved",true);put("sameGrantCodeUpdateWithoutConsent",true);put("historyRetained",true);put("keepReinstall",true);put("deleteDataAndHistory",true);put("revocationClearsFrame",true);put("workspaceSwitchClearsFrame",true)}
                 context.getExternalFilesDir(null)!!.resolve("napplet-runtime-v3.json").writeText(evidence.toString())
             }
+        }
+    }
+    private fun readCachedAfterRestart() {
+        val context=instrumentation.targetContext
+        val id=Json.parseToJsonElement(context.getExternalFilesDir(null)!!.resolve("cached-runtime-id.json").readText()).jsonObject.getValue("id").jsonPrimitive.content
+        val application=context.applicationContext as AmbulandoApplication
+        lateinit var model: AppModel
+        instrumentation.runOnMainSync {model=application.model(AppEnvironment.Sample(context));model.sampleTower!!.offline=true}
+        val started=android.os.SystemClock.elapsedRealtime()
+        ActivityScenario.launch<MainActivity>(Intent(context,MainActivity::class.java).putExtra(AppEnvironment.SAMPLE_EXTRA,true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            compose.waitUntil(30000) {model.workspaces.any {it.id==SampleIds.STUDIO}}
+            compose.runOnIdle {model.selectWorkspace(model.workspaces.first {it.id==SampleIds.STUDIO})}
+            compose.waitUntil(30000) {model.workspace?.id==SampleIds.STUDIO && model.active?.workspace?.id==SampleIds.STUDIO}
+            compose.runOnIdle {model.section=AppSection.TOOLBOX}
+            compose.waitUntil(10000) {compose.onAllNodesWithTag("runtime.app.$id").fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("runtime.app.$id").performClick()
+            var web: WebView?=null
+            compose.waitUntil(15000) {
+                instrumentation.runOnMainSync {web=android.view.inspector.WindowInspector.getGlobalWindowViews().firstNotNullOfOrNull {find(it)}}
+                web!=null && page(web!!,"document.querySelector('textarea')?.value")=="First saved note"
+            }
+            compose.onAllNodesWithTag("runtime.trust").assertCountEquals(0)
+            context.getExternalFilesDir(null)!!.resolve("cached-runtime-relaunch.json").writeText(buildJsonObject {
+                put("evidence","synthetic native v3 after actual process stop");put("launchToUsableMillis",android.os.SystemClock.elapsedRealtime()-started)
+                put("network","offline before activity launch");put("versionCode",BuildConfig.VERSION_CODE)
+            }.toString())
         }
     }
     private fun find(view: android.view.View): WebView? {if(view is WebView)return view.takeIf {it.isAttachedToWindow && it.isShown && it.visibility==android.view.View.VISIBLE};if(view is android.view.ViewGroup)for(n in 0 until view.childCount)find(view.getChildAt(n))?.let{return it};return null}

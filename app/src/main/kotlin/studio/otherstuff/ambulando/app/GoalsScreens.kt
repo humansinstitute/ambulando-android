@@ -138,7 +138,7 @@ import java.util.UUID
     }
     LaunchedEffect(goals, w.id) {
         model.store.changes.stream().collect { changes ->
-            if (changes.any { (it.workspaceId == null || it.workspaceId == w.id) && it.table == StoreTable.FILES }) { delay(1500); goals.refresh() }
+            if (changes.any { (it.workspaceId == null || it.workspaceId == w.id) && it.table in setOf(StoreTable.FILES,StoreTable.CHANNELS,StoreTable.ACCESS,StoreTable.WORKSPACES) }) { delay(1500); goals.refresh() }
         }
     }
 }
@@ -149,7 +149,7 @@ import java.util.UUID
  */
 @Composable internal fun GoalOrFile(model: AppModel, fileId: String, file: @Composable () -> Unit) {
     val w = model.workspace ?: return file()
-    val stored by remember(w.id, fileId) { model.store.liveQuery({ it.workspaceId == w.id && it.table == StoreTable.FILES }) { model.store.reader.file(w.id, fileId) } }.collectAsState(null)
+    val stored by remember(w.id, fileId) { model.store.liveQuery({ it.workspaceId == w.id && it.table in setOf(StoreTable.FILES,StoreTable.CHANNELS,StoreTable.ACCESS,StoreTable.WORKSPACES) }) { model.store.reader.file(w.id, fileId) } }.collectAsState(null)
     val record = stored
     if (record == null || record.accessRemoved || !GoalFiles.isGoal(record)) return file()
     val goals = rememberGoals(model) ?: return file()

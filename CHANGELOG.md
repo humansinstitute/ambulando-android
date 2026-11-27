@@ -1,3 +1,9 @@
+## 0.9.66 (94)
+
+- Open saved Goals and previously verified napplet code and data from durable local content while the app refreshes in the background. Keep usable content visible when offline or a temporary refresh fails.
+- Cover File napplets and installed v3 apps while retaining their existing sandbox, trust, access and version checks. New saved data can be reloaded without silently replacing unsaved edits; saving still uses each app's online permission and revision contract.
+- Replace the workspace-confirmation waiting message with normal first-load and reconnect states when content has not yet been saved on the device.
+
 ## 0.9.64 (92)
 
 ## 0.9.65 (93)
