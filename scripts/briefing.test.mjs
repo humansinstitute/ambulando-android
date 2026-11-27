@@ -2,14 +2,15 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import * as lib from './briefing-lib.mjs';
-import {publish,read,listAll} from './briefing-ops.mjs';
+import {publish,read,listAll,discover} from './briefing-ops.mjs';
 const w='11111111-1111-4111-8111-111111111111',ch='22222222-2222-4222-8222-222222222222',f='33333333-3333-4333-8333-333333333333';
 const fixture=JSON.parse(readFileSync(new URL('../core/src/test/resources/briefing/v1.json',import.meta.url)));
 const owner=fixture.owner_npub,author=fixture.author_npub;
 const entry={generated_at:'2026-11-26T21:30:00Z',paragraphs:['Changes and focus.'],links:[]},now=new Date('2026-11-27T00:00:00Z');
-const members=[{actor:{id:'o',npub:owner,kind:'human'}},{actor:{id:'a',npub:author,kind:'agent'}}],grants=[{principal_type:'actor',principal_id:'o',access_level:'manage'},{principal_type:'actor',principal_id:'a',access_level:'manage'}];
-function client({conflict=false,uncertain=false}={}) {
-  let d=lib.empty(w,owner,author),version=1,writes=0; const versions=new Map(),objects=new Map();
+const members=[{actor:{id:'o',npub:owner,kind:'human'}},{actor:{id:'a',npub:author,kind:'agent'}}],grants=[{principal_type:'actor',principal_id:'o',access_level:'manage',permissions:['channel.read','file.read','file.write','channel.manage','channel.grants.manage']},{principal_type:'actor',principal_id:'a',access_level:'manage',permissions:['channel.read','file.read','file.write','channel.manage','channel.grants.manage']}];
+function client({conflict=false,uncertain=false,prior=false}={}) {
+  let d=lib.empty(w,owner,author),version=1,writes=0;
+  if(prior)d.entries['2026-11-26']={...entry,generated_at:'2026-11-25T21:30:00Z',paragraphs:['Saved yesterday.'],extra:{retained:true}}; const versions=new Map(),objects=new Map();
   const bytes=()=>Buffer.from(lib.canonical(d)); versions.set('v1',bytes());
   const file=()=>({id:f,workspace_id:w,channel_id:ch,content_type:lib.MIME,metadata:lib.metadata(owner,author),current_version_id:`v${version}`,object:{storage_object:{is_public:false,size_bytes:bytes().length,sha256_hex:lib.sha(bytes())}}});
   return {root:'/w',get document(){return d;},get writes(){return writes;},
@@ -91,4 +92,44 @@ test('rate limit is not blindly retried',async()=>{
 test('two repeated transport failures reconcile then stop without third write',async()=>{
  const c=client();let attempts=0;c.createVersion=async()=>{attempts++;throw new Error('offline');};
  await assert.rejects(publish(c,w,owner,f,'2026-11-27',entry,now),/two attempts/);assert.equal(attempts,2);
+});
+
+test('actual custom author scopes accepted but incomplete and misleading grants refused',()=>{
+ const live=grants.map(g=>({...g,principal_type:'person',stored_principal_type:'actor',principal:{type:'person',id:g.principal_id,actor_id:g.principal_id},access_level:g.principal_id==='a'?'custom':'manage',permissions:g.principal_id==='a'?['doc.write','doc.read','task.create','task.comment','file.read','channel.manage','audio_note.write','comment.create','audio_note.read','channel.read','channel.grants.manage','task.update','file.write','channel.grants.read','channel.write','task.read','channel.grant']:g.permissions}));
+ assert.deepEqual(lib.verifyGrants(live,members,owner,author),{ownerId:'o',authorId:'a'});
+ for(const permissions of [undefined,[],['file.read'],['file.write'],['channel.read','file.read']]) {
+  assert.throws(()=>lib.verifyGrants([live[0],{...live[1],permissions}],members,owner,author));
+ }
+ assert.throws(()=>lib.verifyGrants([...live,live[1]],members,owner,author));
+ assert.throws(()=>lib.verifyGrants([...live,{...live[1],principal_id:'other',principal:{type:'person',id:'other',actor_id:'other'}}],members,owner,author));
+ assert.throws(()=>lib.verifyGrants([live[0],{...live[1],principal_id:'other'}],members,owner,author));
+ assert.throws(()=>lib.verifyGrants(live,[...members,members[0]],owner,author));
+ assert.throws(()=>lib.verifyGrants([{...live[0],permissions:undefined},live[1]],members,owner,author));
+ assert.throws(()=>lib.verifyGrants([live[0],{...live[1],access_level:'manage',permissions:[]}],members,owner,author));
+ for(const principal_type of ['public','group'])assert.throws(()=>lib.verifyGrants([...live,{...live[1],principal_type,principal_id:'unexpected'}],members,owner,author));
+ assert.throws(()=>lib.verifyGrants([live[0],{...live[1],principal:{...live[1].principal,npub:owner}}],members,owner,author));
+});
+
+test('rollover CAS and lost response preserve exact previous dated entry',async()=>{
+ for(const options of [{conflict:true},{uncertain:true}]) {
+  const c=client({...options,prior:true}),before=lib.canonical(c.document.entries['2026-11-26']);
+  await publish(c,w,owner,f,'2026-11-27',entry,now);
+  assert.equal(lib.canonical(c.document.entries['2026-11-26']),before);
+  assert.equal((await publish(c,w,owner,f,'2026-11-27',entry,now)).changed,false);
+  await assert.rejects(publish(c,w,owner,f,'2026-11-27',{...entry,paragraphs:['Replacement']},now),/different briefing/);
+  assert.equal(c.writes,1);assert.equal(lib.canonical(c.document.entries['2026-11-26']),before);
+ }
+});
+test('partial ACL fails before any File read',async()=>{
+ for(const flag of [{partial:true},{complete:false},{has_more:true},{next_cursor:'more'}]) {
+  const c=client(),request=c.request;let fileRead=false;
+  c.request=async(m,p)=>{if(p.endsWith('/grants'))return {grants,...flag};if(p.includes('/files'))fileRead=true;return request(m,p);};
+  await assert.rejects(discover(c,w,owner),/Incomplete briefing grants/);assert.equal(fileRead,false);
+ }
+});
+test('public storage refuses exact content read',async()=>{
+ const c=client(),get=c.getFile;let readBytes=false;
+ c.getFile=async()=>{const b=await get();b.file.object.storage_object.is_public=true;return b;};
+ c.readVersionBytes=async()=>{readBytes=true;return Buffer.from('{}');};
+ await assert.rejects(read(c,w,owner,author,f,ch),/Unverified/);assert.equal(readBytes,false);
 });

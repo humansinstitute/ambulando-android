@@ -20,7 +20,9 @@ export async function discover(c,workspace,owner) {
   if(!found.length) return {state:'needs_setup'};
   const channel=found[0],author=channel.metadata.briefing.author_npub;
   const members=await listAll(c,`${c.root}/members`,'members');
-  const {grants}=await c.request('GET',`${c.root}/channels/${channel.id}/grants`);
+  const acl=await c.request('GET',`${c.root}/channels/${channel.id}/grants`);
+  if(acl.partial===true || acl.complete===false || acl.has_more || acl.next_cursor) throw new Error('Incomplete briefing grants.');
+  const {grants}=acl;
   lib.verifyGrants(grants,members,owner,author);
   const files=(await listAll(c,`${c.root}/channels/${channel.id}/files`,'files')).filter(f=>lib.isFile(f,owner,author));
   if(files.length>1) throw new Error('Multiple briefing Files need reconciliation.');
@@ -32,7 +34,9 @@ export async function verifyDestination(c,workspace,owner,space) {
   const {channel}=await c.request('GET',`${c.root}/channels/${space.channel.id}`);
   if(!lib.isChannel(channel,owner)||channel.workspace_id!==workspace||channel.id!==space.channel.id||channel.metadata.briefing.author_npub!==space.author) throw new Error('Briefing destination changed.');
   const members=await listAll(c,`${c.root}/members`,'members');
-  const {grants}=await c.request('GET',`${c.root}/channels/${channel.id}/grants`);
+  const acl=await c.request('GET',`${c.root}/channels/${channel.id}/grants`);
+  if(acl.partial===true || acl.complete===false || acl.has_more || acl.next_cursor) throw new Error('Incomplete briefing grants.');
+  const {grants}=acl;
   lib.verifyGrants(grants,members,owner,space.author);
 }
 export async function read(c,workspace,owner,author,fileId,channelId) {

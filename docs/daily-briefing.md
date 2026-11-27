@@ -13,8 +13,11 @@ One non-DM channel carries metadata:
 
 Verify grants against current workspace members before reading or publishing. Exactly the owner identity and the
 named author identity may hold direct actor grants; groups and additional principals are refused. The supported response alias `principal_type:person` is accepted
-only with `stored_principal_type:actor`, retaining the exact principal actor ID. The owner must
-manage and the author must contribute or manage. Metadata is discovery, never authority. Member kind labels are not authority; verify exact owner/author npubs
+only with `stored_principal_type:actor`, retaining the exact principal actor ID. Validate the explicit `permissions` array, not the derived `access_level` label (a valid bundle may be labelled `custom`).
+Both identities require `channel.read`, `file.read` and `file.write`; the owner additionally requires `channel.manage`
+and `channel.grants.manage`. Missing/empty/incomplete permissions fail closed even with a `manage` label.
+Require one unambiguous member per npub, distinct actor IDs, exactly one direct grant per identity and consistent
+principal IDs/npubs. Reject partial/paginated ACL envelopes before reading Files. Metadata is discovery, never authority. Member kind labels are not authority; verify exact owner/author npubs
 and membership. The helper binds owner to verified workspace owner and author to current broker bot. Reject duplicate matching
 channels or Files, incomplete discovery and unreadable grants. Never discover/read self-DM or Notes to Self content.
 Do not change Goals grants. Administrators/storage operators retain the backend's existing authority.
@@ -89,3 +92,9 @@ local metadata before a targeted read; unrelated uploads do not rescan scopes. F
 rediscover safely. With no saved location, event-driven discovery is limited to once a minute. Existing central sync
 continues to own SSE, cursor recovery and local record hydration. Android does not persist briefing prose offline;
 failed reads show unavailable and do not present remembered text as current.
+
+A missing today entry does not remove history. Home starts at today's Perth date and offers the latest previous
+saved entry, with its original date, after a successful read. Previous/next day controls remain available.
+A failed access/hash/network check hides all prose and shows an error; it must not fall back to unverified cached
+history. The writer and each client need the same explicit-permission validation; repairing the scheduled helper
+alone cannot repair an installed reader that rejects `custom` grants.

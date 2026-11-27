@@ -21,8 +21,8 @@ android {
         applicationId = "studio.otherstuff.ambulando.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 101
-        versionName = "0.9.73"
+        versionCode = 102
+        versionName = "0.9.74"
         buildConfigField("boolean", "GRANDPARENT_CHAT", "false")
         // Exact HOSTING_STRIPE_RETURN_URLS member for invited-onboarding card checkout. Empty keeps card checkout visibly switched off.
         buildConfigField("String", "ONBOARDING_RETURN_URL", "\"${(project.findProperty("ambulandoOnboardingReturnUrl") as String?).orEmpty()}\"")

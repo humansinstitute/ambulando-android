@@ -53,6 +53,6 @@ try {
   } else if(command==='readback') {
     need('file');if(space.state!=='ready'||space.file.id!==o.file)throw new Error('Canonical File is unavailable.');
     const d=await ops.read(c,o.workspace,o.owner,space.author,o.file,space.channel.id);
-    console.log(JSON.stringify({file_id:d.file.id,version_id:d.versionId,dates:Object.keys(d.document.entries).sort(),readback:true}));
+    console.log(JSON.stringify({file_id:d.file.id,version_id:d.versionId,dates:Object.keys(d.document.entries).sort(),sha256:d.file.object.storage_object.sha256_hex,entry_sha256:Object.fromEntries(Object.entries(d.document.entries).map(([day,entry])=>[day,lib.sha(lib.canonical(entry))])),readback:true}));
   } else throw new Error('Usage: briefing.mjs discover|setup|publish|readback --workspace UUID --owner npub … (docs/daily-briefing.md)');
 } catch(e){console.error(e.message);process.exitCode=1;}

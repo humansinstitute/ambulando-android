@@ -54,13 +54,20 @@ object BriefingPrivacy {
     fun grants(grants: List<JsonObject>, members: List<MemberRecord>, owner: String, author: String): Boolean {
         val o=members.singleOrNull { it.npub==owner } ?: return false
         val a=members.singleOrNull { it.npub==author } ?: return false
+        if(owner==author || o.actorId.isBlank() || a.actorId.isBlank() || o.actorId==a.actorId) return false
         var own=false; var agent=false
+        val seen=HashSet<String?>()
         for(g in grants) {
             val p=g.obj("principal"); val id=p?.string("actor_id") ?: p?.string("id") ?: g.string("principal_id")
-            if(!(g.string("principal_type")=="actor" || g.string("principal_type")=="person" && g.string("stored_principal_type")=="actor") || p?.string("type")=="group" || g.string("stored_principal_type")=="group") return false
+            if(!(g.string("principal_type")=="actor" || g.string("principal_type")=="person" && g.string("stored_principal_type")=="actor") || p?.string("type")?.let {it !in setOf("actor","person")}==true || g.string("stored_principal_type")?.let {it!="actor"}==true) return false
+            if(!seen.add(id) || listOfNotNull(p?.get("actor_id"),p?.get("id"),g["principal_id"]).any {it !is JsonPrimitive || !it.isString || it.content!=id}) return false
+            if(p?.containsKey("npub")==true && p.string("npub")!=if(id==o.actorId)owner else author) return false
+            val permissions=(g["permissions"] as? JsonArray)?.map { (it as? JsonPrimitive)?.takeIf {v->v.isString}?.content ?: return false } ?: return false
+            val required=setOf("channel.read","file.read","file.write") + if(id==o.actorId)setOf("channel.manage","channel.grants.manage") else emptySet()
+            if(!permissions.containsAll(required)) return false
             when {
-                id==o.actorId && g.string("access_level")=="manage" -> own=true
-                id==a.actorId && g.string("access_level") in setOf("contribute","manage") -> agent=true
+                id==o.actorId -> own=true
+                id==a.actorId -> agent=true
                 else -> return false
             }
         }

@@ -35,16 +35,21 @@ export const isFile = (r,owner,author) => active(r) && r.content_type?.split(';'
 export function verifyGrants(grants,members,owner,author) {
   if (!Array.isArray(grants) || !Array.isArray(members)) throw new Error('Private briefing grants could not be verified.');
   const actors = members.map(m => m.actor ?? m);
-  const o = actors.find(a => a.npub === owner);
-  const a = actors.find(a => a.npub === author);
+  const owners = actors.filter(a => a.npub === owner), authors = actors.filter(a => a.npub === author);
+  const o = owners.length === 1 && owners[0], a = authors.length === 1 && authors[0];
   if (!o || !a || owner === author) throw new Error('Briefing owner/author is not a current owner/author pair.');
   const ownerId = o.actor_id ?? o.id, authorId = a.actor_id ?? a.id;
-  let own=false, agent=false;
+  if (!ownerId || !authorId || ownerId === authorId) throw new Error('Ambiguous briefing identities.');
+  let own=false, agent=false; const seen = new Set();
   for (const g of grants) {
     const p=g.principal ?? {}; const id=p.actor_id ?? p.id ?? g.principal_id;
-    if (!(g.principal_type === 'actor' || g.principal_type === 'person' && g.stored_principal_type === 'actor') || p.type === 'group' || g.stored_principal_type === 'group') throw new Error('Briefings must not be shared with groups.');
-    if(id === ownerId && g.access_level === 'manage') own=true;
-    else if(id === authorId && ['contribute','manage'].includes(g.access_level)) agent=true;
+    if (!(g.principal_type === 'actor' || g.principal_type === 'person' && g.stored_principal_type === 'actor') || p.type !== undefined && !['actor','person'].includes(p.type) || g.stored_principal_type !== undefined && g.stored_principal_type !== 'actor') throw new Error('Briefings must not be shared with groups.');
+    if (seen.has(id) || [p.actor_id,p.id,g.principal_id].some(v => v !== undefined && v !== id) || p.npub !== undefined && p.npub !== (id === ownerId ? owner : author)) throw new Error('Ambiguous briefing grant identity.');
+    seen.add(id);
+    const required = ['channel.read','file.read','file.write',...(id === ownerId ? ['channel.manage','channel.grants.manage'] : [])];
+    if (!Array.isArray(g.permissions) || !g.permissions.every(v => typeof v === 'string') || !required.every(v => g.permissions.includes(v))) throw new Error('Briefing effective permissions are incomplete.');
+    if(id === ownerId) own=true;
+    else if(id === authorId) agent=true;
     else throw new Error('Briefings must be private to their owner and author.');
   }
   if(!own || !agent) throw new Error('Briefing owner and author grants are missing.');

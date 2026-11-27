@@ -26,7 +26,9 @@ suspend fun TowerAPI.personalBriefing(workspace: String,app: String,viewer: Stri
     require(location==null || location.author==author)
     var authorName: String? = null
     suspend fun checkGrants() {
-        val grants=obj(client.request(path=TowerAPI.base(workspace)+"/channels/${TowerAPI.uuid(channel.id)}/grants",appNpub=app),"briefing grants").objects("grants") ?: error("Briefing grants could not be checked.")
+        val acl=obj(client.request(path=TowerAPI.base(workspace)+"/channels/${TowerAPI.uuid(channel.id)}/grants",appNpub=app),"briefing grants")
+        require(acl.bool("partial")!=true && acl.bool("complete")!=false && acl.bool("has_more")!=true && acl.string("next_cursor")==null) { "Briefing grants are incomplete." }
+        val grants=acl.objects("grants") ?: error("Briefing grants could not be checked.")
         val people=members(workspace,app)
         authorName=people.firstOrNull {it.npub==author}?.displayName?.takeIf {it.isNotBlank()}
         require(BriefingPrivacy.grants(grants,people,viewer,author)) { "This Briefings space is not private to you and its author." }

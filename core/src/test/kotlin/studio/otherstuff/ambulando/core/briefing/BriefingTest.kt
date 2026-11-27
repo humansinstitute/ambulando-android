@@ -33,11 +33,21 @@ class BriefingTest {
     }
     @Test fun ownerAndAuthorOnlyNoKindAssumption() {
         val members=listOf(MemberRecord(workspace,"o",owner,"human",null),MemberRecord(workspace,"a",author,"human",null))
-        fun grant(id:String,level:String,type:String="actor")=buildJsonObject { put("principal_type",type);put("principal_id",id);put("access_level",level) }
+        fun grant(id:String,level:String,type:String="actor")=buildJsonObject { put("principal_type",type);put("principal_id",id);put("access_level",level);put("permissions",JsonArray(listOf("channel.read","file.read","file.write","channel.manage","channel.grants.manage").map(::JsonPrimitive))) }
         val grants=listOf(grant("o","manage"),grant("a","contribute"))
         assertTrue(BriefingPrivacy.grants(grants,members,owner,author))
         val live=grants.map { JsonObject(it+mapOf("principal_type" to JsonPrimitive("person"),"stored_principal_type" to JsonPrimitive("actor"))) }
         assertTrue(BriefingPrivacy.grants(live,members,owner,author))
+        val custom=live.map {JsonObject(it+("access_level" to JsonPrimitive("custom")))}
+        assertTrue(BriefingPrivacy.grants(custom,members,owner,author))
+        for(scopes in listOf(emptyList(),listOf("file.read"),listOf("file.write"),listOf("channel.read","file.read"))) {
+            val incomplete=JsonObject(custom[1]+("permissions" to JsonArray(scopes.map(::JsonPrimitive))))
+            assertFalse(BriefingPrivacy.grants(listOf(custom[0],incomplete),members,owner,author))
+        }
+        assertFalse(BriefingPrivacy.grants(listOf(custom[0],JsonObject(custom[1]-"permissions")),members,owner,author))
+        assertFalse(BriefingPrivacy.grants(custom+custom[1],members,owner,author))
+        assertFalse(BriefingPrivacy.grants(custom,members+members[0],owner,author))
+        assertFalse(BriefingPrivacy.grants(custom,members,owner,owner))
         assertFalse(BriefingPrivacy.grants(grants+grant("g","read","group"),members,owner,author))
         assertFalse(BriefingPrivacy.grants(grants+grant("other","read"),members,owner,author))
         assertFalse(BriefingPrivacy.grants(grants.take(1),members,owner,author))

@@ -1,3 +1,8 @@
+## 0.9.74 (102)
+
+- Restore private Daily Briefing reads when an authorized author has a custom permission bundle. Validate exact identities and explicit permissions rather than access-level labels.
+- Keep saved dated briefings available through history while rejecting incomplete access lists, extra readers and public storage. The publishing helper preserves prior days across retries and concurrent saves.
+
 ## 0.9.73 (101)
 
 - Support normalized PostgreSQL Goals when the workspace activates the new storage contract, keeping existing Goal IDs, saved mentions, discussions, pins and checkpoint order.

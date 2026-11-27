@@ -44,4 +44,23 @@ class PersonalBriefingFlowTest {
         compose.onNodeWithTag("home.briefing.empty").assertTextEquals("Today’s briefing hasn’t arrived yet.")
         compose.onNodeWithTag("home.briefing.stale").performClick();assertEquals(prior,day)
     }
+
+    @Test fun perthRolloverKeepsSavedDayExplicitAndErrorsHideHistory() {
+        val yesterday=LocalDate.parse("2026-11-27")
+        var today by mutableStateOf(yesterday);var day by mutableStateOf(yesterday)
+        var failure by mutableStateOf<String?>(null)
+        val entry=BriefingEntry(Instant.parse("2026-11-26T21:30:00Z"),listOf("Saved before Perth rollover."),emptyList())
+        val saved=Briefing("w","o","a",mapOf(yesterday to entry),authorName="Synthetic author")
+        compose.setContent {AmbulandoTheme {Column(Modifier.verticalScroll(rememberScrollState())) {PersonalDailyBriefing(saved,true,failure,day,today,false,{day=it},{},{})}}}
+        compose.onNodeWithText("Saved before Perth rollover.").assertExists()
+        compose.runOnIdle {today=Briefing.today(Instant.parse("2026-11-27T16:00:00Z"));day=today}
+        compose.onNodeWithTag("home.briefing.day").assertTextEquals("Today, 28 Nov 2026")
+        compose.onNodeWithTag("home.briefing.empty").assertExists()
+        compose.onNodeWithTag("home.briefing.stale").performScrollTo().performClick()
+        compose.onNodeWithTag("home.briefing.day").assertTextEquals("27 Nov 2026")
+        compose.onNodeWithText("Saved before Perth rollover.").assertExists()
+        compose.runOnIdle {failure="Access verification unavailable."}
+        compose.onNodeWithTag("home.briefing.unavailable").assertExists()
+        compose.onAllNodesWithTag("home.briefing.paragraph").assertCountEquals(0)
+    }
 }
