@@ -1,3 +1,8 @@
+## 0.9.76 (104)
+
+- Stop showing "Attachments refresh failed. Reconnect and Retry." when returning to a thread with attachments. A refresh interrupted by leaving the screen is no longer reported as a failure, and the warning clears once a later refresh succeeds.
+- A real refresh failure now names its cause instead of assuming a lost connection. Recovery clears only the refresh warning, never an editor, save or attachment failure. Drafts, attachments and Send safeguards are unchanged.
+
 ## 0.9.75 (103)
 
 - Open HTML reports with private images without rejecting the rendered image loader as changed saved source. Saved-source byte and hash checks remain enforced.

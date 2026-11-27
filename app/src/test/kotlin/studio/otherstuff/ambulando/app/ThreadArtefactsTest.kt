@@ -1,6 +1,8 @@
 package studio.otherstuff.ambulando.app
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
 import org.junit.Assert.*
 import org.junit.Test
 import studio.otherstuff.ambulando.core.chat.*
@@ -172,5 +174,45 @@ class ThreadArtefactsTest {
         tab.recoveryHeld = false
         assertNull(state.prepare(ChatTarget(id(), id(), id(), id())))
         assertEquals("Sent without Projects: unavailable on this device.", state.notice)
+    }
+    @Test fun refreshFailureNamesItsCauseAndClearsOnlyItselfOnRecovery() = runBlocking {
+        val state = ThreadArtefacts(); var fail: Exception? = IllegalStateException("Unlock the original workspace and retry.")
+        state.refreshMembership = { fail?.let { throw it } }
+        assertFalse(state.refreshTracked())
+        assertTrue(state.failure!!.contains("Unlock the original workspace and retry."))
+        assertFalse(state.failure!!.contains("Reconnect"))
+        fail = null
+        assertTrue(state.refreshTracked()); assertNull(state.failure)
+        fail = IllegalStateException("down"); state.refreshTracked()
+        state.failure = "Tab kept open: editor still saving"
+        fail = null
+        assertTrue(state.refreshTracked())
+        assertEquals("Tab kept open: editor still saving", state.failure)
+    }
+    @Test fun cancelledRefreshIsNotReportedAsFailure() = runBlocking {
+        val state = ThreadArtefacts()
+        state.refreshMembership = { throw kotlinx.coroutines.CancellationException("left composition") }
+        assertTrue(runCatching { state.refreshTracked() }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertNull(state.failure)
+        val job = launch(kotlinx.coroutines.Dispatchers.Unconfined) { state.refreshMembership = { kotlinx.coroutines.awaitCancellation() }; state.refreshTracked() }
+        job.cancelAndJoin(); assertNull(state.failure)
+        state.refreshMembership = { throw kotlinx.coroutines.CancellationException("x") }
+        state.tabs.add(ThreadArtefactTab("doc", id(), "D").also { it.open = true })
+        assertTrue(runCatching { state.prepare(ChatTarget(id(), id(), id(), id())) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertNull(state.failure)
+    }
+    @Test fun failureRaisedDuringSuccessfulRefreshSurvivesAndCauseIsBounded() = runBlocking {
+        val state = ThreadArtefacts()
+        state.refreshMembership = { state.failure = "Draft recovery could not be held durably." }
+        assertTrue(state.refreshTracked())
+        assertEquals("Draft recovery could not be held durably.", state.failure)
+        state.failure = null
+        state.refreshMembership = { error("HTTP 500\n" + "x".repeat(400) + "{\"secret\":true}") }
+        assertFalse(state.refreshTracked())
+        assertFalse(state.failure!!.contains("secret")); assertFalse(state.failure!!.contains("\n"))
+        assertTrue(state.failure!!.length < 220)
+        state.refreshMembership = { state.failure = "Remove not confirmed: x" }
+        assertTrue(state.refreshTracked())
+        assertEquals("Remove not confirmed: x", state.failure)
     }
 }

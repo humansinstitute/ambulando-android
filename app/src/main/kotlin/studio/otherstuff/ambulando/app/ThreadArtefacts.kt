@@ -107,6 +107,28 @@ internal class ThreadArtefacts {
     var busy by mutableStateOf(false)
     var failure by mutableStateOf<String?>(null)
     var discuss by mutableStateOf(false)
+    /** The exact [failure] text a membership refresh set, so a later success clears only its own warning. */
+    private var refreshFailure: String? = null
+    /**
+     * Runs the membership refresh for foreground and manual retries. Cancellation (the view leaving composition) is not a
+     * failure and propagates. A real failure names its cause without presuming the network; a success clears only the
+     * warning this refresh raised, never an editor, save or attachment failure raised since.
+     */
+    suspend fun refreshTracked(): Boolean {
+        val refresh = refreshMembership ?: return true
+        try { refresh() }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            // Keep the cause useful but bounded: one line, never a raw server body.
+            val cause = (e.message ?: e::class.simpleName).orEmpty().lineSequence().first().trim().take(120)
+            val message = "Attachments refresh failed: $cause. Open Artefacts and use Refresh attachments to retry."
+            failure = message; refreshFailure = message
+            return false
+        }
+        if (failure == refreshFailure) failure = null
+        refreshFailure = null
+        return true
+    }
     fun open(kind: String, id: String, title: String = "Artefact") {
         if (busy) return
         requestOpen?.let { it(kind, id, title); return }
@@ -162,7 +184,9 @@ internal class ThreadArtefacts {
         check(!busy) { "An artefact operation is already running." }
         notice = omittedTabs.takeIf { it.isNotEmpty() }?.let { omitted -> "Sent without ${omitted.joinToString { it.title }}: unavailable on this device." }
         if (sendTabs.isEmpty()) return null
-        try { refreshMembership?.invoke() } catch (e: Exception) { failure = "Send paused: attachments could not be confirmed. Reconnect and retry."; throw e }
+        try { refreshMembership?.invoke() }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { failure = "Send paused: attachments could not be confirmed (${e.message ?: e::class.simpleName}). Retry Send."; throw e }
         if (sendTabs.isEmpty()) return null
         busy = true; failure = null
         try {
@@ -341,9 +365,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     }
     DisposableEffect(lifecycle, state) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) scope.launch {
-                try { refreshMembership() } catch (e: Exception) { state.failure = "Attachments refresh failed. Reconnect and Retry." }
-            }
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) scope.launch { state.refreshTracked() }
             if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) model.launchDetached {
                 state.checkpointChat?.invoke()
                 state.tabs.forEach { runCatching { it.preserve() } }
@@ -432,7 +454,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
             state.failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!state.membershipReady) Text("Saved attachments shown; refresh to confirm the current server list.")
             if (state.members.isEmpty()) Text("No attachments in this thread.")
-            TextButton(onClick = { scope.launch { try { refreshMembership(); state.failure = null } catch (e: Exception) { state.failure = "Attachments refresh failed: ${e.message}. Retry when connected." } } }, enabled = !state.busy) { Text("Refresh attachments") }
+            TextButton(onClick = { scope.launch { state.refreshTracked() } }, enabled = !state.busy) { Text("Refresh attachments") }
             LazyColumn(Modifier.heightIn(max = 400.dp)) { items(state.tabs.filter { it.attached || it.open || it.publicationHeld }, key = { it.kind + it.id }) { tab -> Column {
             TextButton(onClick = { if (tab.attached) state.open(tab.kind, tab.id, tab.title) else state.focus(tab.kind, tab.id, tab.title); state.listing = false }, modifier = Modifier.fillMaxWidth().testTag("thread.artefacts.focus.${tab.id}")) { Text(tab.title + (if (!tab.attached) " · Detached recovery" else if (tab.publicationHeld) " · Recovery held" else if (tab.open && tab.unavailable != null) " · Unavailable" else if (tab.open) " · ${tab.versionLabel}" else "")) }
             Row { TextButton(onClick = { scope.launch {
