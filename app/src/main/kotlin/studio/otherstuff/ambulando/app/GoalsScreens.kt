@@ -154,7 +154,7 @@ import java.util.UUID
     val w = model.workspace ?: return file()
     val stored by remember(w.id, fileId) { model.store.liveQuery({ it.workspaceId == w.id && it.table in setOf(StoreTable.FILES,StoreTable.CHANNELS,StoreTable.ACCESS,StoreTable.WORKSPACES) }) { model.store.reader.file(w.id, fileId) } }.collectAsState(null)
     val record = stored
-    if (record == null || record.accessRemoved || !GoalFiles.isGoal(record)) return file()
+    if (record != null && (record.accessRemoved || !GoalFiles.isGoal(record))) return file()
     val goals = rememberGoals(model) ?: return file()
     val state by goals.state.collectAsState()
     LaunchedEffect(goals) { if (!goals.state.value.loaded) goals.refresh() }

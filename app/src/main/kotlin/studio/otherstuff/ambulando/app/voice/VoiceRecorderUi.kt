@@ -45,6 +45,7 @@ internal fun rememberVoiceRecorderAction(model: AppModel, c: ConnectionRecord, w
     var permissionTarget by remember { mutableStateOf<VoiceDestination?>(null) }
     var grantedTarget by remember { mutableStateOf<VoiceDestination?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    val startFailure by voice.startFailure.collectAsState()
     fun start(destination: VoiceDestination) {
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) { error = "Return to Ambulando and tap Record again."; return }
         if (!model.foreground || model.identityState !is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked || model.identityState?.npub != destination.signerNpub ||
@@ -54,8 +55,10 @@ internal fun rememberVoiceRecorderAction(model: AppModel, c: ConnectionRecord, w
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         val destination = permissionTarget
         permissionTarget = null
-        if (result.values.all { it } && destination != null) grantedTarget = destination
-        else error = "Microphone and notification permission are required to record. Enable them in Android settings, then tap Record again."
+        // Only the microphone is required. Notification permission is requested so the Stop action is visible,
+        // but declining it must not block recording.
+        if (destination != null && ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) grantedTarget = destination
+        else error = "Microphone permission is required to record. Allow it in the app's Android settings, then tap Record again."
     }
     // Android delivers permission results before onResume. Keep consent tied to this mounted
     // composer, wait for its visible lifecycle, then revalidate the original account/destination.
@@ -69,7 +72,7 @@ internal fun rememberVoiceRecorderAction(model: AppModel, c: ConnectionRecord, w
             add(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
         }.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
-        if (required.isEmpty()) start(destination)
+        if (Manifest.permission.RECORD_AUDIO !in required) start(destination)
         else { permissionTarget = destination; permission.launch(required.toTypedArray()) }
     }
     val record: () -> Unit = {
@@ -83,7 +86,7 @@ internal fun rememberVoiceRecorderAction(model: AppModel, c: ConnectionRecord, w
             requestRecording(destination)
         }
     }
-    return VoiceRecorderAction(record, enabled && draft == null, error)
+    return VoiceRecorderAction(record, enabled && draft == null, error ?: startFailure)
 }
 
 @Composable
@@ -114,7 +117,16 @@ internal fun VoiceRecorderUi(model: AppModel, c: ConnectionRecord, target: ChatT
             if (recording) TextButton(onClick = { voice.cancel() }, modifier = Modifier.testTag("voice.cancel")) { Text("Cancel recording") }
             visible.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("voice.error")) }
         } else if (draft != null) Text("A recording is kept for another account. Return to that account to review it.")
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("voice.permission.error")) }
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("voice.permission.error"))
+            if (it.contains("permission", ignoreCase = true)) {
+                val context = LocalContext.current
+                TextButton(onClick = {
+                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.fromParts("package", context.packageName, null)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }, modifier = Modifier.testTag("voice.open.settings")) { Text("Open app settings") }
+            }
+        }
     }
 }
 

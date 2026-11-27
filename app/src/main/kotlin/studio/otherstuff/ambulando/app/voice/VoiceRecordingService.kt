@@ -25,17 +25,12 @@ class VoiceRecordingService : Service() {
     private var route: HeadsetRoute? = null
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var closing = false
-    private var recordingNotificationsEnabled = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     override fun onCreate() {
         super.onCreate()
         // startForegroundService is a promise even if a queued start was cancelled, or setup fails.
         // Settle it before reading the draft/model or entering a coroutine. This opens no microphone.
         val manager = getSystemService(NotificationManager::class.java)
-        // Posting an FGS notification may raise an app-created channel's importance. Preserve the
-        // pre-promotion decision; bootstrap must never bypass the recording notification requirement.
-        recordingNotificationsEnabled = manager.getNotificationChannel(CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE &&
-            androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Voice recording", NotificationManager.IMPORTANCE_LOW))
         val notification = notification(null).build()
         when {
@@ -76,7 +71,6 @@ class VoiceRecordingService : Service() {
             try {
                 check(ContextCompat.checkSelfPermission(this@VoiceRecordingService, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "Microphone permission is required. Enable it in Android settings and try again." }
                 val manager = getSystemService(NotificationManager::class.java)
-                check(recordingNotificationsEnabled && manager.getNotificationChannel(CHANNEL).importance != NotificationManager.IMPORTANCE_NONE) { "Enable voice recording notifications in Android settings." }
                 val notificationBuilder = notification(draft)
                 val notification = notificationBuilder.build()
                 if (android.os.Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -210,7 +204,11 @@ class VoiceRecordingService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null
         owner?.let { voice ->
             voice.state.value?.let { draft ->
-                if (draft.phase == VoicePhase.STARTING || draft.phase == VoicePhase.RECORDING) voice.drafts.save(draft.copy(
+                if (failure != null && startElapsed == 0L && draft.phase == VoicePhase.STARTING) {
+                    // Capture never began: there is no audio to play or send. Discard the empty draft and report why.
+                    voice.drafts.clear()
+                    voice.startFailure.value = failure
+                } else if (draft.phase == VoicePhase.STARTING || draft.phase == VoicePhase.RECORDING) voice.drafts.save(draft.copy(
                     phase = if (failure == null && capture != null) VoicePhase.REVIEW else VoicePhase.INTERRUPTED,
                     elapsedMillis = if (startElapsed > 0) SystemClock.elapsedRealtime() - startElapsed else 0, error = failure,
                 ))

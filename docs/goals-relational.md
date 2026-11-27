@@ -1,0 +1,15 @@
+# Goals storage and native references
+
+Goals use the app-owned normalized PostgreSQL model when NStack's native-v1 authority is active for the verified personal Goals channel. The canonical SQL, mapper, migration and recovery tools live in Ambulando Native's `shared/goals-relational` directory. Android does not install a second schema or distribute app signing keys.
+
+`GoalsRelational` uses the existing channel/workspace/signer boundary. Native-v1 status, query and UUID reads are semantic reads even though they use POST. All table pages share a generation, followed by a final generation check; partial or changed snapshots are never published. The app schema marker must name contract 1 and `ambulando-goals-relational-1` before content is edited. The generic server status controls writer selection; the app marker carries provenance only.
+
+Before activation, the existing File repository remains available while staging has no source fence. Fenced staging and frozen SQL retain accessible local content and reject saves. After SQL authority is observed, a missing namespace/authority never selects the old writer or clears the content cache. Known access revocation still hides content. Cache and pending requests are bound to signer, backend identity, workspace and runtime boundary.
+
+Existing Goal IDs remain their original File UUIDs. `mention:file:<UUID>`, saved `goal_file_id` metadata, discussion receipts and related records keep the same identity. A SQL-created Goal can open through the native Goal resolver without a File row. The File-compatible presentation wrapper is stored only inside Goals local content; it never overwrites retained File metadata/history in the canonical local File store. A chat association's record ID is a thread UUID, distinct from a `channel#root` body mention.
+
+Known scalar fields, ordered string checkpoint identities, links and pins are normalized. Unknown extensions are JSON object text to preserve numeric literals without converting them through floating point. Links and pins grant no access; newly added targets and discussion channels are verified through their existing typed routes. Inaccessible existing references are retained. Mutations CAS the parent and children and append normalized history atomically. Independent stale edits rebase; same-field conflicts save nothing.
+
+Before sending, the full operation request is saved in the workspace store. An uncertain response leaves that exact request available after process death. Recovery replays its operation ID/body under current access, then requires a reload before a different create/edit intent; it never invents a new create ID to retry an uncertain save.
+
+Validation distinguishes generic-server PostgreSQL/HTTP tests, Android synthetic native-v1 device tests, legacy native UI tests and actual release upgrades. A built APK does not activate the live database. The reviewed migration manager owns the source fence, exact post-fence manifest, schema/policy installation, activation and publication.

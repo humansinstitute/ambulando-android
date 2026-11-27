@@ -8,12 +8,7 @@ import studio.otherstuff.ambulando.core.nostr.Sha256Hex
 import studio.otherstuff.ambulando.core.transport.*
 import java.util.UUID
 
-/**
- * Goals ride existing Tower contracts only: each goal is one ordinary File (channel-artefacts v1) whose content is the
- * goal JSON, kept in the owner's private Goals channel (see [GoalsSpace]). Tower's channel access is the only authority: owner isolation,
- * revisions (`base_version_id`, 409 `stale_base_version`), sync and recovery are the File contract's. Nothing here is
- * a new endpoint.
- */
+/** A stable Goal identity. The File wrapper preserves existing references/UI; SQL content never replaces File history. */
 data class GoalDocument(val file: FileRecord, val versionId: String, val goal: Goal) {
     val id: String get() = file.id
 }
@@ -34,21 +29,21 @@ object GoalFiles {
 }
 
 /** Goal Files of one channel. A failed or truncated list is an error, never "no goals". */
-suspend fun TowerAPI.goalFiles(workspace: String, app: String, channelId: String): List<FileRecord> =
+suspend fun TowerAPI.legacyGoalFiles(workspace: String, app: String, channelId: String): List<FileRecord> =
     client.list(TowerAPI.base(workspace) + "/channels/${TowerAPI.uuid(channelId)}/files", app, "files")
         .map(FileRecord::parse).onEach { require(it.workspaceId == workspace && it.channelId == channelId) }
         .filter(GoalFiles::isGoal)
 
 /** The file's current version, read directly (independent of history length) and verified against its hash. */
-suspend fun TowerAPI.readGoal(workspace: String, app: String, fileId: String): GoalDocument {
+suspend fun TowerAPI.readLegacyGoal(workspace: String, app: String, fileId: String): GoalDocument {
     val o = obj(client.request(path = TowerAPI.base(workspace) + "/files/" + TowerAPI.uuid(fileId), appNpub = app), "goal")
     val file = o.obj("file")?.let(FileRecord::parse) ?: throw TowerError.Malformed("goal")
     if (file.workspaceId != workspace || file.id != fileId.lowercase()) throw TowerError.Malformed("goal")
     if (!GoalFiles.isGoal(file)) throw GoalError.Invalid("This is not a goal.")
-    return readGoal(workspace, app, file)
+    return readLegacyGoal(workspace, app, file)
 }
 
-suspend fun TowerAPI.readGoal(workspace: String, app: String, file: FileRecord): GoalDocument {
+suspend fun TowerAPI.readLegacyGoal(workspace: String, app: String, file: FileRecord): GoalDocument {
     val embedded = file.raw.obj("current_version")?.let { runCatching { FileVersionRecord.parse(it) }.getOrNull() }
         ?.takeIf { it.fileId == file.id && it.sha256 != null }
     val version = embedded ?: fileVersions(workspace, app, file.id).let { list ->
@@ -59,7 +54,7 @@ suspend fun TowerAPI.readGoal(workspace: String, app: String, file: FileRecord):
     return GoalDocument(file, version.id, goal)
 }
 
-suspend fun TowerAPI.createGoal(workspace: String, app: String, channelId: String, goal: Goal): GoalDocument {
+suspend fun TowerAPI.createLegacyGoal(workspace: String, app: String, channelId: String, goal: Goal): GoalDocument {
     goal.validated()
     val bytes = goal.encode().toByteArray(Charsets.UTF_8)
     currentCoroutineContext().ensureActive()
@@ -69,7 +64,7 @@ suspend fun TowerAPI.createGoal(workspace: String, app: String, channelId: Strin
         jsonBody = jsonBody(jsonObjectOf("storage_object_id" to objectId, "display_name" to GoalFiles.fileName(goal), "metadata" to GoalFiles.metadata()))), "goal file")
     val file = reply.obj("file")?.let(FileRecord::parse) ?: throw TowerError.Malformed("goal file")
     if (file.workspaceId != workspace || file.channelId != channelId) throw TowerError.Malformed("goal file")
-    return readGoal(workspace, app, file.id)
+    return readLegacyGoal(workspace, app, file.id)
 }
 
 /** The edit lost every attempt to concurrent saves, or Tower refused it. The goal is unchanged; nothing was overwritten. */
@@ -80,9 +75,9 @@ class GoalSaveFailed(message: String, val retryable: Boolean) : Exception(messag
  * the race (`stale_base_version`) the edits are re-applied to the new head, so independent changes from two devices
  * or an agent both survive; an edit whose expectation no longer holds throws [GoalError.Conflict] and saves nothing.
  */
-suspend fun TowerAPI.editGoal(workspace: String, app: String, fileId: String, edits: List<GoalEdit>, attempts: Int = 4): GoalDocument {
+suspend fun TowerAPI.editLegacyGoal(workspace: String, app: String, fileId: String, edits: List<GoalEdit>, attempts: Int = 4): GoalDocument {
     require(edits.isNotEmpty())
-    var head = readGoal(workspace, app, fileId)
+    var head = readLegacyGoal(workspace, app, fileId)
     repeat(attempts) {
         currentCoroutineContext().ensureActive()
         val next = GoalEdit.applyAll(head.goal, edits)
@@ -97,10 +92,28 @@ suspend fun TowerAPI.editGoal(workspace: String, app: String, fileId: String, ed
                 if (recorded != null && recorded.lowercase() != Sha256Hex.of(bytes)) throw GoalSaveFailed("The saved goal did not match what was sent. Reload to check.", retryable = false)
                 return GoalDocument(outcome.file.file, savedId, next)
             }
-            is VersionOutcome.Conflict -> head = readGoal(workspace, app, fileId)
+            is VersionOutcome.Conflict -> head = readLegacyGoal(workspace, app, fileId)
             is VersionOutcome.Denied -> throw GoalSaveFailed(outcome.message, retryable = false)
             is VersionOutcome.Retryable -> throw GoalSaveFailed(outcome.message, retryable = true)
         }
     }
     throw GoalSaveFailed("This goal is being changed elsewhere. Try again in a moment.", retryable = true)
 }
+
+/** Native references keep their original File UUID while repository authority selects current storage. */
+suspend fun TowerAPI.goalFiles(workspace:String,app:String,channelId:String):List<FileRecord> {
+    val repository=goalsRelational ?: return legacyGoalFiles(workspace,app,channelId)
+    return when(repository.mode(channelId)) {
+        "legacy" -> legacyGoalFiles(workspace,app,channelId)
+        "relational" -> repository.list(channelId).map { it.file }
+        else -> throw GoalSaveFailed("Goals are read-only during migration. Your saved content is retained.",true)
+    }
+}
+suspend fun TowerAPI.readGoal(workspace:String,app:String,fileId:String):GoalDocument =
+    goalsRelational?.read(fileId) ?: readLegacyGoal(workspace,app,fileId)
+suspend fun TowerAPI.readGoal(workspace:String,app:String,file:FileRecord):GoalDocument =
+    goalsRelational?.read(file.id) ?: readLegacyGoal(workspace,app,file)
+suspend fun TowerAPI.createGoal(workspace:String,app:String,channelId:String,goal:Goal):GoalDocument =
+    goalsRelational?.create(channelId,goal) ?: createLegacyGoal(workspace,app,channelId,goal)
+suspend fun TowerAPI.editGoal(workspace:String,app:String,fileId:String,edits:List<GoalEdit>,attempts:Int=4):GoalDocument =
+    goalsRelational?.edit(fileId,edits,attempts) ?: editLegacyGoal(workspace,app,fileId,edits,attempts)

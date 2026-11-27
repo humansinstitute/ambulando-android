@@ -42,10 +42,12 @@ class GoalsFlowTest {
     }
     private fun tap(tag: String) {
         // The goal's rows are lazily composed: compose the target, scroll it fully into view, and only then touch it.
-        reveal(tag); waitTag(tag)
-        if (compose.onAllNodes(hasTestTag("goal.detail")).fetchSemanticsNodes().isNotEmpty())
+        val popupAction=tag in setOf("goal.checkpoint.up","goal.checkpoint.down","goal.checkpoint.edit","goal.checkpoint.remove")
+        if(!popupAction) reveal(tag)
+        waitTag(tag)
+        if (!popupAction && compose.onAllNodes(hasTestTag("goal.detail")).fetchSemanticsNodes().isNotEmpty())
             runCatching { compose.onNodeWithTag("goal.detail").performScrollToNode(hasTestTag(tag)) }
-        val node = compose.onNodeWithTag(tag); runCatching { node.performScrollTo() }
+        val node = compose.onNodeWithTag(tag); if(!popupAction) runCatching { node.performScrollTo() }
         compose.waitForIdle(); node.assertIsDisplayed().performClick()
     }
     /** Rows of the goal's lazy list are disposed once scrolled away: bring the row back before asserting on it. */
@@ -90,7 +92,10 @@ class GoalsFlowTest {
             // Timeline: add, reach, reorder, edit.
             for (title in listOf("Agree first version", "Use daily", "Ready for users")) {
                 tap("goal.addCheckpoint"); type("checkpoint.input.title", title); tap("checkpoint.input.save")
-                compose.waitUntil(30_000) { compose.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty() }
+                compose.waitUntil(30_000) {
+                    runCatching { compose.onNodeWithTag("goal.detail").performScrollToNode(hasText(title)) }
+                    compose.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+                }
             }
             compose.onNodeWithTag("goal.progress").assertTextEquals("0 of 3 checkpoints reached")
             compose.onAllNodesWithTag("goal.reach")[0].performClick()

@@ -72,6 +72,8 @@ class TowerAPI(
     /** Out-of-process transfers for presigned object-store URLs; null means in-process transfers. */
     val transfers: ObjectTransfers? = null,
 ) {
+    var goalsRelational: studio.otherstuff.ambulando.core.goals.GoalsRelational? = null
+
     companion object {
         const val WORKSPACES_PATH = "/api/v4/flightdeck-pg/workspaces"
 

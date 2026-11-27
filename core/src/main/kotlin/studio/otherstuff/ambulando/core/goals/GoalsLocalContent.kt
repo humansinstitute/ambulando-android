@@ -67,7 +67,7 @@ class GoalsLocalContent(private val store: LocalStore, private val workspace: St
         if (space == null) { store.writer.setState(key, null); return }
         require(!store.reader.isChannelAccessRemoved(workspace,space.channel.id))
         if(store.reader.channel(workspace,space.channel.id)==null) store.writer.upsertChannels(workspace,space.channel.scopeId,listOf(space.channel),complete=false)
-        state.goals.forEach { store.writer.cacheVerifiedArtefact(it.file) { true } }
+        state.goals.filter { it.file.raw.string("goals_authority") != "relational" }.forEach { store.writer.cacheVerifiedArtefact(it.file) { true } }
         store.writer.setState(key, buildJsonObject {
             put("viewer", viewer); put("workspace", workspace); put("channel", space.channel.raw); put("ownerOnly", space.ownerOnly)
             put("agents", JsonArray(space.agents.map { agent -> buildJsonObject {

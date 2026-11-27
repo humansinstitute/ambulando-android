@@ -6,7 +6,8 @@ import java.time.format.DateTimeParseException
 
 /**
  * A personal goal: name, description, optional date-only start/target, an ordered checkpoint timeline and links to
- * existing records. Stored as the JSON content of one ordinary File (`application/vnd.ambulando.goal+json`).
+ * existing records. Its application format also reads retained legacy File content (`application/vnd.ambulando.goal+json`);
+ * activated workspaces store known facts as normalized app-owned relational rows.
  * Links are references only: titles, locations and access are always read from the source record, never copied here.
  * Progress is checkpoints reached; nothing is inferred from linked tasks.
  */

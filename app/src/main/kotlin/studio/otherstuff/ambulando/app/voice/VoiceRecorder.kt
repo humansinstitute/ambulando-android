@@ -27,17 +27,21 @@ class VoiceRecorder(private val context: Context, directory: File, private val s
         }
     }
     internal var service: VoiceRecordingService? = null
+    /** Why the last recording never started. The unusable draft is discarded, so the composer surfaces this instead. */
+    val startFailure = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     fun start(destination: VoiceDestination, id: String = java.util.UUID.randomUUID().toString(), headsetOnly: Boolean = false, prompt: String = "", input: VoiceInput? = null) {
         check(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "Microphone permission is required. You can enable it in Android settings." }
-        // Require notifications for a reliably visible Stop action, including on Android 13+.
-        check(androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) { "Enable Ambulando notifications in Android settings to record with a visible Stop action." }
+        // Notifications are not required: a microphone foreground service runs (and appears in Android's
+        // Task Manager) even when its notification is hidden, and the composer always offers Stop.
         check(state.value == null) { "Review or cancel the existing recording first." }
+        startFailure.value = null
         this.input.value = VoiceInputStatus(requested = input)
         val draft = drafts.begin(destination, id, headsetOnly, prompt)
         try {
             ContextCompat.startForegroundService(context, Intent(context, VoiceRecordingService::class.java).putExtra("sample", sample).putExtra("recording", draft.id))
         } catch (e: Exception) {
-            drafts.save(draft.copy(phase = VoicePhase.INTERRUPTED, error = "Could not start microphone recording. Return to Ambulando and retry."))
+            drafts.clear()
+            startFailure.value = "Could not start microphone recording. Return to Ambulando and retry."
         }
     }
     fun stop() {

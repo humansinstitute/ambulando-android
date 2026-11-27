@@ -323,5 +323,5 @@ internal fun AppModel.fileNappletAPI(
             return transport.send(request).also { checkCurrent(); identity.requireSigner(connection.signerNpub) }
         }
     }
-    return TowerAPI(TowerClient(TowerOrigin(connection.origin), fenced, bound), transfers)
+    return bindGoals(TowerAPI(TowerClient(TowerOrigin(connection.origin), fenced, bound), transfers), connection)
 }

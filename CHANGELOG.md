@@ -1,3 +1,9 @@
+## 0.9.73 (101)
+
+- Support normalized PostgreSQL Goals when the workspace activates the new storage contract, keeping existing Goal IDs, saved mentions, discussions, pins and checkpoint order.
+- Retain cached Goals during migration or a temporary storage outage. Readiness for loading Goals stays independent of readiness for saving.
+- Recover uncertain Goal saves from the exact durable request so retrying a create after reopening does not add a duplicate.
+
 ## 0.9.70 (98)
 
 - Start a goal discussion in its saved default channel, or choose an accessible channel explicitly. New chats retain their goal reference; uncertain starts are recovered without creating a duplicate.

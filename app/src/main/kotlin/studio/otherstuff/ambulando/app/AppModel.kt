@@ -256,7 +256,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     val textAttachments: TextAttachmentService get() = textAttachments(requireNotNull(connection), requireNotNull(workspace).id)
     /** A Tower API for direct reads and writes of the workspace in front: its own guarded, write-gated transport only. */
-    fun towerAPI(c: ConnectionRecord) = TowerAPI(TowerClient(TowerOrigin(c.origin), workspaceTransport, identity), transfers)
+    fun towerAPI(c: ConnectionRecord) = bindGoals(TowerAPI(TowerClient(TowerOrigin(c.origin), workspaceTransport, identity), transfers), c)
     /** Bumped whenever the account or workspace in front changes, so a slow wiki step cannot act in the wrong place. */
     var wikiContextEpoch = 0; private set
 

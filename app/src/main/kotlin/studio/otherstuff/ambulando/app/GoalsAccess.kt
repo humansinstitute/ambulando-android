@@ -6,6 +6,7 @@ import studio.otherstuff.ambulando.core.crypto.IdentityState
 import studio.otherstuff.ambulando.core.goals.GoalsController
 import studio.otherstuff.ambulando.core.goals.GoalsTransport
 import studio.otherstuff.ambulando.core.transport.*
+import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.sync.SyncPriority
 
 private val controllers = HashMap<String, GoalsController>()
@@ -46,4 +47,23 @@ internal fun AppModel.goalsController(): GoalsController? {
             }
         }
     }
+}
+
+/** Bound repository state is separate from retained File metadata/history. An observed SQL epoch never falls back. */
+internal fun AppModel.bindGoals(api: TowerAPI, c: studio.otherstuff.ambulando.core.store.ConnectionRecord): TowerAPI {
+    val runtime=active ?: return api
+    val w=workspace ?: return api
+    val owner=w.ownerNpub ?: return api
+    if(runtime.connection.id!=c.id) return api
+    val boundary=activeBoundaryId
+    val binding=studio.otherstuff.ambulando.core.surfaces.localContentOwner(c,w)
+    val key="goals.relational.observed.v1:${c.signerNpub}:${w.id}:$binding"
+    fun current()=active===runtime && activeBoundaryId==boundary && workspace?.id==w.id && workspace?.accessRemoved==false && connection?.id==c.id &&
+        (identityState as? IdentityState.Unlocked)?.npub==c.signerNpub && connection?.let { latest -> workspace?.let { studio.otherstuff.ambulando.core.surfaces.localContentOwner(latest,it)==binding } }==true
+    api.goalsRelational=studio.otherstuff.ambulando.core.goals.GoalsRelational(api,owner,w.id,w.appNpub,c.signerNpub,
+        rememberAuthority={ check(current());runtime.store.writer.setState(key,"observed") },
+        hadAuthority={runtime.store.reader.state(key)!=null}, current=::current,
+        loadPending={ runtime.store.reader.state("$key:pending")?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) as kotlinx.serialization.json.JsonObject } },
+        savePending={ check(current()); runtime.store.writer.setState("$key:pending",it?.toString()) })
+    return api
 }

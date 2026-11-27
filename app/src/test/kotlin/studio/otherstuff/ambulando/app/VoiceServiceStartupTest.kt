@@ -96,21 +96,28 @@ class VoiceServiceStartupTest {
         controller.get().onStartCommand(Intent().setAction("studio.otherstuff.ambulando.voice.STOP"), 0, 2)
         assertTrue(shadowOf(controller.get()).isStoppedBySelf)
     }
-    @Test fun disabledChannelPromotesThenRetainsActionableFailureWithoutCapture() = test { app, voice, _, controller ->
+    @Test fun disabledNotificationChannelStillRecordsBecauseNotificationsAreNotRequired() = test { app, voice, _, controller ->
         app.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("voice_recording_v1", "Voice recording", NotificationManager.IMPORTANCE_NONE))
         assertPreparing(controller)
         controller.startCommand(0, 1)
-        assertNull(capture(controller.get()))
-        assertEquals(VoicePhase.INTERRUPTED, voice.state.value?.phase)
-        assertTrue(voice.state.value?.error.orEmpty().contains("notifications"))
-        assertTrue(shadowOf(controller.get()).isStoppedBySelf)
+        assertNotNull(capture(controller.get()))
+        assertEquals(VoicePhase.RECORDING, voice.state.value?.phase)
+        assertNull(voice.startFailure.value)
     }
-    @Test fun permissionRevokedAfterRequestNeverOpensMicrophone() = test { app, voice, _, controller ->
+    @Test fun deniedNotificationPermissionStillRecords() = test { app, voice, _, controller ->
+        shadowOf(app).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        assertPreparing(controller)
+        controller.startCommand(0, 1)
+        assertNotNull(capture(controller.get()))
+        assertEquals(VoicePhase.RECORDING, voice.state.value?.phase)
+    }
+    @Test fun permissionRevokedAfterRequestNeverOpensMicrophoneAndLeavesNoBrokenDraft() = test { app, voice, _, controller ->
         shadowOf(app).denyPermissions(Manifest.permission.RECORD_AUDIO)
         assertPreparing(controller)
         controller.startCommand(0, 1)
         assertNull(capture(controller.get()))
-        assertEquals(VoicePhase.INTERRUPTED, voice.state.value?.phase)
+        assertNull("A recording that never started must not leave a 0:00 draft with Play/Retry", voice.state.value)
+        assertTrue(voice.startFailure.value.orEmpty().contains("Microphone permission"))
         assertTrue(shadowOf(controller.get()).isStoppedBySelf)
     }
     @Test fun bootstrapTimeoutStopsPromptlyWithoutCapture() = test { _, _, _, controller ->
