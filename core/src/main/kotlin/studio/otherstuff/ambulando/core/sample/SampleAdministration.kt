@@ -128,7 +128,7 @@ class SampleAdministration(private val auth: SampleAuth) {
     fun me(signer: String): Reply? {
         if (viewer == SampleViewer.MEMBER) return null
         return 200 to linkedMapOf(
-            "actor" to linkedMapOf("actor_id" to viewerActor, "npub" to signer),
+            "actor" to linkedMapOf("actor_id" to viewerActor, "npub" to signer, "kind" to "human"),
             "membership" to mapOf("role" to if (isAdmin()) "admin" else "member"),
             "permissions" to (listOf("channel.create", "channel.manage", "channel.read", "channel.write", "scope.create", "workspace.read") + if (isAdmin()) listOf("workspace.manage") else emptyList()),
         )

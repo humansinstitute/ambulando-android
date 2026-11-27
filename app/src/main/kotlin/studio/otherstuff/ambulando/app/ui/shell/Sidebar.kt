@@ -104,6 +104,7 @@ data class SidebarWorkspace(
 )
 
 interface SidebarActions {
+    fun reminders() {}
     fun chooseHome()
     fun chooseScope(scopeId: String)
     fun chooseChannel(scopeId: String, channelId: String)
@@ -150,6 +151,7 @@ fun SidebarContent(state: SidebarState, actions: SidebarActions, modifier: Modif
                         color = if (context.isHome) amb.selectedForeground else amb.foreground, style = MaterialTheme.typography.bodyMedium)
                 }
             }
+            item { ReminderShortcut { actions.reminders() } }
             item { NavigationStatus(state.loadState, compact = true, identityUnavailable = state.identityUnavailable, onRetry = actions::retry) }
             val unread = SidebarNavigation.unreadChannels(state.groups, state.unread)
             if (unread.isNotEmpty()) {
@@ -301,6 +303,7 @@ private fun WorkspaceFooter(state: SidebarState, actions: SidebarActions) {
  * and accessibility description), then one collapsible group per workspace. Every tap names its workspace.
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.stackedItems(state: SidebarState, actions: SidebarActions) {
+    item { ReminderShortcut { actions.reminders() } }
     val unreadRows = state.stacked.flatMap { w -> SidebarNavigation.unreadChannels(w.groups, w.unread).map { w to it } }
     if (unreadRows.isNotEmpty()) {
         item { SidebarHeading("Unread & Active") }
@@ -434,4 +437,9 @@ private fun StatusMessage(fg: Color, bg: Color, text: String, tag: String, retry
             Icon(Icons.Outlined.Refresh, null, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)); Text("Retry", style = MaterialTheme.typography.labelMedium)
         }
     }
+}
+
+@Composable private fun ReminderShortcut(open: () -> Unit) {
+    Text("Reminders", color = Amb.colors.foreground, style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = open).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar.reminders"))
 }

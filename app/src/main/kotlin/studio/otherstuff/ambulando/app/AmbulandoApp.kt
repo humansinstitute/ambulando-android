@@ -21,6 +21,7 @@ import studio.otherstuff.ambulando.app.ui.nav.*
 import studio.otherstuff.ambulando.app.ui.rich.RichBlocks
 import studio.otherstuff.ambulando.app.ui.shell.*
 import studio.otherstuff.ambulando.app.ui.tasks.*
+import studio.otherstuff.ambulando.core.transport.message
 import studio.otherstuff.ambulando.core.crypto.IdentityState
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.sync.*
@@ -192,13 +193,19 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             "thread" -> { model.section = AppSection.CHAT; stacks.push(AppSection.CHAT, WorkRoute.Thread(w.id, null, id)) }
             // The web's thread reference: `chat:<channelId>#<messageId>` opens that message's conversation.
             "chat", "message", "chat_message" -> model.act {
-                val (channelId, messageId) = studio.otherstuff.ambulando.core.store.MentionSearch.parseThreadId(id) ?: (id to null)
-                val message = messageId?.let { model.store.reader.message(w.id, it) }
-                val threadId = message?.threadId
-                val channelRow = model.channels.firstOrNull { it.id == (message?.channelId ?: channelId) } ?: throw IllegalStateException("This conversation is not available on this device.")
+                val captured = model.activeEntry ?: error("Open the original workspace first.")
+                val parsed = studio.otherstuff.ambulando.core.store.MentionSearch.parseThreadId(id)
+                val messageId = parsed?.second ?: if (kind != "chat") id else null
+                val message = messageId?.let { model.towerAPI(captured.connection).message(w.id, w.appNpub, it) }
+                check(model.activeEntry === captured && model.identityState is IdentityState.Unlocked && model.identityState?.npub == captured.connection.signerNpub && !w.accessRemoved) { "The workspace changed." }
+                if (messageId != null) check(message != null && !message.deleted && !message.accessRemoved) { "This message is no longer available to you." }
+                val channelId = message?.channelId ?: parsed?.first ?: id
+                val channelRow = model.channels.firstOrNull { it.id == channelId && !it.accessRemoved } ?: error("This conversation is not available to you.")
                 model.section = AppSection.CHAT
                 model.selectContext(channelRow.scopeId, channelRow.id)
-                if (threadId != null) stacks.push(AppSection.CHAT, WorkRoute.Thread(w.id, channelRow.id, threadId))
+                val threadId = message?.effectiveThreadId ?: message?.threadId
+                if (threadId != null) stacks.push(AppSection.CHAT, WorkRoute.Thread(w.id, channelRow.id, threadId, message?.id))
+                else stacks.push(AppSection.CHAT, WorkRoute.Channel(w.id, channelRow.id, message?.id))
             }
             "channel" -> model.channels.firstOrNull { it.id == id }?.let { model.section = AppSection.CHAT; model.selectContext(it.scopeId, it.id) }
                 ?: model.act { error("This channel is not available to you.") }
@@ -300,6 +307,14 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             SidebarContent(SidebarState(w?.label ?: "Workspaces", w?.id, model.workspaces.map { it.id to it.label }, true, groups, unread, model.activeEntry?.nav?.collapsed ?: emptySet(), model.context,
                 labels, model.scopes.filter { !it.accessRemoved }.map { it.id }.toSet(),
                 if (w == null) studio.otherstuff.ambulando.core.context.NavigationLoadState.FindingWorkspaces else studio.otherstuff.ambulando.core.context.NavigationLoadState.Ready(model.notice), false, stacked), object : SidebarActions {
+                override fun reminders() {
+                    val entry = model.activeEntry ?: return
+                    model.act {
+                        val board = model.personalReminderBoard(entry)
+                        stacks.resetContextBound(); model.selectContext(board.scopeId, board.id)
+                        model.section = AppSection.TASKS; sidebar = false
+                    }
+                }
                 override fun chooseHome() { goHome() }
                 override fun chooseScope(scopeId: String) { choose(scopeId, null) }
                 override fun chooseChannel(scopeId: String, channelId: String) { choose(scopeId, channelId) }
@@ -346,7 +361,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)
                 is WorkRoute.Thread -> ConnectedChat(model, route.threadId, channelOverride = route.channelId, hitMessageId = route.messageId)
-                is WorkRoute.Channel -> ConnectedChat(model, null, channelOverride = route.channelId)
+                is WorkRoute.Channel -> ConnectedChat(model, null, channelOverride = route.channelId, hitMessageId = route.messageId)
                 is WorkRoute.Canvas -> ConnectedCanvas(model, route.canvasId)
                 is WorkRoute.HtmlArtefact -> ConnectedHtml(model, route)
                 else -> Text("This record has no native detail view")

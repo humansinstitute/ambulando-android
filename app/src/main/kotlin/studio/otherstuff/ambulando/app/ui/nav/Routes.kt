@@ -40,7 +40,7 @@ sealed interface WorkRoute {
     data class Doc(override val workspaceId: String, val docId: String) : WorkRoute
     data class File(override val workspaceId: String, val fileId: String) : WorkRoute
     data class Thread(override val workspaceId: String, val channelId: String?, val threadId: String, val messageId: String? = null) : WorkRoute
-    data class Channel(override val workspaceId: String, val channelId: String) : WorkRoute
+    data class Channel(override val workspaceId: String, val channelId: String, val messageId: String? = null) : WorkRoute
     data class Canvas(override val workspaceId: String, val canvasId: String) : WorkRoute
     /** An Excalidraw board on a canvas, full screen. */
     data class Board(override val workspaceId: String, val canvasId: String, val napletId: String) : WorkRoute

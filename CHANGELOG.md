@@ -1,3 +1,9 @@
+## 0.9.77 (105)
+
+- Save a chat or selected message with **Remind me** as a Ready task assigned to you on your existing private Note to self board. Keep the chat title, message formatting and a link back to the source.
+- Open that board from the pinned **Reminders** shortcut above the channel list. Failed saves keep the same request for retry and show success only after the server confirms persistence.
+- Open source-message references through an authenticated read and scroll to the selected message, including messages outside a thread.
+
 ## 0.9.76 (104)
 
 - Stop showing "Attachments refresh failed. Reconnect and Retry." when returning to a thread with attachments. A refresh interrupted by leaving the screen is no longer reported as a failure, and the warning clears once a later refresh succeeds.

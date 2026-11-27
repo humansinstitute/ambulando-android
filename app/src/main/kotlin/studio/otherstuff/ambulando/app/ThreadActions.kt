@@ -114,6 +114,8 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
     val services = LocalAppServices.current
     val context = LocalContext.current
     var expanded by remember(message?.id, reference) { mutableStateOf(false) }
+    var reminding by remember(c.id, w.id, message?.id) { mutableStateOf(false) }
+    var reminderTask by remember(c.id, w.id, message?.id) { mutableStateOf<studio.otherstuff.ambulando.core.transport.TaskRecord?>(null) }
     var gettingItDone by remember(message?.id) { mutableStateOf(false) }
     var deleting by remember(message?.id) { mutableStateOf(false) }
     var failure by remember(message?.id) { mutableStateOf<String?>(null) }
@@ -131,6 +133,18 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                 onClick = { expanded = false; onReact() }, modifier = Modifier.testTag("$prefix.menu.react"))
             if (message != null && !message.deleted && rootId != null) DropdownMenuItem({ Text("Get it done") }, enabled = writable,
                 onClick = { expanded = false; gettingItDone = true }, modifier = Modifier.testTag("$prefix.menu.getitdone"))
+            if (!BuildConfig.GRANDPARENT_CHAT && message != null && !message.deleted) DropdownMenuItem(
+                { Text(if (reminding) "Saving reminder…" else "Remind me") }, enabled = services.unlocked && !message.accessRemoved && !w.accessRemoved && !reminding,
+                onClick = {
+                    expanded = false; reminding = true
+                    val entry = model.activeEntry
+                    model.act {
+                        try { reminderTask = model.saveChatReminder(requireNotNull(entry), message, conversationThreadId) }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (e: Exception) { failure = e.message ?: "Could not confirm the reminder. Try again to check the same request." }
+                        finally { reminding = false }
+                    }
+                }, modifier = Modifier.testTag("$prefix.menu.remind"))
             if (message != null) DropdownMenuItem({ Text("Copy message") },
                 onClick = { expanded = false; copy(MentionCodec.plain(message.body)) }, modifier = Modifier.testTag("$prefix.menu.copy"))
             if (prefix != "thread" && message != null && message.threadId != null && !message.deleted) DropdownMenuItem(
@@ -170,6 +184,10 @@ import studio.otherstuff.ambulando.core.transport.MessageRecord
                 put("channel_id", message.channelId); put("row_version", message.rowVersion); message.threadId?.let { put("thread_id", it) }
             }))) deleting = false
         }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel") } })
+    reminderTask?.let { task -> AlertDialog(onDismissRequest = { reminderTask = null }, title = { Text("Reminder saved") },
+        text = { Text("Saved to your Note to self task board.") },
+        confirmButton = { TextButton(onClick = { reminderTask = null; services.open(WorkRoute.Task(w.id, task.id)) }, modifier = Modifier.testTag("reminder.openTask")) { Text("Open task") } },
+        dismissButton = { TextButton(onClick = { reminderTask = null }) { Text("Done") } }) }
     failure?.let { AlertDialog(onDismissRequest = { failure = null }, text = { Text(it) }, confirmButton = { TextButton(onClick = { failure = null }) { Text("OK") } }) }
 }
 

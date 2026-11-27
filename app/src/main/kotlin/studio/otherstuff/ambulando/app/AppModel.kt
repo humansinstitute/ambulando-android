@@ -137,6 +137,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
 
     /** Connections, discovered workspace lists and presentation preferences. Never content, drafts or queues (those live in partitions). */
+    internal val reminderMutex = kotlinx.coroutines.sync.Mutex()
     val catalog = LocalStore(environment.storeFile.parentFile!!)
     val diagnostics = DiagnosticsLog(file = File(environment.baseDir, "diagnostics/connection.json"))
     /** The one bounded scheduler every workspace runtime shares (through its own scoped view). */

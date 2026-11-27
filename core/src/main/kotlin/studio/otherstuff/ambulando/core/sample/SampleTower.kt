@@ -369,7 +369,7 @@ class SampleTower(
             method == "GET" && n == 3 && head == "scopes" && rest[2] == "channels" ->
                 synchronized(lock) { 200 to linkedMapOf("channels" to channelRows(w, rest[1]), "next_cursor" to null) }
             method == "GET" && n == 1 && head == "me" -> 200 to linkedMapOf(
-                "actor" to linkedMapOf("actor_id" to SampleIds.ACTOR, "npub" to signer), "membership" to mapOf("role" to "member"),
+                "actor" to linkedMapOf("actor_id" to SampleIds.ACTOR, "npub" to signer, "kind" to "human"), "membership" to mapOf("role" to "member"),
                 "permissions" to listOf("channel.create", "channel.manage", "channel.read", "channel.write", "scope.create", "workspace.read"),
             )
             method == "GET" && n == 2 && head == "me" && rest[1] == "scope-order" -> synchronized(lock) { 200 to mapOf("scope_order" to scopeOrder(w)) }

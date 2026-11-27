@@ -22,6 +22,12 @@ class RouteStateTest {
         assertEquals(stacks, restored.stacks)
     }
 
+    @Test fun sourceMessageAnchorSurvivesChannelAndThreadRestoration() {
+        val routes = listOf(WorkRoute.Channel(w, "channel", "selected"), WorkRoute.Thread(w, "channel", "thread", "selected"))
+        val restored = RouteState.decode(RouteState.encode("chat", mapOf("chat" to routes)), w)!!
+        assertEquals(routes, restored.stacks["chat"])
+    }
+
     @Test fun routesOfAnotherWorkspaceAreNeverRestored() {
         val encoded = RouteState.encode("docs", mapOf("docs" to listOf(WorkRoute.Doc("other", "d1"), WorkRoute.Doc(w, "d2"))))
         assertEquals(listOf(WorkRoute.Doc(w, "d2")), RouteState.decode(encoded, w)!!.stacks["docs"])

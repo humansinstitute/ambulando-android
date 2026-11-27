@@ -41,7 +41,7 @@ object RouteState {
             is WorkRoute.Doc -> { put("t", "doc"); put("a", route.docId) }
             is WorkRoute.File -> { put("t", "file"); put("a", route.fileId) }
             is WorkRoute.Thread -> { put("t", "thread"); put("a", route.threadId); route.channelId?.let { put("b", it) }; route.messageId?.let { put("message", it) } }
-            is WorkRoute.Channel -> { put("t", "channel"); put("a", route.channelId) }
+            is WorkRoute.Channel -> { put("t", "channel"); put("a", route.channelId); route.messageId?.let { put("m", it) } }
             is WorkRoute.Canvas -> { put("t", "canvas"); put("a", route.canvasId) }
             is WorkRoute.Board -> { put("t", "board"); put("a", route.canvasId); put("b", route.napletId) }
             is WorkRoute.ContextComponent -> { put("t", "context"); put("a", route.scopeId); put("b", route.componentId) }
@@ -63,7 +63,7 @@ object RouteState {
             "doc" -> a?.let { WorkRoute.Doc(w, it) }
             "file" -> a?.let { WorkRoute.File(w, it) }
             "thread" -> a?.let { WorkRoute.Thread(w, b, it, s("message")) }
-            "channel" -> a?.let { WorkRoute.Channel(w, it) }
+            "channel" -> a?.let { WorkRoute.Channel(w, it, s("m")) }
             "canvas" -> a?.let { WorkRoute.Canvas(w, it) }
             "board" -> if (a != null && b != null) WorkRoute.Board(w, a, b) else null
             "context" -> if (a != null && b != null) WorkRoute.ContextComponent(w, a, b) else null
