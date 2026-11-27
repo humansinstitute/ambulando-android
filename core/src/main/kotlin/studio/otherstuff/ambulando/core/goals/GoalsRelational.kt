@@ -128,7 +128,7 @@ class GoalsRelational(private val api: TowerAPI, private val owner: String, priv
     }
     suspend fun create(channel:String,goal:Goal):GoalDocument = when(mode(channel)) {
         "legacy"->api.createLegacyGoal(workspace,app,channel,goal)
-        "relational"->{verifyNewTargets(null,goal);val id=UUID.randomUUID().toString();val rows=rows(goal,id,channel,1);submit(channel,insert(rows));list(channel).first{it.id==id}}
+        "relational"->{documents(snapshot(channel));verifyNewTargets(null,goal);val id=UUID.randomUUID().toString();val rows=rows(goal,id,channel,1);submit(channel,insert(rows));list(channel).first{it.id==id}}
         else->throw GoalSaveFailed("Goals are read-only during migration.",true)
     }
     suspend fun edit(id:String,edits:List<GoalEdit>,attempts:Int=4):GoalDocument {
