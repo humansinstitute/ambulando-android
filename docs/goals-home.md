@@ -34,24 +34,14 @@ result is a valid order. No backend or record type was added.
 
 ## Daily Briefing
 
-`GoalBriefing.facts` uses the viewer's saved active goals only, with the same semantics as the Mac app.
+Home reads the owner’s saved personal agent briefing from the existing generic File contract described in
+[daily-briefing.md](daily-briefing.md). The client never writes a briefing, changes goals/tasks or sweeps sources.
+The card shows one/two saved paragraphs, source links, a coverage note when supplied and its Perth publication time.
 
-Today shows:
-
-- the next checkpoint of each goal in focus
-- start and target dates falling today
-- checkpoints dated today, marked "reached now" or "not reached yet"
-- past-dated checkpoints that are not reached
-
-Another day shows only what is dated that day, under a note that reached is the status now. The stepper stops at
-today. Empty days say so.
-
-Rules:
-
-- No agent voice.
-- No inferred progress.
-- No reminders or scheduling.
-- The footer always reads "From your saved goals. Agent briefings aren't available yet."
+The day stepper uses Australia/Perth and stops at today. Historical days show that saved day’s analysis. Missing,
+pending, failed and previous-briefing states are explicit; current goal dates are never substituted for missing prose.
+A locked/switched identity hides content immediately. The reader checks owner/author metadata, direct grants and
+exact-version hash/size, and refuses unsafe or duplicate locations. No Notes to Self content is read.
 
 ## Latest
 

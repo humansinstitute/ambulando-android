@@ -135,7 +135,7 @@ class GoalsHomeFlowTest {
 
             // More goals with dates and checkpoints, saved through the same File API as the app.
             val c = model.connection!!; val w = model.workspace!!
-            val today = LocalDate.now()
+            val today = studio.otherstuff.ambulando.core.briefing.Briefing.today()
             val seeded = GoalsController(model.fileNappletAPI(c), w.id, w.appNpub, c.signerNpub) { true }
             runBlocking {
                 seeded.refresh()
@@ -189,9 +189,10 @@ class GoalsHomeFlowTest {
             waitTag("goal.detail"); shot("09b-goal-file-mention")
             androidx.test.espresso.Espresso.pressBack(); section("home"); waitTag("home.screen")
 
-            // Daily Briefing: today's dated facts; another day shows only what is dated then.
+            // No agent journal exists in this synthetic workspace: never invent a briefing from goal dates.
             reveal("home.briefing")
-            compose.onAllNodesWithTag("home.briefing.fact").assertAny(hasText("Use it daily on Android", substring = true))
+            compose.waitUntil(30_000) { has("home.briefing.empty") || has("home.briefing.unavailable") }
+            compose.onAllNodesWithTag("home.briefing.paragraph").assertCountEquals(0)
             compose.onNodeWithTag("home.briefing.day").assertTextEquals("Today, ${GoalFormat.date(today.toString())}")
             compose.onNodeWithTag("home.briefing.next").assertIsNotEnabled()
             tap("home.briefing.prev"); compose.onNodeWithTag("home.briefing.day").assertTextEquals(GoalFormat.date(today.minusDays(1).toString())!!)

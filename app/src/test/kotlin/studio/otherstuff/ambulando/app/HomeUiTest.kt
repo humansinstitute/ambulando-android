@@ -12,6 +12,8 @@ import studio.otherstuff.ambulando.app.ui.theme.AmbulandoTheme
 import studio.otherstuff.ambulando.core.goals.*
 import studio.otherstuff.ambulando.core.transport.FileRecord
 import java.time.LocalDate
+import java.time.Instant
+import studio.otherstuff.ambulando.core.briefing.*
 
 @RunWith(RobolectricTestRunner::class)
 class HomeUiTest {
@@ -53,32 +55,37 @@ class HomeUiTest {
         assertEquals("g1" to 1, moves.last())
     }
 
-    @Test fun briefingStatesGoalFactsAndStepsBackButNotPastToday() {
-        val today = LocalDate.parse("2026-12-05")
-        var day = today
-        val ship = doc("s", "Ship", listOf(GoalCheckpoint("u", "Use it daily", "2026-12-05")))
-        compose.setContent { AmbulandoTheme { DailyBriefing(listOf(ship), loaded = true, ready = true, day = day, onDay = { day = it }, today = today) } }
-        compose.onNodeWithTag("home.briefing.day").assertTextEquals("Today, 5 Dec 2026")
-        compose.onAllNodesWithTag("home.briefing.fact").assertAny(hasText("Next for Ship: Use it daily", substring = true))
-        compose.onAllNodesWithTag("home.briefing.fact").assertAny(hasText("Ship: Use it daily (not reached yet)"))
-        compose.onNodeWithTag("home.briefing.source").assertTextEquals("From your saved goals. Agent briefings aren’t available yet.")
+    private val today=LocalDate.parse("2026-11-27")
+    private val entry=BriefingEntry(Instant.parse("2026-11-26T21:30:00Z"),listOf("What changed and progress.","Suggested focus."),listOf(BriefingLink("task","task","channel","Underlying task")),"Only authorized sources were available.")
+    private fun briefing(day:LocalDate=today)=Briefing("workspace","owner","author",mapOf(day to entry))
+
+    @Test fun briefingShowsSavedProseAndLinksWithoutInferringGoals() {
+        var opened:String?=null
+        compose.setContent {AmbulandoTheme {PersonalDailyBriefing(briefing(),true,null,today,today,false,{}, {}, {opened=it.recordId})}}
+        compose.onAllNodesWithTag("home.briefing.paragraph").assertCountEquals(2)
+        compose.onNodeWithText("What changed and progress.").assertExists()
+        compose.onNodeWithTag("home.briefing.source").assertTextContains("27 Nov 2026, 05:30 Perth",substring=true)
+        compose.onNodeWithTag("home.briefing.coverage").assertExists()
         compose.onNodeWithTag("home.briefing.next").assertIsNotEnabled()
-        compose.onNodeWithTag("home.briefing.prev").performClick()
-        assertEquals(LocalDate.parse("2026-12-04"), day)
+        compose.onNodeWithTag("home.briefing.link").performClick();assertEquals("task",opened)
     }
-
-    @Test fun briefingSaysSoWhenNothingIsDated() {
-        val today = LocalDate.parse("2026-12-05")
-        compose.setContent { AmbulandoTheme { DailyBriefing(listOf(doc("q", "Quiet").let { it.copy(goal = it.goal.copy(startDate = null, targetDate = null)) }), loaded = true, ready = true, day = today, onDay = {}, today = today) } }
-        compose.onNodeWithTag("home.briefing.empty").assertTextEquals("Nothing in your goals is dated today, and no goal in focus has a next checkpoint.")
+    @Test fun pendingAndMissingDayNeverUsePreviousAsToday() {
+        var selected:LocalDate?=null
+        compose.setContent {AmbulandoTheme {PersonalDailyBriefing(briefing(today.minusDays(1)),true,null,today,today,true,{selected=it},{},{})}}
+        compose.onNodeWithTag("home.briefing.empty").assertTextEquals("Your morning briefing is due at 05:30 Perth.")
+        compose.onAllNodesWithTag("home.briefing.paragraph").assertCountEquals(0)
+        compose.onNodeWithTag("home.briefing.stale").performClick();assertEquals(today.minusDays(1),selected)
     }
-
-    @Test fun anotherDayExplainsReachedIsTheStatusNow() {
-        val today = LocalDate.parse("2026-12-05")
-        val ship = doc("s", "Ship", listOf(GoalCheckpoint("a", "Agree", "2026-11-26", reached = true)))
-        compose.setContent { AmbulandoTheme { DailyBriefing(listOf(ship), loaded = true, ready = true, day = LocalDate.parse("2026-11-26"), onDay = {}, today = today) } }
-        compose.onNodeWithTag("home.briefing.otherDay").assertExists()
-        compose.onAllNodesWithTag("home.briefing.fact").assertAny(hasText("Ship: Agree (reached now)"))
-        compose.onNodeWithTag("home.briefing.today").assertExists()
+    @Test fun failedRefreshDoesNotShowCachedAnalysisAsCurrent() {
+        compose.setContent {AmbulandoTheme {PersonalDailyBriefing(briefing(),true,"Your briefing is unavailable.",today,today,false,{},{},{})}}
+        compose.onNodeWithTag("home.briefing.unavailable").assertTextEquals("Your briefing is unavailable.")
+        compose.onAllNodesWithTag("home.briefing.paragraph").assertCountEquals(0)
+    }
+    @Test fun historicalDayShowsItsSavedEntryAndCanReturnToToday() {
+        val previous=today.minusDays(1);var selected:LocalDate?=null
+        compose.setContent {AmbulandoTheme {PersonalDailyBriefing(briefing(previous),true,null,previous,today,false,{selected=it},{},{})}}
+        compose.onNodeWithTag("home.briefing.day").assertTextEquals("26 Nov 2026")
+        compose.onAllNodesWithTag("home.briefing.paragraph").assertCountEquals(2)
+        compose.onNodeWithTag("home.briefing.today").performClick();assertEquals(today,selected)
     }
 }

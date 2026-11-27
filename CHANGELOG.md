@@ -1,3 +1,9 @@
+## 0.9.67 (95)
+
+- Home’s Daily Briefing reads your private saved morning overview: progress, changes, attention and suggested focus, with the author, Perth publication time and useful record links.
+- Browse saved days without substituting today’s goal status for historical analysis. Pending, missing and unavailable briefings are explicit; a previous briefing keeps its date.
+- Use existing private channels and immutable File versions with strict owner/author grants and verified content. The companion agent publisher preserves earlier days, rejects conflicting duplicates and verifies publication readback. Goals permissions and records stay unchanged.
+
 ## 0.9.66 (94)
 
 - Open saved Goals and previously verified napplet code and data from durable local content while the app refreshes in the background. Keep usable content visible when offline or a temporary refresh fails.

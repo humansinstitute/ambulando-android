@@ -63,8 +63,7 @@ internal const val HomeFocusCount = 3
 internal const val HomeGoalPeek = HomeFocusCount + 1
 
 /**
- * Workspace Home (board "Ambulando-Next"): the viewer's active goals in their chosen focus order, a Daily Briefing derived
- * from those goals' own dates, and the latest active chats. Deck stays a separate section. Wide windows show goals beside
+ * Workspace Home (board "Ambulando-Next"): the viewer's active goals in their chosen focus order, a private daily agent briefing, and the latest active chats. Deck stays a separate section. Wide windows show goals beside
  * the briefing and chats; a phone stacks them.
  */
 @Composable internal fun ConnectedHome(model: AppModel) {
@@ -90,7 +89,6 @@ internal const val HomeGoalPeek = HomeFocusCount + 1
     }.collectAsState(studio.otherstuff.ambulando.core.profiles.PeopleDirectory())
     var creating by remember(goals) { mutableStateOf(false) }
     var moveError by remember(goals) { mutableStateOf<String?>(null) }
-    var day by rememberSaveable { mutableLongStateOf(LocalDate.now().toEpochDay()) }
     val scope = rememberCoroutineScope()
     var moving by remember(goals) { mutableStateOf(false) }
     var showAll by rememberSaveable { mutableStateOf(false) }
@@ -143,7 +141,7 @@ internal const val HomeGoalPeek = HomeFocusCount + 1
         }
     }
     val sideSection: LazyListScope.() -> Unit = {
-        item("briefing") { DailyBriefing(state.goals, state.loaded, ready, LocalDate.ofEpochDay(day), onDay = { day = it.toEpochDay() }) }
+        item("briefing") { ConnectedPersonalBriefing(model) }
         item("latest.header") { Text("Latest", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = Amb.colors.foreground, modifier = Modifier.padding(top = 16.dp).semantics { heading() }.testTag("home.latest.title")) }
         val rows = latest
         when {
@@ -318,54 +316,6 @@ private fun Modifier.pointerInputDrag(enabled: Boolean, id: String, onStart: (Fl
                 when { cp.reached -> Modifier.background(amb.primary, CircleShape); cp.id == next -> Modifier.border(3.5.dp, amb.primary, CircleShape); else -> Modifier.border(1.5.dp, amb.mutedForeground, CircleShape) }))
         }
         if (goal.checkpoints.size > shown.size) Text("+${goal.checkpoints.size - shown.size}", fontSize = AmbType.caption2, color = amb.mutedForeground)
-    }
-}
-
-/**
- * Facts for one day from the viewer's saved goals ([GoalBriefing]). Nothing is written by an agent and nothing is
- * scheduled; another day shows only what is dated then, and reached marks are the status now. The stepper stops at today.
- */
-@Composable internal fun DailyBriefing(goals: List<GoalDocument>, loaded: Boolean, ready: Boolean, day: LocalDate, onDay: (LocalDate) -> Unit, today: LocalDate = LocalDate.now()) {
-    val amb = Amb.colors
-    val isToday = day == today
-    val facts = remember(goals, day, today) { GoalBriefing.facts(goals, day.toString(), today.toString()) }
-    val dayLabel = GoalFormat.date(day.toString()) ?: day.toString()
-    Column(Modifier.fillMaxWidth().background(amb.card, RoundedCornerShape(Amb.radiusPanel)).border(1.dp, amb.border, RoundedCornerShape(Amb.radiusPanel)).padding(14.dp).testTag("home.briefing"),
-        verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Daily Briefing", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = amb.foreground, modifier = Modifier.semantics { heading() })
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onDay(day.minusDays(1)) }, modifier = Modifier.testTag("home.briefing.prev")) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Previous day") }
-            Text(if (isToday) "Today, $dayLabel" else dayLabel, fontSize = AmbType.footnote, color = amb.foreground, modifier = Modifier.testTag("home.briefing.day"))
-            IconButton(onClick = { onDay(day.plusDays(1)) }, enabled = day.isBefore(today), modifier = Modifier.testTag("home.briefing.next")) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next day") }
-            if (!isToday) TextButton(onClick = { onDay(today) }, modifier = Modifier.testTag("home.briefing.today")) { Text("Today") }
-        }
-        when {
-            !ready && loaded -> Text("Set up goals to see their dates here.", fontSize = AmbType.footnote, color = amb.mutedForeground, modifier = Modifier.testTag("home.briefing.unavailable"))
-            !loaded -> Text("Loading goals…", fontSize = AmbType.footnote, color = amb.mutedForeground, modifier = Modifier.testTag("home.briefing.unavailable"))
-            facts.isEmpty() -> Text(if (isToday) "Nothing in your goals is dated today, and no goal in focus has a next checkpoint." else "Nothing in your goals is dated on this day.",
-                fontSize = AmbType.footnote, color = amb.mutedForeground, modifier = Modifier.testTag("home.briefing.empty"))
-            else -> {
-                if (!isToday) Text("What your goals have dated on this day. Reached shows the status now; past days aren’t recorded.", fontSize = AmbType.caption, color = amb.mutedForeground, modifier = Modifier.testTag("home.briefing.otherDay"))
-                facts.forEach { fact -> BriefingRow(fact, today) }
-            }
-        }
-        Text("From your saved goals. Agent briefings aren’t available yet.", fontSize = AmbType.caption2, color = amb.mutedForeground, modifier = Modifier.testTag("home.briefing.source"))
-    }
-}
-
-@Composable private fun BriefingRow(fact: GoalBriefing.Fact, today: LocalDate) {
-    val amb = Amb.colors
-    fun short(d: String) = GoalFormat.short(d, today) ?: d
-    val (icon, text) = when (fact) {
-        is GoalBriefing.Fact.Next -> Icons.Outlined.ArrowCircleRight to "Next for ${fact.goal}: ${fact.checkpoint}" + (fact.date?.let { " (${short(it)})" } ?: "")
-        is GoalBriefing.Fact.Dated -> (if (fact.reached) Icons.Outlined.CheckCircle else Icons.Outlined.CalendarMonth) to "${fact.goal}: ${fact.checkpoint}" + if (fact.reached) " (reached now)" else " (not reached yet)"
-        is GoalBriefing.Fact.PastDate -> Icons.Outlined.ErrorOutline to "${fact.goal}: ${fact.checkpoint} was dated ${short(fact.date)} and isn’t reached"
-        is GoalBriefing.Fact.TargetDate -> Icons.Outlined.Flag to "Target date for ${fact.goal}"
-        is GoalBriefing.Fact.StartDate -> Icons.Outlined.PlayCircleOutline to "${fact.goal} starts"
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(icon, null, Modifier.size(16.dp).padding(top = 2.dp), tint = amb.primary)
-        Text(text, fontSize = AmbType.footnote, color = amb.foreground, modifier = Modifier.testTag("home.briefing.fact"))
     }
 }
 
