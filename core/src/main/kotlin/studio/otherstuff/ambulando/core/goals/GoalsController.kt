@@ -144,7 +144,12 @@ class GoalsController(
     /** Re-reads one goal from Tower (e.g. after a conflict or an agent edit). */
     suspend fun reload(fileId: String): GoalDocument = gate.withLock {
         check(current())
-        api.readGoal(workspace, app, fileId).also { publish(it) }
+        val ready=(_state.value.space as? GoalsSpaceState.Ready) ?: (api.goalsSpace(workspace,app,viewer,ownerOnly) as? GoalsSpaceState.Ready)
+            ?: throw GoalError.Invalid("This goal is not in your Goals space.")
+        api.readGoal(workspace, app, fileId).also {
+            if(it.file.channelId!=ready.channel.id)throw GoalError.Invalid("This goal is not in your Goals space.")
+            publish(it)
+        }
     }
 
     private suspend fun publish(doc: GoalDocument) {

@@ -157,10 +157,13 @@ import java.util.UUID
     if (record != null && (record.accessRemoved || !GoalFiles.isGoal(record))) return file()
     val goals = rememberGoals(model) ?: return file()
     val state by goals.state.collectAsState()
-    LaunchedEffect(goals) { if (!goals.state.value.loaded) goals.refresh() }
+    var resolving by remember(goals,fileId) { mutableStateOf(true) }
+    LaunchedEffect(goals,fileId) { try { goals.refresh() } finally { resolving=false } }
     when {
         state.goals.any { it.id == fileId } -> GoalScreen(model, fileId)
-        !state.loaded && state.error == null -> LinearProgressIndicator(Modifier.fillMaxWidth().testTag("goal.file.loading"))
+        resolving -> LinearProgressIndicator(Modifier.fillMaxWidth().testTag("goal.file.loading"))
+        record != null && (state.space as? GoalsSpaceState.Ready)?.channel?.id == record.channelId ->
+            Text(state.error ?: "This goal is unavailable.",modifier=Modifier.testTag("goal.file.unavailable"))
         else -> file()
     }
 }

@@ -114,4 +114,22 @@ class GoalsRelationalTests {
         }}finally{directory.deleteRecursively()}
     }
 
+    @Test fun explicitAuthorizedSqlReferenceUsesActualRowAclWithoutRequiringPersonalHome():Unit=runBlocking {
+        val root=Json.parseToJsonElement(javaClass.getResource("/goals/relational-current-v1.json")!!.readText()).jsonObject
+        val tables=root.getValue("tables").jsonObject
+        val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest):HttpResponse {
+            check(request.url.contains("/db/native-v1/")){"Explicit row access must not enumerate a personal home"}
+            val body=Json.parseToJsonElement(request.body!!.toString(Charsets.UTF_8)).jsonObject
+            return if(request.url.endsWith("/read"))response(jsonObjectOf("version" to 1,"channel_id" to id,"row" to tables.getValue("goals").jsonArray.single()))
+            else response(jsonObjectOf("version" to 1,"generation" to "12","rows" to tables.getValue(body.string("table")!!),"has_more" to false,"next_after" to null))
+        }})
+        assertEquals("Shared normalized goal",repository(a).read(id).goal.name)
+    }
+    @Test fun deniedPrimarySqlReferencePreserves403WithoutPersonalDiscoveryOrFileFallback():Unit=runBlocking {
+        var calls=0
+        val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest):HttpResponse{calls++;return HttpResponse(403,"{\"code\":\"permission_denied\"}".toByteArray())}})
+        val failure=assertThrows(TowerError.Http::class.java){runBlocking{repository(a).read(id)}}
+        assertEquals(403,failure.status);assertEquals(1,calls)
+    }
+
 }

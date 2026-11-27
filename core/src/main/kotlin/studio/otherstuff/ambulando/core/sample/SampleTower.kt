@@ -121,6 +121,8 @@ class SampleTower(
     @Volatile var nappletRuntimeFixture: NappletRuntimeFixture? = null
     @Volatile var workspaceReportFixture: ((String, String) -> kotlinx.serialization.json.JsonObject)? = null
     @Volatile var requestGate: (suspend (HttpRequest) -> Unit)? = null
+    /** Explicit debug-device native-v1 fixture. The handler must verify the signed request it accepts. */
+    @Volatile var nativeRelationalFixture: (suspend (HttpRequest) -> HttpResponse?)? = null
 
     /** Every request fails as if there were no network (open event streams drop). */
     var offline: Boolean
@@ -267,6 +269,7 @@ class SampleTower(
     override suspend fun send(request: HttpRequest): HttpResponse {
         // Tests hold a chosen request here (before Tower sees it) to run a competing step in a controlled order.
         requestGate?.invoke(request)
+        nativeRelationalFixture?.invoke(request)?.let { return it }
         if (latencyMillis > 0) delay(latencyMillis)
         val (status, body) = route(request)
         return when (body) {

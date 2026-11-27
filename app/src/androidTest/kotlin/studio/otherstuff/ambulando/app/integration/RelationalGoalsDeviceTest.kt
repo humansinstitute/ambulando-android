@@ -2,6 +2,9 @@ package studio.otherstuff.ambulando.app.integration
 
 import android.content.Intent
 import android.os.SystemClock
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import org.junit.Rule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,6 +23,7 @@ import studio.otherstuff.ambulando.core.transport.*
 /** Real Android signer/controller/SQLite; a labelled native-v1 fixture replaces only network persistence. */
 @RunWith(AndroidJUnit4::class)
 class RelationalGoalsDeviceTest {
+    @get:Rule val compose=createEmptyComposeRule()
     @Test fun nativeRelationalCreateEditConflictRetryAndOfflineRecovery() {
         val instrumentation=InstrumentationRegistry.getInstrumentation();val context=instrumentation.targetContext
         check(BuildConfig.DEBUG)
@@ -68,6 +72,8 @@ class RelationalGoalsDeviceTest {
                         else->reply(jsonObjectOf("code" to "unknown_operation"),404)
                     }
                 }}
+                model.sampleTower!!.nativeRelationalFixture={ request -> if(request.url.contains("/db/native-v1/")) transport.send(request) else null }
+                val referenceController=model.goalsController()!!;referenceController.refresh()
                 val api=model.fileNappletAPI(c,GoalsTransport(transport,transport));val local=GoalsLocalContent(model.store,w.id,c.signerNpub,"device-relational-fixture")
                 var controller=GoalsController(api,w.id,w.appNpub,c.signerNpub,local){true};controller.refresh()
                 assertEquals(legacy.id,controller.state.value.goals.single().id)
@@ -88,9 +94,15 @@ class RelationalGoalsDeviceTest {
                 controller.refresh();assertEquals(2,controller.state.value.goals.size);assertEquals(1,controller.state.value.goals.count{it.goal.name=="Recovered create"})
                 val sqlCreated=controller.state.value.goals.single{it.goal.name=="Recovered create"}
                 assertNull(model.store.reader.file(w.id,sqlCreated.id));assertEquals(sqlCreated.id,controller.reload(sqlCreated.id).id)
+                assertTrue(referenceController.state.value.loaded);assertNull(referenceController.goal(sqlCreated.id))
+                instrumentation.runOnMainSync{model.pendingRecordOpen="file" to sqlCreated.id}
+                compose.waitUntil(30000){compose.onAllNodesWithTag("goal.name").fetchSemanticsNodes().any{it.config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString{t->t.text}=="Recovered create"}}
+                compose.onNodeWithTag("goal.name").assertTextEquals("Recovered create")
+                assertNull(model.store.reader.file(w.id,sqlCreated.id))
                 offline=true;val reopened=GoalsController(api,w.id,w.appNpub,c.signerNpub,local){true};reopened.refresh();assertEquals(2,reopened.state.value.goals.size);assertNotNull(reopened.state.value.error)
                 assertEquals(legacy.versionId,originalApi.readLegacyGoal(w.id,w.appNpub,legacy.id).versionId)
-                context.getExternalFilesDir(null)!!.resolve("relational-goals${BuildConfig.VERSION_CODE}.json").writeText(jsonObjectOf("versionCode" to BuildConfig.VERSION_CODE,"fixture" to "synthetic native-v1; real Android signer/controller/SQLite","goals" to 2,"retainedFileId" to legacy.id,"historyRows" to tables.getValue("goal_history").size,"offlineCache" to true,"receiptRecovery" to true).toString())
+                context.getExternalFilesDir(null)!!.resolve("relational-goals${BuildConfig.VERSION_CODE}.json").writeText(jsonObjectOf("versionCode" to BuildConfig.VERSION_CODE,"fixture" to "synthetic native-v1; real Android signer/controller/SQLite","goals" to 2,"retainedFileId" to legacy.id,"historyRows" to tables.getValue("goal_history").size,"offlineCache" to true,"receiptRecovery" to true,"coldReferenceNativeView" to true).toString())
+                model.sampleTower!!.nativeRelationalFixture=null
             }
         }
     }

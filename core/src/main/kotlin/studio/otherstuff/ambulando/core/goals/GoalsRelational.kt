@@ -72,14 +72,14 @@ class GoalsRelational(private val api: TowerAPI, private val owner: String, priv
         }
         error("unreachable")
     }
-    fun documents(snapshot:Snapshot):List<GoalDocument> {
+    fun documents(snapshot:Snapshot,expectedOwner:String=viewer):List<GoalDocument> {
         val marker=snapshot.tables["goals_authority"]?.singleOrNull() ?: throw GoalError.Invalid("Goals migration metadata is unavailable. Your saved content is retained.")
         if(flexibleInt(marker["contract_version"])!=1 || marker.string("schema_version")!="ambulando-goals-relational-1") throw GoalError.Unsupported
         val parents=snapshot.tables.getValue("goals")
         val ids=parents.map{it.string("id")}.toSet()
         for(table in listOf("goal_checkpoints","goal_associations")) if(snapshot.tables.getValue(table).any{it.string("goal_id") !in ids}) throw TowerError.Malformed("orphan goal rows")
         return parents.filter{it["tombstoned_at"]==null || it["tombstoned_at"] is JsonNull}.map { row ->
-            if(row.string("owner_npub")!=viewer)throw TowerError.Malformed("goal owner")
+            if(row.string("owner_npub")!=expectedOwner)throw TowerError.Malformed("goal owner")
             val id=row.string("id") ?: throw TowerError.Malformed("goal id");TowerAPI.uuid(id)
             val cps=snapshot.tables.getValue("goal_checkpoints").filter{it.string("goal_id")==id}.sortedBy{flexibleInt(it["position"]) ?: -1}
             val refs=snapshot.tables.getValue("goal_associations").filter{it.string("goal_id")==id}
@@ -104,18 +104,27 @@ class GoalsRelational(private val api: TowerAPI, private val owner: String, priv
     }
     suspend fun list(channel:String):List<GoalDocument> = documents(snapshot(channel))
     suspend fun read(id:String):GoalDocument {
-        val space=api.goalsSpace(workspace,app,viewer) as? GoalsSpaceState.Ready ?: throw GoalError.Invalid("Set up goals first.")
-        return when(mode(space.channel.id)) {
-            "legacy" -> api.readLegacyGoal(workspace,app,id)
-            "relational" -> {
-                val found=try {request("read",jsonObjectOf("version" to 1,"table" to "goals","id" to TowerAPI.uuid(id)))}
-                catch(e:TowerError.Http){if(e.status==404&&e.code=="row_not_found")throw GoalError.Invalid("This goal is unavailable.");throw e}
-                val row=found.obj("row") ?: throw TowerError.Malformed("goal reference")
-                if(flexibleInt(found["version"])!=1 || found.string("channel_id")!=space.channel.id || row.string("workspace_id")!=workspace || row.string("id")!=id)throw GoalError.Invalid("This goal is unavailable in your Goals space.")
-                list(space.channel.id).firstOrNull{it.id==id} ?: throw GoalError.Invalid("This goal is unavailable.")
+        // Resolve the actual row ACL first. An explicit reference is not personal-goal discovery, and primary 403
+        // must remain 403 for identity-only discussion metadata, including viewers without their own Goals home.
+        val found=try {request("read",jsonObjectOf("version" to 1,"table" to "goals","id" to TowerAPI.uuid(id)))}
+        catch(e:TowerError.Http) {
+            val legacyCandidate=e.status==404 || e.status==409&&e.code=="authority_unavailable" || e.status==403&&e.code=="table_policy_required"&&!hadAuthority()
+            if(!legacyCandidate)throw e
+            if(e.status==404&&e.code!="row_not_found"&&hadAuthority())throw GoalSaveFailed("Goals storage is unavailable. Your saved content is retained.",true)
+            val reply=api.obj(api.client.request(path=TowerAPI.base(workspace)+"/files/"+TowerAPI.uuid(id),appNpub=app),"goal reference")
+            val file=reply.obj("file")?.let(FileRecord::parse) ?: throw TowerError.Malformed("goal reference")
+            if(file.workspaceId!=workspace||file.id!=id||!GoalFiles.isGoal(file))throw GoalError.Invalid("This is not a goal.")
+            return when(mode(file.channelId)) {
+                "legacy"->api.readLegacyGoal(workspace,app,file)
+                "relational"->throw GoalError.Invalid("This goal is unavailable.")
+                else->throw GoalSaveFailed("Goals are read-only during migration. Your saved content is retained.",true)
             }
-            else -> throw GoalSaveFailed("Goals are being migrated. Your saved content is retained.",true)
         }
+        val row=found.obj("row") ?: throw TowerError.Malformed("goal reference")
+        val channel=found.string("channel_id") ?: throw TowerError.Malformed("goal channel")
+        val rowOwner=row.string("owner_npub") ?: throw TowerError.Malformed("goal owner")
+        if(flexibleInt(found["version"])!=1 || row.string("channel_id")!=channel || row.string("workspace_id")!=workspace || row.string("id")!=id)throw TowerError.Malformed("goal reference scope")
+        return documents(snapshot(channel),rowOwner).firstOrNull{it.id==id} ?: throw GoalError.Invalid("This goal is unavailable.")
     }
     suspend fun create(channel:String,goal:Goal):GoalDocument = when(mode(channel)) {
         "legacy"->api.createLegacyGoal(workspace,app,channel,goal)
