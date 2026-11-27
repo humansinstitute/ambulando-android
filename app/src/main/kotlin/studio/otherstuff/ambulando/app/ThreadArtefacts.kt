@@ -426,6 +426,9 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     if (state.listing) AlertDialog(onDismissRequest = { state.listing = false }, title = { Text("Thread artefacts") }, text = {
         Column {
             if (state.busy) Text("Updating thread attachments…")
+            CreateArtefact(model, sourceThread = target) { open, enabled ->
+                TextButton(onClick = open, enabled = enabled && !state.busy, modifier = Modifier.testTag("thread.artefacts.create")) { Text("Create artefact in this discussion") }
+            }
             state.failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!state.membershipReady) Text("Saved attachments shown; refresh to confirm the current server list.")
             if (state.members.isEmpty()) Text("No attachments in this thread.")

@@ -587,6 +587,7 @@ class WriteSender(
                     val summary = DocumentBody(bytes, contentType).markdown
                     val r = send("POST", base + "/channels/" + TowerAPI.uuid(channel) + "/docs", body(
                         "title" to (p["title"] ?: JsonPrimitive("Untitled document")), "storage_object_id" to JsonPrimitive(objectId),
+                        "metadata" to (p["metadata"] ?: JsonObject(emptyMap())),
                         "summary" to JsonPrimitive(summary)))
                     if (ok(r)) record(r.body, "doc", DocRecord::parse)?.let { return WriteOutcome.Done(WriteAcknowledgement(docs = listOf(it))) }
                     if (r.status == 409) found()?.let { return WriteOutcome.Done(WriteAcknowledgement(docs = listOf(it))) }

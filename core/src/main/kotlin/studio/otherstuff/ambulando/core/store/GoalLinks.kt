@@ -3,6 +3,7 @@ package studio.otherstuff.ambulando.core.store
 import studio.otherstuff.ambulando.core.goals.GoalLink
 import studio.otherstuff.ambulando.core.goals.GoalLinkType
 import studio.otherstuff.ambulando.core.transport.TaskState
+import studio.otherstuff.ambulando.core.transport.string
 
 /**
  * A goal link as this device can currently show it. The title and location come from the source record in the local
@@ -18,11 +19,20 @@ data class ResolvedGoalLink(
     val detail: String?,
     val channelId: String?,
     val available: Boolean,
+    val automatic: Boolean = false,
 )
 
 suspend fun StoreReader.resolveGoalLinks(workspaceId: String, links: List<GoalLink>): List<ResolvedGoalLink> {
     if (links.isEmpty()) return emptyList()
-    val scopeNames = scopes(workspaceId).associate { it.id to it.name }
+    val scopeRows = scopes(workspaceId).associateBy { it.id }
+    val scopeNames = scopeRows.mapValues { it.value.name }
+    suspend fun visible(channelId: String?): Boolean {
+        val channel = channelId?.let { channel(workspaceId, it) } ?: return false
+        val scope = scopeRows[channel.scopeId] ?: return false
+        return !channel.accessRemoved && !scope.accessRemoved && listOf(channel.raw, scope.raw).all {
+            it.string("archived_at") == null && it.string("deleted_at") == null && it.string("record_state") !in setOf("deleted", "archived")
+        }
+    }
     suspend fun place(channelId: String?, scopeId: String?): String? {
         val channel = channelId?.let { channel(workspaceId, it) }
         val scope = (scopeId ?: channel?.scopeId)?.let { scopeNames[it] }
@@ -31,19 +41,19 @@ suspend fun StoreReader.resolveGoalLinks(workspaceId: String, links: List<GoalLi
     return links.map { link ->
         when (link.type) {
             GoalLinkType.TASK -> task(workspaceId, link.recordId).let { t ->
-                if (t == null || t.accessRemoved) unavailable(link)
+                if (t == null || t.accessRemoved || !visible(t.channelId)) unavailable(link)
                 else ResolvedGoalLink(link, t.title, place(t.channelId, t.scopeId), taskState(t.state), t.channelId, true)
             }
             GoalLinkType.DOC -> doc(workspaceId, link.recordId).let { d ->
-                if (d == null || d.accessRemoved || d.archived) unavailable(link)
+                if (d == null || d.accessRemoved || d.archived || d.raw.string("deleted_at") != null || d.raw.string("record_state") == "deleted" || !visible(d.channelId)) unavailable(link)
                 else ResolvedGoalLink(link, d.title, place(d.channelId, d.scopeId), "Document", d.channelId, true)
             }
             GoalLinkType.FILE -> file(workspaceId, link.recordId).let { f ->
-                if (f == null || f.accessRemoved || f.archived) unavailable(link)
+                if (f == null || f.accessRemoved || f.archived || f.raw.string("deleted_at") != null || f.raw.string("record_state") == "deleted" || !visible(f.channelId)) unavailable(link)
                 else ResolvedGoalLink(link, f.displayName, place(f.channelId, f.scopeId), "File", f.channelId, true)
             }
             GoalLinkType.CHAT -> thread(workspaceId, link.recordId).let { t ->
-                if (t == null || t.accessRemoved || t.deleted || t.archived) unavailable(link)
+                if (t == null || t.accessRemoved || t.deleted || t.archived || !visible(t.channelId)) unavailable(link)
                 else {
                     val title = t.title?.takeIf { it.isNotBlank() }
                         ?: t.sourceMessageId?.let { message(workspaceId, it) }?.body?.lineSequence()?.firstOrNull()?.take(80)?.takeIf { it.isNotBlank() }

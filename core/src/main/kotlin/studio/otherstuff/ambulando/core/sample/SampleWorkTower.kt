@@ -484,7 +484,7 @@ class SampleWorkTower(
                     "scope_id" to (state.rows("files") + state.rows("docs") + state.rows("tasks")).firstOrNull {
                         it["channel_id"] == p[1] && !it["scope_id"].asString().isNullOrBlank()
                     }?.get("scope_id"), "channel_id" to p[1], "storage_object_id" to objectId,
-                    "title" to (o["title"] ?: "Untitled"), "summary" to o["summary"], "metadata" to mapOf("mentions" to emptyList<Any>()),
+                    "title" to (o["title"] ?: "Untitled"), "summary" to o["summary"], "metadata" to (o["metadata"] ?: mapOf("mentions" to emptyList<Any>())),
                     "row_version" to 1L, "activity_version" to 1L, "created_at" to stamp, "updated_at" to stamp, "archived_at" to null,
                     "record_state" to "active",
                 )

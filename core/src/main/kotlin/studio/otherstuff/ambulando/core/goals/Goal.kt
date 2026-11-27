@@ -20,6 +20,10 @@ data class Goal(
     val links: List<GoalLink> = emptyList(),
     /** Unknown top-level fields from a newer writer, written back untouched. */
     val extra: JsonObject = JsonObject(emptyMap()),
+    /** A routing preference only; access must be checked before starting a discussion. */
+    val defaultChannelId: String? = null,
+    /** Key original Docs/Files, separate from associated work. These references grant no access. */
+    val pinnedRefs: List<GoalLink> = emptyList(),
 ) {
     val reachedCount: Int get() = checkpoints.count { it.reached }
 
@@ -36,6 +40,8 @@ data class Goal(
         put("status", status.wire)
         put("checkpoints", JsonArray(checkpoints.map { it.toJson() }))
         put("links", JsonArray(links.map { it.toJson() }))
+        defaultChannelId?.let { put("default_channel_id", it) }
+        if (pinnedRefs.isNotEmpty()) put("pinned_refs", JsonArray(pinnedRefs.map { it.toJson() }))
     }
 
     companion object {
@@ -47,7 +53,9 @@ data class Goal(
         const val MAX_DESCRIPTION = 2000
         const val MAX_CHECKPOINTS = 100
         const val MAX_LINKS = 500
-        private val KNOWN = setOf("schema", "schema_version", "name", "description", "start_date", "target_date", "status", "checkpoints", "links")
+        const val MAX_PINNED_REFS = 100
+        private val UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        private val KNOWN = setOf("schema", "schema_version", "name", "description", "start_date", "target_date", "status", "checkpoints", "links", "default_channel_id", "pinned_refs")
 
         /** Reads stored bytes. An unsupported or malformed goal is refused, never partially shown or rewritten. */
         fun parse(bytes: ByteArray): Goal {
@@ -63,6 +71,8 @@ data class Goal(
                 checkpoints = root.strictArr("checkpoints").map { GoalCheckpoint.parse(it) },
                 links = root.strictArr("links").map { GoalLink.parse(it) },
                 extra = JsonObject(root.filterKeys { it !in KNOWN }),
+                defaultChannelId = root.strict("default_channel_id")?.lowercase(),
+                pinnedRefs = root.strictArr("pinned_refs").map { GoalLink.parse(it) },
             )
             return goal.validated()
         }
@@ -89,6 +99,13 @@ data class Goal(
         if (links.size > MAX_LINKS) throw GoalError.Invalid("Too many linked records.")
         if (links.map { it.type to it.recordId }.toSet().size != links.size) throw GoalError.Invalid("A record is linked twice.")
         links.forEach { it.validate() }
+        if (defaultChannelId != null && !UUID.matches(defaultChannelId)) throw GoalError.Invalid("The default discussion channel identity is invalid.")
+        if (pinnedRefs.size > MAX_PINNED_REFS) throw GoalError.Invalid("Too many pinned references.")
+        if (pinnedRefs.map { it.type to it.recordId }.toSet().size != pinnedRefs.size) throw GoalError.Invalid("A reference is pinned twice.")
+        pinnedRefs.forEach {
+            it.validate()
+            if (it.type != GoalLinkType.DOC && it.type != GoalLinkType.FILE) throw GoalError.Invalid("Only Docs and Files can be pinned.")
+        }
         return this
     }
 }

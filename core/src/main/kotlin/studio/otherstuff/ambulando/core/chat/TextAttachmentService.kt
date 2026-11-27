@@ -8,6 +8,9 @@ import studio.otherstuff.ambulando.core.transport.TextFilenameConflict
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import studio.otherstuff.ambulando.core.goals.threadGoalMetadata
 import studio.otherstuff.ambulando.core.nostr.Sha256Hex
 import studio.otherstuff.ambulando.core.transport.FileTransferError
 import studio.otherstuff.ambulando.core.transport.FileVersionRecord
@@ -23,6 +26,7 @@ import studio.otherstuff.ambulando.core.transport.createLineageFile
 import studio.otherstuff.ambulando.core.transport.fileVersionBytes
 import studio.otherstuff.ambulando.core.transport.fileVersions
 import studio.otherstuff.ambulando.core.transport.lineageFile
+import studio.otherstuff.ambulando.core.transport.message
 import studio.otherstuff.ambulando.core.transport.store
 
 /**
@@ -174,7 +178,14 @@ class TextAttachmentService(val edits: TextEditStore, val cache: TextCache) {
             return if (ours != null) VersionOutcome.Saved(existing, ours.id, replay = true)
             else VersionOutcome.Conflict(existing, versions.versions.lastOrNull { it.id == versions.currentVersionId } ?: versions.versions.lastOrNull(), "lineage_file_exists")
         }
-        return api.createLineageFile(e.workspaceId, e.appNpub, e.channelId, objectId, e.filename, e.lineage)
+        // Resolve the original message's thread under normal ACLs. A visible explicit goal mention is not primary
+        // association, and a missing original message preserves the supported edit without inventing a reference.
+        val origin = api.message(e.workspaceId, e.appNpub, e.originMessageId)
+        if (origin != null) check(origin.id == e.originMessageId && origin.workspaceId == e.workspaceId && origin.channelId == e.channelId) { "The original attachment message belongs to a different conversation." }
+        val metadata = origin?.threadId?.let { threadId ->
+            JsonObject(api.threadGoalMetadata(e.workspaceId, e.appNpub, threadId) + ("source_thread_id" to JsonPrimitive(threadId)))
+        } ?: JsonObject(emptyMap())
+        return api.createLineageFile(e.workspaceId, e.appNpub, e.channelId, objectId, e.filename, e.lineage, metadata)
     }
 
     private fun apply(e: TextEdit, outcome: VersionOutcome): TextEdit = when (outcome) {

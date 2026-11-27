@@ -24,6 +24,10 @@ sealed class GoalEdit {
         override fun apply(goal: Goal) = goal.setting("target date", goal.targetDate, expected, value?.trim()?.ifEmpty { null }) { copy(targetDate = it) }
     }
 
+    data class SetDefaultChannel(val expected: String?, val value: String?) : GoalEdit() {
+        override fun apply(goal: Goal) = goal.setting("default discussion channel", goal.defaultChannelId, expected, value) { copy(defaultChannelId = it) }
+    }
+
     /**
      * Places the goal in the focus order (see [GoalFocus]); [value] null clears it. Only this goal changes. [expected] is
      * the valid rank the mover saw (null for unranked), so a goal reordered elsewhere is a conflict, never a silent move.
@@ -111,6 +115,23 @@ sealed class GoalEdit {
         override fun apply(goal: Goal): Goal {
             goal.requireEditable()
             return goal.copy(links = goal.links.filterNot { it.type == type && it.recordId == recordId })
+        }
+    }
+
+    /** Pins a reference without changing associated work or the source record. */
+    data class Pin(val link: GoalLink) : GoalEdit() {
+        override fun apply(goal: Goal): Goal {
+            goal.requireEditable()
+            if (goal.pinnedRefs.any { it.type == link.type && it.recordId == link.recordId }) return goal
+            return goal.copy(pinnedRefs = goal.pinnedRefs + link).validated()
+        }
+    }
+
+    /** Removes only the pin, preserving the associated-work link if one exists. */
+    data class Unpin(val type: GoalLinkType, val recordId: String) : GoalEdit() {
+        override fun apply(goal: Goal): Goal {
+            goal.requireEditable()
+            return goal.copy(pinnedRefs = goal.pinnedRefs.filterNot { it.type == type && it.recordId == recordId })
         }
     }
 

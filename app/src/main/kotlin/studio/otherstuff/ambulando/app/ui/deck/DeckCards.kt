@@ -93,8 +93,10 @@ import studio.otherstuff.ambulando.core.store.LocalStore
 
 @Composable internal fun DeckInboxCard(store: LocalStore, screen: ScreenScope, navigation: WorkNavigation, pins: PinsSnapshot, intents: DeckIntents, status: SurfaceStatusLookup, visible: Boolean, onNewThread: (() -> Unit)? = null, onChannelOptions: (() -> Unit)? = null) {
     val services = LocalAppServices.current
-    val query by rememberPausableQuery(DeckInboxSnapshot(), store, visible, "inbox:$screen", DeckInbox.matches(screen.workspaceId), { intents.refreshInbox(navigation.context) }) {
-        DeckInbox.load(store, screen.workspaceId, screen.signerNpub, navigation.context, navigation.context.scopeId?.let { navigation.channels().map { it.id } })
+    // Navigation hydrates from app state, not a store event: the filter is part of the key so late channels re-read the Inbox.
+    val channelIds = navigation.context.scopeId?.let { navigation.channels().map { it.id } }
+    val query by rememberPausableQuery(DeckInboxSnapshot(), store, visible, "inbox:$screen:${channelIds?.joinToString(",")}", DeckInbox.matches(screen.workspaceId), { intents.refreshInbox(navigation.context) }) {
+        DeckInbox.load(store, screen.workspaceId, screen.signerNpub, navigation.context, channelIds)
     }
     val attention by remember(store, screen.connectionId, screen.workspaceId) { store.liveQuery({ it.table == StoreTable.APP_STATE }) {
         store.reader.attentionPreference(screen.connectionId, screen.workspaceId).types

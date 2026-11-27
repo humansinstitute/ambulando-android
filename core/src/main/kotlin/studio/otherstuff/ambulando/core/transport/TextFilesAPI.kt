@@ -135,10 +135,12 @@ private fun retryable(status: Int): Boolean = status == 408 || status == 425 || 
  */
 suspend fun TowerAPI.createLineageFile(
     workspaceId: String, appNpub: String, channelId: String, newObjectId: String, displayName: String, lineage: TextLineage,
+    metadata: JsonObject = JsonObject(emptyMap()),
 ): VersionOutcome {
     val body = jsonBody(jsonObjectOf(
         "storage_object_id" to newObjectId, "display_name" to displayName,
-        "metadata" to jsonObjectOf("text_attachment_lineage" to lineage.requestObject),
+        // Caller metadata may add references, but can never replace the canonical sent-attachment lineage.
+        "metadata" to JsonObject(metadata + ("text_attachment_lineage" to lineage.requestObject)),
     ))
     val reply = try {
         client.exchange("POST", TowerAPI.base(workspaceId) + "/channels/" + TowerAPI.uuid(channelId) + "/files", appNpub, body)

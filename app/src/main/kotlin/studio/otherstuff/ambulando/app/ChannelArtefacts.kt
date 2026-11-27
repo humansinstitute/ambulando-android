@@ -20,28 +20,29 @@ import kotlinx.serialization.json.*
 import studio.otherstuff.ambulando.app.ui.nav.*
 import studio.otherstuff.ambulando.core.store.*
 import studio.otherstuff.ambulando.core.surfaces.*
+import studio.otherstuff.ambulando.core.goals.threadGoalMetadata
 import studio.otherstuff.ambulando.core.transport.*
 import java.io.File
 import java.util.UUID
 
 /** The primary Artefacts + owns every type; rich types still use the normal staged File write queue. */
-@Composable internal fun CreateArtefact(model: AppModel, trigger: @Composable (open: () -> Unit, enabled: Boolean) -> Unit) {
+@Composable internal fun CreateArtefact(model: AppModel, sourceThread: ChatTarget? = null, trigger: @Composable (open: () -> Unit, enabled: Boolean) -> Unit) {
     val c = model.connection ?: return; val w = model.workspace ?: return
     val services = LocalAppServices.current
-    val boundary = listOf(c.id, w.id, model.context.scopeId, model.context.channelId)
+    val boundary = listOf(c.id, w.id, model.context.scopeId, model.context.channelId, sourceThread?.threadId)
     var showing by remember(boundary) { mutableStateOf(false) }
     // null is an ordinary Document, which retains its existing DOC_CREATE storage and editor.
     var type by remember(boundary) { mutableStateOf<ArtefactType?>(null) }
     var template by remember(boundary) { mutableStateOf("blank") }
     var style by remember(boundary) { mutableStateOf("default") }
     var title by remember(boundary) { mutableStateOf("") }
-    var channel by remember(boundary) { mutableStateOf(model.context.channelId) }
+    var channel by remember(boundary) { mutableStateOf(sourceThread?.channelId ?: model.context.channelId) }
     var submitting by remember(boundary) { mutableStateOf(false) }
     var error by remember(boundary) { mutableStateOf<String?>(null) }
     val destinations = model.channels.filter {
         it.workspaceId == w.id && !it.accessRemoved &&
-            (model.context.scopeId == null || it.scopeId == model.context.scopeId) &&
-            (model.context.channelId == null || it.id == model.context.channelId)
+            (sourceThread != null || model.context.scopeId == null || it.scopeId == model.context.scopeId) &&
+            (if (sourceThread != null) it.id == sourceThread.channelId else model.context.channelId == null || it.id == model.context.channelId)
     }
     val enabled = services.unlocked && !w.accessRemoved && destinations.isNotEmpty()
     val canCreate = enabled && !submitting && title.isNotBlank() && destinations.any { it.id == channel }
@@ -96,24 +97,32 @@ import java.util.UUID
                     val staged = "artefact-${UUID.randomUUID()}"
                     var queued = false
                     try {
+                        val inherited = sourceThread?.let { target ->
+                            check(target.connectionId == c.id && target.workspaceId == w.id && model.active?.connection?.id == c.id && model.workspace?.id == w.id)
+                            model.towerAPI(c).threadGoalMetadata(w.id, w.appNpub, requireNotNull(target.threadId))
+                        } ?: JsonObject(emptyMap())
                         withContext(Dispatchers.IO) {
                             writes.staging.mkdirs()
                             File(writes.staging, staged).writeText(ArtefactTemplates.source(kind?.wire ?: "document", starter, chosenStyle, name))
                         }
                         writes.submit(WriteIntent(if (kind == null) WriteKind.DOC_CREATE else WriteKind.FILE_UPLOAD, null, buildJsonObject {
                             put("channel_id", destination); put("staged", staged)
+                            put("metadata", JsonObject(inherited + buildJsonObject {
+                                sourceThread?.threadId?.let { put("source_thread_id", it) }
+                                if (kind != null) put("artefact", ArtefactTemplates.descriptor(kind.wire, starter, chosenStyle))
+                            }))
                             if (kind == null) {
                                 put("title", name); put("file_name", "document.md"); put("content_type", "text/markdown")
                             } else {
                                 put("display_name", "$name.${kind.extension}"); put("file_name", "artefact.${kind.extension}")
-                                put("content_type", kind.mime); put("metadata", buildJsonObject { put("artefact", ArtefactTemplates.descriptor(kind.wire, starter, chosenStyle)) })
+                                put("content_type", kind.mime)
                             }
                         }), c, w)
                         queued = true
                         // This means queued, never an unconfirmed created-success message.
                         showing = false; title = ""
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                    catch (_: Exception) { error = "Could not queue this artefact. Your title is kept; try again." }
+                    catch (e: Exception) { error = "Could not queue this artefact. Your title is kept. " + (ConnectionFailure.userMessage(e) ?: e.message ?: "Try again.") }
                     finally {
                         if (!queued) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { File(writes.staging, staged).delete() }
                         submitting = false

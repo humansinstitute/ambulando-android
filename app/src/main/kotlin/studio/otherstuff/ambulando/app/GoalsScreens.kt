@@ -33,6 +33,8 @@ import studio.otherstuff.ambulando.app.ui.theme.AmbType
 import studio.otherstuff.ambulando.app.ui.work.EmptyNote
 import studio.otherstuff.ambulando.core.goals.*
 import studio.otherstuff.ambulando.core.store.*
+import studio.otherstuff.ambulando.core.surfaces.artefactFile
+import studio.otherstuff.ambulando.core.transport.doc
 import java.util.UUID
 
 /** Personal goals: a list of goals, each a named aim with a checkpoint timeline and links to existing work. */
@@ -166,6 +168,7 @@ import java.util.UUID
 /** One goal, laid out as the approved example: aim, dates, timeline, then associated work. */
 @Composable internal fun GoalScreen(model: AppModel, fileId: String) {
     val w = model.workspace ?: return
+    val c = model.connection ?: return
     val goals = rememberGoals(model) ?: return
     val services = LocalAppServices.current
     val state by goals.state.collectAsState()
@@ -176,11 +179,18 @@ import java.util.UUID
     var checkpoint by remember(fileId) { mutableStateOf<GoalCheckpoint?>(null) }
     var addingCheckpoint by remember(fileId) { mutableStateOf(false) }
     var linking by remember(fileId) { mutableStateOf(false) }
+    var pinning by remember(fileId) { mutableStateOf(false) }
+    var choosingChannel by remember(fileId) { mutableStateOf(false) }
+    var channelBase by remember(fileId) { mutableStateOf<String?>(null) }
     var statusMenu by remember(fileId) { mutableStateOf(false) }
     var confirm by remember(fileId) { mutableStateOf<GoalStatus?>(null) }
     GoalsRefresh(model, goals)
     val links by produceState(emptyList<ResolvedGoalLink>(), doc?.goal?.links, w.id) {
         val current = doc?.goal?.links ?: return@produceState
+        model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.associatedGoalLinks(w.id, fileId, current) }.collect { value = it }
+    }
+    val pinned by produceState(emptyList<ResolvedGoalLink>(), doc?.goal?.pinnedRefs, w.id) {
+        val current = doc?.goal?.pinnedRefs ?: return@produceState
         model.store.liveQuery({ it.workspaceId == w.id }) { model.store.reader.resolveGoalLinks(w.id, current) }.collect { value = it }
     }
     /** Runs one change; a conflict reloads the saved goal and says so, nothing is lost silently. */
@@ -213,12 +223,27 @@ import java.util.UUID
                 }
                 OutlinedButton(onClick = { editing = true }, enabled = !readOnly, modifier = Modifier.padding(start = 8.dp).testTag("goal.edit")) { Text("Edit goal") }
             }
+            Row(Modifier.padding(top = 12.dp)) { GoalDiscussButton(model, doc, readOnly) }
             Text(goal.description, fontSize = 17.sp, color = Amb.colors.mutedForeground, modifier = Modifier.padding(top = 12.dp).testTag("goal.description"))
             Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 GoalFormat.date(goal.startDate)?.let { DateLabel("Started", it, "goal.start") }
                 GoalFormat.date(goal.targetDate)?.let { DateLabel("Target", it, "goal.target") }
             }
             message?.let { Text(it, color = Amb.colors.destructive, fontSize = AmbType.footnote, modifier = Modifier.padding(top = 10.dp).testTag("goal.message")) }
+        }
+        item("discussion-channel") {
+            val selected = goalDiscussionChannels(model).firstOrNull { it.id == goal.defaultChannelId }
+            Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Discussion channel", fontSize = AmbType.caption, color = Amb.colors.mutedForeground)
+                    Text(when {
+                        goal.defaultChannelId == null -> "Ask each time"
+                        selected == null -> "Saved channel unavailable"
+                        else -> listOfNotNull(model.scopes.firstOrNull { it.id == selected.scopeId }?.name, selected.name).joinToString(" · ")
+                    }, color = if (goal.defaultChannelId != null && selected == null) Amb.colors.destructive else Amb.colors.foreground, modifier = Modifier.testTag("goal.defaultChannel"))
+                }
+                TextButton(onClick = { channelBase = goal.defaultChannelId; choosingChannel = true }, enabled = !readOnly, modifier = Modifier.testTag("goal.chooseChannel")) { Text("Change") }
+            }
         }
         item("timeline-head") {
             HorizontalDivider(Modifier.padding(top = 24.dp), color = Amb.colors.border)
@@ -240,6 +265,29 @@ import java.util.UUID
                 Icon(Icons.Outlined.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add checkpoint")
             }
         }
+        item("pins-head") {
+            HorizontalDivider(Modifier.padding(top = 14.dp), color = Amb.colors.border)
+            Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Pinned references", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = Amb.colors.foreground, modifier = Modifier.weight(1f))
+                TextButton(onClick = { pinning = true }, enabled = !readOnly, modifier = Modifier.testTag("goal.pin")) { Text("Pin reference") }
+            }
+        }
+        item("pins") {
+            Column(Modifier.fillMaxWidth().testTag("goal.pins")) {
+                if (pinned.isEmpty()) Text("Pin a vision document, whiteboard or other key reference.", fontSize = AmbType.footnote, color = Amb.colors.mutedForeground)
+                pinned.forEach { ref ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).clickable(enabled = ref.available) { openLink(services, w.id, ref) }.padding(vertical = 10.dp).testTag("goal.pinnedReference")) {
+                            Text(ref.title ?: "Not available to you", color = if (ref.available) Amb.colors.foreground else Amb.colors.mutedForeground, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(listOfNotNull(ref.location, ref.detail).joinToString(" · ").ifBlank { "Removed, restricted or not synced yet" }, fontSize = AmbType.caption, color = Amb.colors.mutedForeground)
+                        }
+                        if (!readOnly) IconButton(onClick = { change(GoalEdit.Unpin(ref.link.type, ref.link.recordId)) }, modifier = Modifier.testTag("goal.unpin")) {
+                            Icon(Icons.Outlined.Close, "Unpin ${ref.title ?: "this reference"}")
+                        }
+                    }
+                }
+            }
+        }
         item("work-head") {
             HorizontalDivider(Modifier.padding(top = 14.dp), color = Amb.colors.border)
             Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -248,6 +296,7 @@ import java.util.UUID
             }
         }
         item("work") {
+            Text("Linked records and up to 500 recent outputs per type from discussions, as synced on this device.", fontSize = AmbType.caption, color = Amb.colors.mutedForeground)
             Column(Modifier.fillMaxWidth().background(Amb.colors.card, RoundedCornerShape(12.dp)).border(BorderStroke(1.dp, Amb.colors.border), RoundedCornerShape(12.dp))) {
                 val groups = listOf(
                     Triple(GoalLinkType.CHAT, "Chats", Icons.Outlined.ChatBubbleOutline), Triple(GoalLinkType.TASK, "Tasks", Icons.Outlined.TaskAlt),
@@ -302,6 +351,21 @@ import java.util.UUID
     }
     if (linking) GoalLinkPicker(model, goal, onDismiss = { linking = false }) { chosen ->
         goals.edit(fileId, GoalEdit.Link(chosen)); true
+    }
+    if (choosingChannel) GoalChannelPicker(model, channelBase, onDismiss = { choosingChannel = false }) { chosen ->
+        goals.edit(fileId, GoalEdit.SetDefaultChannel(channelBase, chosen))
+    }
+    if (pinning) GoalLinkPicker(model, goal, onDismiss = { pinning = false }, pins = true) { chosen ->
+        check(model.workspace?.id == w.id && model.connection?.id == c.id && services.unlocked && model.workspace?.accessRemoved == false) { "Open this goal again in its workspace to pin a reference." }
+        // Cached candidates are discovery only: the original record must still pass its normal read ACL.
+        val api = model.towerAPI(c)
+        when (chosen.type) {
+            GoalLinkType.DOC -> api.doc(w.id, w.appNpub, chosen.recordId).also { check(it.workspaceId == w.id && !it.archived && !it.accessRemoved) { "This document is unavailable." } }
+            GoalLinkType.FILE -> api.artefactFile(w.id, w.appNpub, chosen.recordId).also { check(it.workspaceId == w.id && !it.archived && !it.accessRemoved) { "This file is unavailable." } }
+            else -> error("Only Docs and Files can be pinned.")
+        }
+        check(model.workspace?.id == w.id && model.connection?.id == c.id && services.unlocked && model.workspace?.accessRemoved == false) { "The workspace changed. Open the goal again to continue." }
+        goals.edit(fileId, GoalEdit.Pin(chosen)); true
     }
     confirm?.let { target ->
         AlertDialog(
@@ -385,10 +449,10 @@ private fun openLink(services: studio.otherstuff.ambulando.app.ui.nav.AppService
             Row(Modifier.fillMaxWidth().padding(start = 50.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f).clickable(enabled = r.available) { onOpen(r) }.padding(vertical = 10.dp).testTag("goal.link.${type.wire}")) {
                     Text(r.title ?: "Not available to you", fontSize = AmbType.subheadline, color = if (r.available) Amb.colors.foreground else Amb.colors.mutedForeground, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val sub = listOfNotNull(r.location, r.detail).joinToString(" · ").ifEmpty { if (r.available) null else "Removed, restricted or not synced yet" }
+                    val sub = listOfNotNull(r.location, r.detail, if (r.automatic) "From goal discussion" else null).joinToString(" · ").ifEmpty { if (r.available) null else "Removed, restricted or not synced yet" }
                     sub?.let { Text(it, fontSize = AmbType.caption, color = Amb.colors.mutedForeground) }
                 }
-                if (!readOnly) IconButton(onClick = { onUnlink(r) }, modifier = Modifier.size(40.dp).testTag("goal.unlink")) { Icon(Icons.Outlined.LinkOff, "Remove link to ${r.title ?: "this item"}") }
+                if (!readOnly && !r.automatic) IconButton(onClick = { onUnlink(r) }, modifier = Modifier.size(40.dp).testTag("goal.unlink")) { Icon(Icons.Outlined.LinkOff, "Remove link to ${r.title ?: "this item"}") }
             }
         }
         if (type != GoalLinkType.FILE) HorizontalDivider(color = Amb.colors.border)

@@ -1,3 +1,9 @@
+## 0.9.70 (98)
+
+- Start a goal discussion in its saved default channel, or choose an accessible channel explicitly. New chats retain their goal reference; uncertain starts are recovered without creating a duplicate.
+- Pin key original Docs and Files separately from associated outputs. Docs and artefacts created inside a goal discussion retain native identities and reference that goal.
+- Refresh the scoped Deck inbox when channel navigation finishes loading, so existing discussions do not need a channel detour.
+
 ## 0.9.69 (97)
 
 - Mention personal goals from chat, task comments and document comments. Browse your Goals home with `@goal:` or type a multiword goal title, then open the saved reference in the native goal view.

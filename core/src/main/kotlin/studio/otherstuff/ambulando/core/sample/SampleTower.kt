@@ -66,7 +66,7 @@ class SampleTower(
     val auth = SampleAuth(clock)
 
     private val lock = Any()
-    private val chat = SampleState(directory?.let { File(it, "sample-chat.json") }, listOf("posted", "revised", "requests", "events", "managed", "thread_overrides"))
+    private val chat = SampleState(directory?.let { File(it, "sample-chat.json") }, listOf("posted", "revised", "requests", "events", "managed", "thread_overrides", "threads"))
     private val tick = MutableStateFlow(0L)
     private var actor = ""
     private var offlineFlag = false
@@ -394,9 +394,22 @@ class SampleTower(
             }
             method == "GET" && n == 3 && head == "channels" && rest[2] == "threads" -> synchronized(lock) {
                 val roots = allMessages().filter { it["workspace_id"] == w && it["channel_id"] == rest[1] && it["id"] == it["thread_source_message_id"] }
-                200 to linkedMapOf("threads" to roots.map { threadOf(it) }, "next_cursor" to null)
+                val standalone = chat.rows("threads").filter { it["workspace_id"] == w && it["channel_id"] == rest[1] }.map { standaloneThread(it) }
+                200 to linkedMapOf("threads" to (standalone + roots.map { threadOf(it) }).distinctBy { it["id"] }, "next_cursor" to null)
+            }
+            method == "POST" && n == 3 && head == "channels" && rest[2] == "threads" -> synchronized(lock) {
+                if (channelScope(w, rest[1]) == null) return errorReply(404, "channel_not_found")
+                val body = SampleJson.objectOf(request.body)
+                val title = body["title"].asString()?.trim()?.takeIf { it.isNotEmpty() && it.length <= 240 } ?: return errorReply(400, "validation_error")
+                val id = newUUID()
+                val row: Row = linkedMapOf("id" to id, "workspace_id" to w, "channel_id" to rest[1], "source_message_id" to null,
+                    "title" to title, "record_state" to "active", "row_version" to 1L, "updated_at" to TowerTime.now(), "metadata" to body["metadata"].asMap().orEmpty())
+                chat.put("threads", id, row); chat.persist()
+                emit(w, SampleChange("thread", id, "created", rest[1], rowVersion = 1))
+                201 to mapOf("thread" to row)
             }
             method == "GET" && n == 2 && head == "threads" -> synchronized(lock) {
+                chat.row("threads", rest[1])?.takeIf { it["workspace_id"] == w }?.let { return@synchronized 200 to mapOf("thread" to standaloneThread(it)) }
                 val root = allMessages().firstOrNull { it["workspace_id"] == w && it["thread_id"] == rest[1] && it["id"] == it["thread_source_message_id"] }
                     ?: return errorReply(404, "thread_not_found")
                 200 to mapOf("thread" to threadOf(root))
@@ -417,23 +430,24 @@ class SampleTower(
             (method == "PATCH" || method == "DELETE") && n == 2 && head == "messages" -> revise(request, w, rest[1], url, signer)
             method == "PATCH" && n == 2 && head == "threads" -> synchronized(lock) {
                 val root = allMessages().firstOrNull { it["workspace_id"] == w && it["thread_id"] == rest[1] && it["id"] == it["thread_source_message_id"] }
-                    ?: return errorReply(404, "thread_not_found")
+                val standalone = chat.row("threads", rest[1])?.takeIf { it["workspace_id"] == w }
+                val existing = standalone?.let(::standaloneThread) ?: root?.let(::threadOf) ?: return errorReply(404, "thread_not_found")
                 val body = request.body?.let { runCatching { Json.parseToJsonElement(it.toString(Charsets.UTF_8)).jsonObject }.getOrNull() }
                     ?: return errorReply(400, "validation_error")
                 val title = (body["title"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
                 val metadata = body["metadata"] as? JsonObject
                 if (title == null && metadata == null) return errorReply(400, "validation_error")
                 val version = (body["row_version"] as? JsonPrimitive)?.longOrNull
-                val current = threadOf(root)["row_version"].asInt()?.toLong() ?: 1L
+                val current = existing["row_version"].asInt()?.toLong() ?: 1L
                 if (metadata != null && version == null) return errorReply(400, "validation_error")
                 if (version != null && version != current) return errorReply(409, "stale_row_version")
                 chat.put("thread_overrides", rest[1], linkedMapOf(
-                    "title" to (title ?: threadOf(root)["title"]), "row_version" to current + 1,
-                    "metadata" to (metadata?.asMap() ?: threadOf(root)["metadata"].asMap().orEmpty()),
+                    "title" to (title ?: existing["title"]), "row_version" to current + 1,
+                    "metadata" to (metadata?.asMap() ?: existing["metadata"].asMap().orEmpty()),
                 ))
                 chat.persist()
-                emit(w, SampleChange("thread", rest[1], "updated", root["channel_id"].asString(), rowVersion = current + 1))
-                200 to mapOf("thread" to threadOf(root))
+                emit(w, SampleChange("thread", rest[1], "updated", existing["channel_id"].asString(), rowVersion = current + 1))
+                200 to mapOf("thread" to (standalone?.let(::standaloneThread) ?: threadOf(root!!)))
             }
             else -> errorReply(404, "not_found")
         }
@@ -505,6 +519,8 @@ class SampleTower(
         )
     }
 
+    private fun standaloneThread(row: Row): Row = LinkedHashMap(row).apply { putAll(chat.row("thread_overrides", row["id"].asString() ?: "").orEmpty()) }
+
     private fun member(npub: String, name: String?, kind: String): Map<String, Any?> = mapOf(
         "actor" to linkedMapOf(
             "actor_id" to UUID.nameUUIDFromBytes(npub.toByteArray()).toString(), "npub" to npub, "kind" to kind, "display_name" to name,
@@ -556,15 +572,19 @@ class SampleTower(
             val threadId: String
             if (threadRequested != null) {
                 val root = allMessages().firstOrNull { it["thread_id"] == threadRequested && it["id"] == it["thread_source_message_id"] && it["channel_id"] == channel }
-                    ?: return@synchronized errorReply(404, "thread_not_found")
+                val standalone = chat.row("threads", threadRequested)?.takeIf { it["workspace_id"] == w && it["channel_id"] == channel }
+                if (root == null && standalone == null) return@synchronized errorReply(404, "thread_not_found")
                 threadId = threadRequested
-                source = root["id"] as String
+                source = root?.get("id").asString() ?: standalone?.get("source_message_id").asString() ?: ""
             } else {
                 threadId = newUUID()
                 source = ""
             }
             val id = newUUID()
             val now = TowerTime.now()
+            chat.row("threads", threadId)?.let { thread ->
+                chat.put("threads", threadId, LinkedHashMap(thread).apply { put("source_message_id", thread["source_message_id"] ?: id); put("latest", body); put("updated_at", now) })
+            }
             val row: Row = linkedMapOf(
                 "id" to id, "workspace_id" to w, "channel_id" to channel, "thread_id" to threadId, "thread_source_message_id" to source.ifEmpty { id },
                 "body" to body, "client_request_id" to requestId, "record_state" to "active", "row_version" to 1L, "sender_npub" to signer,
