@@ -102,7 +102,10 @@ class RelationalGoalsDeviceTest {
                 // An agent's SQL batch emits no File event. Keep the screen open and wait for its bounded read poll.
                 val editedRow=tables.getValue("goals").first{it.string("id")==sqlCreated.id}
                 tables["goals"]=tables.getValue("goals").map{if(it===editedRow)JsonObject(it+jsonObjectOf("name" to "Agent update while visible","revision" to (flexibleLong(it["revision"])!!+1).toString()))else it}.toMutableList();generation++
-                compose.waitUntil(40000){compose.onAllNodesWithTag("goal.name").fetchSemanticsNodes().any{it.config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString{t->t.text}=="Agent update while visible"}}
+                // LaunchedEffect delays use the Compose test clock, not waitUntil's wall clock.
+                compose.mainClock.advanceTimeBy(31_000)
+                try { compose.waitUntil(15000){compose.onAllNodesWithTag("goal.name").fetchSemanticsNodes().any{it.config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString{t->t.text}=="Agent update while visible"}} }
+                catch(e:Throwable){throw AssertionError("SQL foreground refresh: activity=${model.active!!.activity.isOpen}, lifecycle=${instrumentation.targetContext.javaClass.simpleName}, state=${referenceController.state.value.goals.map{it.goal.name}}, error=${referenceController.state.value.error}",e)}
                 offline=true;val reopened=GoalsController(api,w.id,w.appNpub,c.signerNpub,local){true};reopened.refresh();assertEquals(2,reopened.state.value.goals.size);assertNotNull(reopened.state.value.error)
                 assertEquals(legacy.versionId,originalApi.readLegacyGoal(w.id,w.appNpub,legacy.id).versionId)
                 context.getExternalFilesDir(null)!!.resolve("relational-goals${BuildConfig.VERSION_CODE}.json").writeText(jsonObjectOf("versionCode" to BuildConfig.VERSION_CODE,"fixture" to "synthetic native-v1; real Android signer/controller/SQLite","goals" to 2,"retainedFileId" to legacy.id,"historyRows" to tables.getValue("goal_history").size,"offlineCache" to true,"receiptRecovery" to true,"coldReferenceNativeView" to true,"visibleSqlRefreshWithoutFileEvent" to true).toString())
