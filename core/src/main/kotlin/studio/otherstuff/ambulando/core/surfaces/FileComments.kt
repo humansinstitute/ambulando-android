@@ -32,6 +32,8 @@ data class HtmlArtefactPayload(
     val html: String,
     val versions: List<HtmlArtefactVersion>,
     val manifestError: String?,
+    /** Immutable saved source; html may additionally contain the private-image rendering bootstrap. */
+    val sourceHtml: String = html,
 )
 
 data class HtmlCommentAnchor(
@@ -377,6 +379,7 @@ suspend fun TowerAPI.artefactHTMLPayload(
         html = html,
         versions = versions,
         manifestError = manifestError,
+        sourceHtml = rawHtml,
     )
 }
 

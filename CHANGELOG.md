@@ -1,3 +1,8 @@
+## 0.9.75 (103)
+
+- Open HTML reports with private images without rejecting the rendered image loader as changed saved source. Saved-source byte and hash checks remain enforced.
+- Show unavailable revision status and Retry when an HTML read fails.
+
 ## 0.9.74 (102)
 
 - Restore private Daily Briefing reads when an authorized author has a custom permission bundle. Validate exact identities and explicit permissions rather than access-level labels.

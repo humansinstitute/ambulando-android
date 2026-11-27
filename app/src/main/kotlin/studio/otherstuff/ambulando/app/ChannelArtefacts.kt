@@ -273,9 +273,9 @@ private data class HtmlArtefactRead(
     }
     SideEffect {
         threadTab?.title = file.displayName
-        threadTab?.versionLabel = if (pendingThreadVersion != null) "Saved revision awaiting readback" else htmlPayload?.let { "${if (selected != null) "Pinned " else ""}v${it.versionNumber}" } ?: "Loading revision…"
+        threadTab?.versionLabel = if (html == null && error != null) "Revision unavailable" else if (pendingThreadVersion != null) "Saved revision awaiting readback" else htmlPayload?.let { "${if (selected != null) "Pinned " else ""}v${it.versionNumber}" } ?: "Loading revision…"
         if (htmlPayload != null) { threadTab?.pinnedRevision = selected; threadTab?.selectedRevision = selected ?: pendingThreadVersion ?: htmlPayload?.versionId }
-        threadTab?.unavailable = if (htmlPayload == null && error != null) "This HTML artefact could not be opened: $error" else null
+        threadTab?.unavailable = if (html == null && error != null) "This HTML artefact could not be opened: $error" else null
         threadTab?.checkpoint = { recovery?.let { drafts.checkpoint(it) }; !saving }
         threadTab?.sourceDirty = { recovery != null }
         threadTab?.saveSource = {
@@ -365,7 +365,8 @@ private data class HtmlArtefactRead(
                     val version = history.versions.first { it.id == history.currentVersionId }
                     require(version.contentType?.substringBefore(';') == "text/html" && version.sizeBytes in 1..FileNapplet.MAX_BYTES.toLong() && version.sha256 != null)
                     val bytes = api.fileVersionBytes(w.id, w.appNpub, file.id, version)
-                    FileNapplet.verifiedHTML(bytes, rendered, requireNotNull(version.sizeBytes), requireNotNull(version.sha256))
+                    FileNapplet.verifiedHTML(bytes, payload.sourceHtml, requireNotNull(version.sizeBytes), requireNotNull(version.sha256))
+                    rendered
                 } else rendered
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 check(currentBoundary())
@@ -381,7 +382,7 @@ private data class HtmlArtefactRead(
             }
             if (selected == null) {
                 store.writer.cacheVerifiedArtefact(received.file, ::currentBoundary)
-                localContent.saveCode(received.file, received.versions.versions.first { it.id == received.versions.currentVersionId }, received.html)
+                localContent.saveCode(received.file, received.versions.versions.first { it.id == received.versions.currentVersionId }, received.payload.sourceHtml)
             }
             verifiedFile = received.file; versions = received.versions; htmlPayload = received.payload; generic = received.binding; html = received.html
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -646,7 +647,10 @@ private data class HtmlArtefactRead(
                 }
             }
         }
-        error?.let { Text(it, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error) }
+        error?.let {
+            Text(it, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error)
+            if (html == null) TextButton(onClick = { reload++ }, modifier = Modifier.testTag("artefacts.retry")) { Text("Retry") }
+        }
         html?.let { renderedHtml ->
             val capturedVersionId = viewedVersionId
             val capturedVersionNumber = viewedVersionNumber
