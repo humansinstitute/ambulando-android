@@ -1,6 +1,7 @@
 package studio.otherstuff.ambulando.core.goals
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
 import studio.otherstuff.ambulando.core.sample.*
@@ -59,6 +60,50 @@ class WorkspaceGoalsTest {
         assertTrue(unsafe.state.value.space is GoalsSpaceState.Unsafe)
         assertEquals(listOf(shared.id),unsafe.state.value.goals.map { it.id })
         assertTrue(runCatching { unsafe.create(Goal.create("Private","Blocked")) }.isFailure)
+    }
+
+    @Test fun activeSqlHomeAndOrdinaryChannelsLoadTogetherWithoutLosingLegacyGoals() = runBlocking {
+        val h=SampleHarness();val w=SampleIds.STUDIO
+        val seed=GoalsController(h.api,w,h.app,TestKeys.NPUB){true}
+        seed.refresh();seed.setUp(null,emptyList())
+        val personal=seed.create(Goal.create("SQL personal","Current"))
+        val shared=h.api.createGoal(w,h.app,SampleIds.GENERAL,Goal.create("Legacy shared","Retained"))
+        val home=personal.file.channelId
+        val root=Json.parseToJsonElement(javaClass.getResource("/goals/relational-current-v1.json")!!.readText()).jsonObject
+        val tables=root.getValue("tables").jsonObject.mapValues { (_,value) ->
+            value.jsonArray.map { entry -> JsonObject(entry.jsonObject.toMutableMap().apply {
+                put("workspace_id",JsonPrimitive(w));put("channel_id",JsonPrimitive(home));put("owner_npub",JsonPrimitive(TestKeys.NPUB))
+            }) }
+        }
+        val sqlId=tables.getValue("goals").single().string("id")!!
+        val statusChannels=mutableSetOf<String>();var outage=false
+        val a=TowerAPI(TowerClient(h.client.origin,object:HttpTransport {
+            override suspend fun send(request:HttpRequest):HttpResponse {
+                if(!request.url.contains("/db/native-v1/"))return h.tower.send(request)
+                val body=Json.parseToJsonElement(request.body!!.decodeToString()).jsonObject
+                fun reply(value:JsonObject)=HttpResponse(200,value.toString().toByteArray())
+                if(outage)return HttpResponse(404,"{\"code\":\"namespace_not_available\"}".toByteArray())
+                if(request.url.endsWith("/status")) {
+                    val channel=body.string("channel_id")!!;statusChannels+=channel
+                    return reply(jsonObjectOf("version" to 1,"authority" to if(channel==home)jsonObjectOf("mode" to "active")else null))
+                }
+                if(request.url.endsWith("/read")) {
+                    if(body.string("id")!=sqlId)return HttpResponse(404,"{\"code\":\"row_not_found\"}".toByteArray())
+                    return reply(jsonObjectOf("version" to 1,"channel_id" to home,"row" to tables.getValue("goals").single()))
+                }
+                return reply(jsonObjectOf("version" to 1,"generation" to "9","rows" to JsonArray(tables.getValue(body.string("table")!!)),"has_more" to false))
+            }
+        },SampleSigners.primary))
+        var observed=false
+        a.goalsRelational=GoalsRelational(a,TestKeys.NPUB,w,h.app,TestKeys.NPUB,rememberAuthority={observed=true},hadAuthority={observed})
+        val own=GoalsController(a,w,h.app,TestKeys.NPUB){true};own.refresh()
+        assertNull(own.state.value.error);assertEquals(listOf(sqlId),own.state.value.goals.map{it.id})
+        val all=GoalsController(a,w,h.app,TestKeys.NPUB,allAccessible=true){true};all.refresh()
+        assertNull(all.state.value.error);assertEquals(setOf(sqlId,shared.id),all.state.value.goals.map{it.id}.toSet())
+        assertTrue(statusChannels.containsAll(listOf(home,SampleIds.GENERAL)))
+        outage=true;all.refresh()
+        assertNotNull(all.state.value.error)
+        assertEquals(setOf(sqlId,shared.id),all.state.value.goals.map{it.id}.toSet())
     }
 
 }

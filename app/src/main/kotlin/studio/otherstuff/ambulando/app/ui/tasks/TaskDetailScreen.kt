@@ -189,7 +189,7 @@ private fun CommentComposer(taskId: String, intents: TasksIntents) {
     Row(Modifier.fillMaxWidth().background(amb.card).imePadding().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         studio.otherstuff.ambulando.app.ui.work.MentionTextEntry(draft.text, { draft.text = it }, draft.mentions, { draft.mentions = it }, intents::mentionCandidates, "Add a comment",
-            Modifier.weight(1f), Modifier.fillMaxWidth().background(amb.muted, RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 8.dp).testTag("comment.field"), lookupBoundary = taskId)
+            Modifier.weight(1f), Modifier.fillMaxWidth().background(amb.muted, RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 8.dp).testTag("comment.field"), localLookup = intents::localMentionCandidates, lookupBoundary = taskId)
         IconButton(onClick = {
             if (!draft.isBlank && intents.comment(taskId, draft.encoded().body)) draft.clear()
         }, enabled = !draft.isBlank,

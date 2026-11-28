@@ -153,7 +153,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
     // A query that is just a chosen mention's own text (right after picking it) is not a new search.
     val activeMention = field.value.selection.takeIf { it.collapsed }?.let { MentionCodec.activeQuery(field.value.text, it.end) }
         ?.takeIf { active -> mentions.none { field.value.text.startsWith(it.visible, active.start) } }
-    val mentionLookup = studio.otherstuff.ambulando.app.ui.chat.rememberMentionLookup(activeMention?.query, model.activeBoundaryId to target) { model.mentionCandidates(it) }
+    val mentionLookup = studio.otherstuff.ambulando.app.ui.chat.rememberMentionLookup(activeMention?.query, model.activeBoundaryId to target, model::localMentionCandidates) { model.mentionCandidates(it) }
 
     val threadRemoved by remember(w.id, threadId) { model.store.liveQuery({ it.workspaceId == w.id }) { threadId?.let { model.store.reader.isAccessRemoved(w.id, FlaggedTable.THREADS, it) } ?: false } }.collectAsState(false)
     var editing by remember(target) { mutableStateOf<MessageRecord?>(null) }

@@ -15,6 +15,20 @@ internal class MentionLookupFailure(val candidates: List<MentionCandidate>, mess
 
 private val fileDiscoveryTimes = java.util.WeakHashMap<studio.otherstuff.ambulando.core.workspaces.WorkspaceRuntime, MutableMap<String, Long>>()
 
+/** Current local directory only; never waits for File discovery or personal Goals storage. */
+internal suspend fun AppModel.localMentionCandidates(query: String): List<MentionCandidate> {
+    val c = connection ?: return emptyList(); val w = workspace ?: return emptyList()
+    val runtime = active ?: return emptyList(); val boundary = activeBoundaryId
+    if (GoalMentions.isQuery(query)) return emptyList()
+    val local = runtime.store.reader.mentionCandidates(w.id, query, viewerNpub = c.signerNpub)
+    val regular = if (MentionSearch.parse(query).first != null) local else local.filterNot { candidate ->
+        candidate.mention.type == MentionType.FILE && runtime.store.reader.file(w.id,candidate.mention.id)?.contentType
+            ?.substringBefore(';')?.trim()?.equals(Goal.MIME,ignoreCase=true) == true
+    }
+    return if (active === runtime && activeBoundaryId == boundary && connection == c && workspace?.id == w.id &&
+        workspace?.accessRemoved == false && (identityState as? studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked)?.npub == c.signerNpub) regular else emptyList()
+}
+
 /** Personal discovery uses the same owner/grant checks and complete paginated reads as Goals itself. */
 internal suspend fun AppModel.mentionCandidates(query: String): List<MentionCandidate> {
     val c = connection ?: return emptyList(); val w = workspace ?: return emptyList()

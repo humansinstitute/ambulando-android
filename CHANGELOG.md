@@ -1,3 +1,8 @@
+## 0.9.81 (109)
+
+- Load workspace Goals across both migrated personal storage and ordinary channels. Keep storage outages and missing previously migrated channels visible without reverting to older content.
+- Show saved people and agent matches immediately in chat, task comments and document comments while File and personal Goals discovery continue. Keep cold paginated artefact discovery and workspace/query cancellation.
+
 ## 0.9.80 (108)
 
 - Open Reminders immediately from saved data, with your assigned New, Ready and In progress tasks across the current workspace. Note to Self comes first, followed by a divider and other tasks.

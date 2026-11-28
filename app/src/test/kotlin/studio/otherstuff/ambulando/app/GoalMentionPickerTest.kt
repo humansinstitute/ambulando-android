@@ -47,4 +47,28 @@ class GoalMentionPickerTest {
         compose.onNodeWithText("second").assertDoesNotExist()
         compose.onNodeWithText("No matches").assertDoesNotExist()
     }
+    @Test fun localRowsAreSelectableDuringDiscoveryAndCancelledQueriesCannotRestoreThem() {
+        val query=mutableStateOf<String?>("one");val boundary=mutableStateOf("workspace-one")
+        var picked:Mention?=null
+        val release=kotlinx.coroutines.CompletableDeferred<Unit>()
+        compose.setContent {
+            val result=rememberMentionLookup(query.value,boundary.value,
+                localLookup={listOf(MentionCandidate(Mention(MentionType.AGENT,boundary.value,it),"Agent"))}) {
+                release.await();throw IllegalStateException("Offline enrichment")
+            }
+            AmbulandoTheme{MentionLookahead(result.candidates,{picked=it},status=if(result.loading)"Searching" else result.error)}
+        }
+        compose.waitUntil(1000){compose.onAllNodesWithText("one").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithText("one").performClick()
+        compose.runOnIdle{assertEquals("@[one](mention:agent:workspace-one)",picked?.token);query.value="two";boundary.value="workspace-two"}
+        compose.onNodeWithText("one").assertDoesNotExist()
+        compose.waitUntil(1000){compose.onAllNodesWithText("two").fetchSemanticsNodes().isNotEmpty()}
+        release.complete(Unit)
+        compose.waitUntil(5000){compose.onAllNodesWithText("Mentions unavailable. Try again.").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithText("two").assertIsDisplayed()
+        compose.onNodeWithText("one").assertDoesNotExist()
+        compose.runOnIdle{query.value=null}
+        compose.onNodeWithText("two").assertDoesNotExist()
+    }
+
 }

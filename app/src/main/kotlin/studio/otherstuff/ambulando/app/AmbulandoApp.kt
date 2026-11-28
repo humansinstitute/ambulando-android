@@ -316,6 +316,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 } catch (e: studio.otherstuff.ambulando.core.surfaces.TaskTreeError.Unavailable) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.RESTRICTED
                 } catch (e: Exception) { studio.otherstuff.ambulando.app.ui.tasks.RelationshipStatus.OFFLINE }
             }
+            override suspend fun localMentionCandidates(query: String) = if (w == null) emptyList() else model.localMentionCandidates(query)
             override suspend fun mentionCandidates(query: String) = if (w == null) emptyList() else model.mentionCandidates(query)
             override fun retryWrite(item: WriteItem) { model.act { model.writes.retry(item.id, c) } }
             override fun applyMine(item: WriteItem) { model.act { model.writes.retry(item.id, c, true) } }

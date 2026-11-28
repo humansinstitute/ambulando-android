@@ -6,6 +6,8 @@ Selection inserts `@[Title](mention:file:<File UUID>)`. The UUID is the canonica
 
 Discovery reuses GoalsSpace's owner metadata and grant checks, its designated Goals channel or existing owner-only self conversation, and GoalsController's boundary checks and verified File content. Other people's authorized goal files are not added to personal goal discovery. Bare and unprefixed searches exclude goal Files from the generic File fallback; an explicit `file:` search keeps its ordinary authorized-File behavior. Duplicate owned Goals channels are outside the resolver's current designated home. This behavior matches the Goals list; expanding discovery is separate work.
 
+The chat, task-comment and document-comment pickers show current local directory matches before any debounce or network discovery. File discovery and personal Goals refresh then enrich those same query-bound results; cold paginated File discovery still runs.
+
 The UI cancels superseded lookups and clears rows immediately when query or boundary changes. Loading and failure are distinct from an empty result. Failure retains ordinary local mention matches where possible, with a personal-goal error. Failed/incomplete goal reads never masquerade as a complete goal list.
 
 ## Pagination limit

@@ -64,6 +64,14 @@ internal fun AppModel.bindGoals(api: TowerAPI, c: studio.otherstuff.ambulando.co
         rememberAuthority={ check(current());runtime.store.writer.setState(key,"observed") },
         hadAuthority={runtime.store.reader.state(key)!=null}, current=::current,
         loadPending={ runtime.store.reader.state("$key:pending")?.let { kotlinx.serialization.json.Json.parseToJsonElement(it) as kotlinx.serialization.json.JsonObject } },
-        savePending={ check(current()); runtime.store.writer.setState("$key:pending",it?.toString()) })
+        savePending={ check(current()); runtime.store.writer.setState("$key:pending",it?.toString()) },
+        rememberChannelAuthority={ channel -> check(current()); runtime.store.writer.setState("$key:channel:$channel", "observed") },
+        hadChannelAuthority={ channel ->
+            runtime.store.reader.state("$key:channel:$channel") != null ||
+                // Upgrade from the workspace-only marker: retain the known SQL home before new channel markers exist.
+                (runtime.store.reader.state(key) != null &&
+                    (studio.otherstuff.ambulando.core.goals.GoalsLocalContent(runtime.store,w.id,c.signerNpub,binding).load()
+                        ?.space as? studio.otherstuff.ambulando.core.goals.GoalsSpaceState.Ready)?.channel?.id == channel)
+        })
     return api
 }

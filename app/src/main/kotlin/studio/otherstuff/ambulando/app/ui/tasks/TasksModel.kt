@@ -178,6 +178,8 @@ interface TasksIntents : WriteActions {
     /** The `@` lookahead for comment fields: people, agents and records matching [query] from this workspace's local store. */
     suspend fun mentionCandidates(query: String): List<studio.otherstuff.ambulando.core.store.MentionCandidate> = emptyList()
 
+    suspend fun localMentionCandidates(query: String): List<studio.otherstuff.ambulando.core.store.MentionCandidate> = emptyList()
+
     /** Adds a child under [parent]; false when the title is blank. */
     fun addSubtask(parent: TaskRow, title: String): Boolean = title.isNotBlank() && submit(TaskWrites.subtask(parent.task, title))
 

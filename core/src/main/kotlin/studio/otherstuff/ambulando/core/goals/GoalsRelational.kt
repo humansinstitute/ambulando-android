@@ -12,7 +12,12 @@ import java.time.Instant
 class GoalsRelational(private val api: TowerAPI, private val owner: String, private val workspace: String, private val app: String,
     private val viewer: String, private val rememberAuthority: suspend () -> Unit = {}, private val hadAuthority: suspend () -> Boolean = { false }, private val current: () -> Boolean = { true },
     private val loadPending: suspend () -> JsonObject? = { null },
-    private val savePending: suspend (JsonObject?) -> Unit = {}) {
+    private val savePending: suspend (JsonObject?) -> Unit = {},
+    private val rememberChannelAuthority: suspend (String) -> Unit = {},
+    private val hadChannelAuthority: suspend (String) -> Boolean = { false }) {
+    private val observedChannels = ConcurrentHashMap.newKeySet<String>()
+    private suspend fun channelWasRelational(channel: String) = channel in observedChannels || hadChannelAuthority(channel)
+    private suspend fun workspaceWasRelational() = observedChannels.isNotEmpty() || hadAuthority()
     companion object { private val mutationLocks=ConcurrentHashMap<String,Mutex>() }
     init { require(owner.startsWith("npub1") && owner.all { it.isLetterOrDigit() }); TowerAPI.uuid(workspace) }
     private val base = "/api/v4/workspaces/$owner/apps/$app/db/native-v1/$workspace"
@@ -20,21 +25,27 @@ class GoalsRelational(private val api: TowerAPI, private val owner: String, priv
         check(current()) { "Unlock the current workspace to open goals." }
         return api.obj(api.client.request(method="POST",path="$base/$action",appNpub=app,jsonBody=body.toString().toByteArray()), "relational goals").also { check(current()) }
     }
-    /** Missing capability before cutover permits legacy; unavailable after observed SQL authority never downgrades. */
+    /** Namespace outages never downgrade after SQL cutover. Authority itself is scoped to each channel. */
     suspend fun mode(channel: String): String {
         val reply = try { request("status", jsonObjectOf("channel_id" to channel,"content_type" to Goal.MIME)) }
         catch(e: TowerError.Http) {
-            if(e.status==404 && !hadAuthority()) return "legacy"
+            if(e.status==404 && !workspaceWasRelational() && !channelWasRelational(channel)) return "legacy"
             if(e.status==404) throw GoalSaveFailed("Goals storage is unavailable. Your saved content is retained.",true)
             throw e
         }
         if(flexibleInt(reply["version"])!=1) throw TowerError.Malformed("goals authority")
+        if ("authority" !in reply || reply["authority"] !is JsonNull && reply.obj("authority") == null) throw TowerError.Malformed("goals authority")
         val authority=reply.obj("authority")
-        if(authority==null) { if(hadAuthority()) throw GoalSaveFailed("Goals storage is unavailable. Your saved content is retained.",true); return "legacy" }
+        if(authority==null) {
+            if(channelWasRelational(channel)) throw GoalSaveFailed("Goals storage is unavailable. Your saved content is retained.",true)
+            return if(reply.obj("fence")?.bool("active")==true) "frozen" else "legacy"
+        }
         val mode=authority.string("mode") ?: throw TowerError.Malformed("goals authority")
         if(mode !in setOf("staging","active","frozen")) throw TowerError.Malformed("goals authority")
-        if(mode=="active" || mode=="frozen") rememberAuthority()
-        if(mode=="staging" && reply.obj("fence")?.bool("active")!=true && !hadAuthority()) return "legacy"
+        if(mode=="active" || mode=="frozen") {
+            rememberAuthority(); rememberChannelAuthority(channel); observedChannels += channel
+        }
+        if(mode=="staging" && reply.obj("fence")?.bool("active")!=true && !channelWasRelational(channel)) return "legacy"
         return if(mode=="active") "relational" else "frozen"
     }
     data class Snapshot(val generation:String,val tables:Map<String,List<JsonObject>>)
@@ -108,9 +119,9 @@ class GoalsRelational(private val api: TowerAPI, private val owner: String, priv
         // must remain 403 for identity-only discussion metadata, including viewers without their own Goals home.
         val found=try {request("read",jsonObjectOf("version" to 1,"table" to "goals","id" to TowerAPI.uuid(id)))}
         catch(e:TowerError.Http) {
-            val legacyCandidate=e.status==404 || e.status==409&&e.code=="authority_unavailable" || e.status==403&&e.code=="table_policy_required"&&!hadAuthority()
+            val legacyCandidate=e.status==404 || e.status==409&&e.code=="authority_unavailable" || e.status==403&&e.code=="table_policy_required"&&!workspaceWasRelational()
             if(!legacyCandidate)throw e
-            if(e.status==404&&e.code!="row_not_found"&&hadAuthority())throw GoalSaveFailed("Goals storage is unavailable. Your saved content is retained.",true)
+            if(e.status==404&&e.code!="row_not_found"&&workspaceWasRelational())throw GoalSaveFailed("Goals storage is unavailable. Your saved content is retained.",true)
             val reply=api.obj(api.client.request(path=TowerAPI.base(workspace)+"/files/"+TowerAPI.uuid(id),appNpub=app),"goal reference")
             val file=reply.obj("file")?.let(FileRecord::parse) ?: throw TowerError.Malformed("goal reference")
             if(file.workspaceId!=workspace||file.id!=id||!GoalFiles.isGoal(file))throw GoalError.Invalid("This is not a goal.")

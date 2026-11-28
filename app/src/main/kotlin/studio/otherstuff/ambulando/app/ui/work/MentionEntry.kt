@@ -35,11 +35,13 @@ fun MentionTextEntry(
     text: TextFieldValue, onValue: (TextFieldValue) -> Unit, mentions: List<Mention>, onMentions: (List<Mention>) -> Unit,
     lookup: suspend (String) -> List<MentionCandidate>, placeholder: String, modifier: Modifier = Modifier, fieldModifier: Modifier = Modifier,
     minLines: Int = 1, maxLines: Int = 5, enabled: Boolean = true, lookupBoundary: Any? = null,
+    localLookup: (suspend (String) -> List<MentionCandidate>)? = null,
 ) {
     val amb = Amb.colors
     val active = text.selection.takeIf { it.collapsed }?.let { MentionCodec.activeQuery(text.text, it.end) }
         ?.takeIf { query -> mentions.none { text.text.startsWith(it.visible, query.start) } }
-    val results = studio.otherstuff.ambulando.app.ui.chat.rememberMentionLookup(active?.query, lookupBoundary, lookup)
+    val results = if (localLookup == null) studio.otherstuff.ambulando.app.ui.chat.rememberMentionLookup(active?.query, lookupBoundary, lookup)
+        else studio.otherstuff.ambulando.app.ui.chat.rememberMentionLookup(active?.query, lookupBoundary, localLookup, lookup)
     val pills = remember(mentions, amb) { MentionPills(mentions, SpanStyle(color = amb.primary, background = amb.muted, fontWeight = FontWeight.SemiBold)) }
     // [modifier] places the whole entry (a weight in a row, for instance); [fieldModifier] dresses the text field itself.
     Column(modifier) {

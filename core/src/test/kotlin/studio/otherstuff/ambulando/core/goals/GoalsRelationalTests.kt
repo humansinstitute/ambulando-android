@@ -25,13 +25,52 @@ class GoalsRelationalTests {
     }
     @Test fun missingAuthorityAfterObservedRelationalNeverDowngrades():Unit=runBlocking {
         val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest)=response(jsonObjectOf("version" to 1,"authority" to null))})
-        assertThrows(GoalSaveFailed::class.java){runBlocking{repository(a,true).mode(id)}}
+        assertThrows(GoalSaveFailed::class.java){runBlocking{GoalsRelational(a,TestKeys.NPUB,id,TestKeys.NPUB,TestKeys.NPUB,hadAuthority={true},hadChannelAuthority={it==id}).mode(id)}}
     }
     @Test fun unavailableNamespaceAfterObservedAuthorityRetainsContentError():Unit=runBlocking {
         val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest)=HttpResponse(404,"{\"code\":\"namespace_not_available\"}".toByteArray())})
         assertThrows(GoalSaveFailed::class.java){runBlocking{repository(a,true).mode(id)}}
         assertEquals("legacy",repository(a,false).mode(id))
     }
+    @Test fun observedPersonalAuthorityDoesNotMakeOrdinaryChannelAnOutage():Unit=runBlocking {
+        val channels=mutableListOf<String>()
+        val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest):HttpResponse {
+            val channel=Json.parseToJsonElement(request.body!!.decodeToString()).jsonObject.string("channel_id")!!
+            channels+=channel
+            return response(jsonObjectOf("version" to 1,"authority" to if(channel==id) jsonObjectOf("mode" to "active") else null))
+        }})
+        val repo=repository(a,true)
+        assertEquals("relational",repo.mode(id))
+        assertEquals("legacy",repo.mode("22222222-2222-4222-8222-222222222222"))
+        assertEquals(2,channels.size)
+    }
+
+    @Test fun channelAuthorityPersistsAcrossRepositoryRecreationAndNeverDowngradesItsChannel():Unit=runBlocking {
+        var active=true;val remembered=mutableSetOf<String>()
+        val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest)=response(jsonObjectOf("version" to 1,"authority" to if(active)jsonObjectOf("mode" to "active")else null))})
+        fun repo()=GoalsRelational(a,TestKeys.NPUB,id,TestKeys.NPUB,TestKeys.NPUB,
+            rememberChannelAuthority={remembered+=it},hadChannelAuthority={it in remembered})
+        assertEquals("relational",repo().mode(id));active=false
+        assertThrows(GoalSaveFailed::class.java){runBlocking{repo().mode(id)}}
+        assertEquals("legacy",repo().mode("22222222-2222-4222-8222-222222222222"))
+    }
+
+    @Test fun namespaceDisappearanceAfterInMemoryObservationNeverDowngradesOtherChannels():Unit=runBlocking {
+        var missing=false
+        val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest)=if(missing)HttpResponse(404,"{}".toByteArray())else response(jsonObjectOf("version" to 1,"authority" to jsonObjectOf("mode" to "active")))})
+        val repo=repository(a);assertEquals("relational",repo.mode(id));missing=true
+        assertThrows(GoalSaveFailed::class.java){runBlocking{repo.mode("22222222-2222-4222-8222-222222222222")}}
+    }
+    @Test fun absentAuthorityIsNotLegacyWhenFencedOrMalformed():Unit=runBlocking {
+        var reply=jsonObjectOf("version" to 1,"authority" to null,"fence" to jsonObjectOf("active" to true))
+        val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest)=response(reply)})
+        assertEquals("frozen",repository(a).mode(id))
+        reply=jsonObjectOf("version" to 1)
+        assertThrows(TowerError.Malformed::class.java){runBlocking{repository(a).mode(id)}}
+        reply=jsonObjectOf("version" to 1,"authority" to "unexpected")
+        assertThrows(TowerError.Malformed::class.java){runBlocking{repository(a).mode(id)}}
+    }
+
     @Test fun snapshotRestartsAcrossTablesAndChecksFinalGeneration():Unit=runBlocking {
         var changed=false;var checks=0
         val a=api(object:HttpTransport{override suspend fun send(request:HttpRequest):HttpResponse{
@@ -82,7 +121,7 @@ class GoalsRelationalTests {
         var fenced=false
         val a=api(object:HttpTransport {override suspend fun send(request:HttpRequest)=response(jsonObjectOf("version" to 1,"authority" to jsonObjectOf("mode" to "staging","revision" to "1"),"fence" to jsonObjectOf("active" to fenced,"revision" to "2")))})
         assertEquals("legacy",repository(a).mode(id));fenced=true;assertEquals("frozen",repository(a).mode(id));fenced=false
-        assertEquals("frozen",repository(a,true).mode(id))
+        assertEquals("frozen",GoalsRelational(a,TestKeys.NPUB,id,TestKeys.NPUB,TestKeys.NPUB,hadChannelAuthority={it==id}).mode(id))
     }
     @Test fun sharedIndependentMapperGoldenPreservesNumericLexemesDatesAndOrderedChildren() {
         val root=Json.parseToJsonElement(javaClass.getResource("/goals/relational-current-v1.json")!!.readText()).jsonObject
