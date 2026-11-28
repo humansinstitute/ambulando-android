@@ -6,10 +6,10 @@ that workspace's channels and scopes. Goal details keep their original File iden
 revision-aware actions. Creating a goal still uses the member's checked personal Goals channel;
 its setup and access controls do not govern the visibility of other workspace goals.
 
-Reminders opens the existing personal Note to Self task board and reuses its records and actions.
+Reminders immediately opens a local-first list of the human viewer’s assigned New, Ready and In progress tasks across accessible workspace channels. Existing Note to Self tasks come first, followed by a divider and the remaining tasks. It reuses their records, details and actions; opening the list does not discover or create a personal board.
 Loops is a preview describing regular delegated work, with labelled examples; it schedules nothing.
 Destinations keep workspace boundaries, close the drawer, and use the existing per-workspace
-navigation stacks and Back behavior. Goals and Loops routes survive process restoration.
+navigation stacks and Back behavior. Goals, Reminders and Loops routes survive process restoration.
 
 File mention discovery uses complete paginated authorized channel reads instead of depending on
 visiting Files or the background first page. The picker debounces input for 150 milliseconds and

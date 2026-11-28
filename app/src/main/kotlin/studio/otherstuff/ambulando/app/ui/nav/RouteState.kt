@@ -35,6 +35,7 @@ object RouteState {
         when (route) {
             is WorkRoute.WorkspaceReport -> { put("t", "workspace-report") }
             is WorkRoute.DailyMetrics -> { put("t", "daily-tracker") }
+            is WorkRoute.Reminders -> { put("t", "reminders") }
             is WorkRoute.Loops -> { put("t", "loops") }
             is WorkRoute.Goals -> { put("t", "goals") }
             is WorkRoute.Goal -> { put("t", "goal"); put("a", route.fileId) }
@@ -59,6 +60,7 @@ object RouteState {
         return when (s("t")) {
             "workspace-report" -> WorkRoute.WorkspaceReport(w)
             "daily-tracker" -> WorkRoute.DailyMetrics(w)
+            "reminders" -> WorkRoute.Reminders(w)
             "loops" -> WorkRoute.Loops(w)
             "goals" -> WorkRoute.Goals(w)
             "goal" -> a?.let { WorkRoute.Goal(w, it) }

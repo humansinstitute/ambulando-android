@@ -34,6 +34,7 @@ sealed interface WorkRoute {
     data class WorkspaceReport(override val workspaceId: String) : WorkRoute
     data class DailyMetrics(override val workspaceId: String) : WorkRoute
     /** The viewer's personal goals, and one goal (the File that holds it). */
+    data class Reminders(override val workspaceId: String) : WorkRoute
     data class Loops(override val workspaceId: String) : WorkRoute
     data class Goals(override val workspaceId: String) : WorkRoute
     data class Goal(override val workspaceId: String, val fileId: String) : WorkRoute

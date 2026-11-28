@@ -71,7 +71,7 @@ class TaskHierarchyStatesTest {
     @Test fun aConfirmedListHasACertainCountAndSaysNothingElse() {
         show(snapshot(mapOf(1 to listOf(row(2, 1), row(3, 1, "archive"))), mapOf(1 to state(1, complete = true, pages = 1))), Intents(RelationshipStatus.COMPLETE))
         compose.onNodeWithTag("task.subtasks.count").performScrollTo().assertTextEquals("Subtasks 2")
-        compose.onNodeWithTag("task.subtask.${id(3)}").assertIsDisplayed()
+        compose.onNodeWithTag("task.subtask.${id(3)}").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("task.subtasks.state").assertDoesNotExist()
     }
 
@@ -120,7 +120,7 @@ class TaskHierarchyStatesTest {
         compose.onNodeWithTag("task.subtask.expand.${id(2)}").performScrollTo().performClick()
         compose.waitForIdle()
         assertTrue("expanding reads the child's own list", id(2) in intents.reads)
-        compose.onNodeWithTag("task.subtask.${id(3)}").assertIsDisplayed()
+        compose.onNodeWithTag("task.subtask.${id(3)}").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("task.subtask.state.${id(2)}").assertTextContains("may not be visible", substring = true)
     }
 
@@ -141,20 +141,20 @@ class TaskHierarchyStatesTest {
         val intents = object : TasksIntents by Intents(RelationshipStatus.PARTIAL) { override suspend fun loadRelationships(taskId: String) = gate.await() }
         show(snapshot(mapOf(1 to listOf(row(2, 1), row(3, 1))), mapOf(1 to state(1, complete = true, cursor = "c1", pages = 1))), intents)
         compose.onNodeWithTag("task.subtasks.count").performScrollTo().assertTextEquals("Subtasks 2+")
-        compose.onNodeWithTag("task.subtask.${id(3)}").assertIsDisplayed()
+        compose.onNodeWithTag("task.subtask.${id(3)}").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("task.subtasks.state").assertTextContains("Refreshing subtasks", substring = true)
         gate.complete(RelationshipStatus.PARTIAL)
         compose.waitForIdle()
         compose.onNodeWithTag("task.subtasks.count").assertTextEquals("Subtasks 2+")
         compose.onNodeWithTag("task.subtasks.state").assertTextContains("stopped part-way", substring = true)
-        compose.onNodeWithTag("task.subtask.${id(2)}").assertIsDisplayed()
+        compose.onNodeWithTag("task.subtask.${id(2)}").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun anInterruptedRefreshOfACompleteListIsLabelledAsNotRefreshedWhileItsChildrenStay() {
         show(snapshot(mapOf(1 to listOf(row(2, 1))), mapOf(1 to state(1, complete = true, pages = 0))), Intents(RelationshipStatus.OFFLINE))
         compose.onNodeWithTag("task.subtasks.count").performScrollTo().assertTextEquals("Subtasks 1+")
         compose.onNodeWithTag("task.subtasks.state").assertTextContains("may be out of date", substring = true)
-        compose.onNodeWithTag("task.subtask.${id(2)}").assertIsDisplayed()
+        compose.onNodeWithTag("task.subtask.${id(2)}").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun aRecoveredRefreshGivesBackACertainCount() {

@@ -64,9 +64,11 @@ class RemindersFlowTest {
             repeat(4) { if (compose.onAllNodesWithTag("sidebar.open").fetchSemanticsNodes().isEmpty()) androidx.test.espresso.Espresso.pressBack() }
             compose.waitUntil(20_000) { compose.onAllNodesWithTag("sidebar.open").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("sidebar.open").performClick()
-            compose.onNodeWithTag("sidebar.reminders").performClick()
-            compose.waitUntil(20_000) { model.section == AppSection.TASKS && model.context.channelId == board.id }
-            compose.onNodeWithTag("task.${saved.title}").assertIsDisplayed()
+            compose.onNode(hasScrollAction() and hasAnyAncestor(hasTestTag("sidebar"))).performScrollToNode(hasContentDescription("Reminders in ${w.label}"))
+            compose.onNodeWithContentDescription("Reminders in ${w.label}").performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithTag("reminders.list").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("reminders.rows").performScrollToNode(hasTestTag("reminder.${saved.id}"))
+            compose.onNodeWithTag("reminder.${saved.id}").assertIsDisplayed()
             assertEquals(1, runBlocking { api.channelTasks(w.id, w.appNpub, board.id).size })
         }
     }

@@ -1,3 +1,9 @@
+## 0.9.80 (108)
+
+- Open Reminders immediately from saved data, with your assigned New, Ready and In progress tasks across the current workspace. Note to Self comes first, followed by a divider and other tasks.
+- Search people and agents by name when assigning a task. Show avatars and initials, keep selection separate from Save, and support keyboard selection and cancellation.
+- Reflect status, reassignment and access changes in the list, preserve failed-write rollback, and return to Reminders when closing task detail.
+
 ## 0.9.79 (107)
 
 - Chief of Staff schedule setup now runs in the workspace owner's Autopilot space when a delegated manager saves, changes or removes the assignment. The owner keeps using their own space.

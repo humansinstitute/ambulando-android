@@ -136,9 +136,8 @@ private fun Header(row: TaskRow, value: TaskDetailSnapshot, scope: ScreenScope, 
                 (TaskState.board + listOf(TaskState.BACKLOG, TaskState.ARCHIVE)).map { s -> s.label to { intents.setState(row, s); Unit } })
             MenuChip(TaskPriority.from(row.priority)?.label ?: row.priority, Icons.Outlined.Flag, "task.priority", editable,
                 TaskPriority.editable.map { p -> p.label to { intents.setPriority(row, p); Unit } })
-            MenuChip(row.assignee?.let { displayName(it, value.names, scope.signerNpub) } ?: "Unassigned", Icons.Outlined.Person, "task.assignee", editable,
-                listOf("Unassigned" to { intents.assign(row, null); Unit }) + value.members.map { m -> m.label to { intents.assign(row, m.npub); Unit } })
         }
+        AssigneeTypeahead(row.assignee, value.members, value.people, editable) { intents.assign(row, it) }
     }
 }
 

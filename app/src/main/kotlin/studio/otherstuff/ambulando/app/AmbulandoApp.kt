@@ -166,10 +166,10 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             val target = when (route) {
                 is WorkRoute.WorkspaceReport -> AppSection.TOOLBOX
                 is WorkRoute.DailyMetrics -> AppSection.TOOLBOX
-                is WorkRoute.Loops -> AppSection.HOME
+                is WorkRoute.Loops, is WorkRoute.Reminders -> AppSection.HOME
                 is WorkRoute.Goals, is WorkRoute.Goal -> if (model.section == AppSection.HOME) AppSection.HOME else AppSection.DECK
                 is WorkRoute.ChiefOfStaff -> if (model.section == AppSection.HOME) AppSection.HOME else AppSection.DECK
-                is WorkRoute.Task -> AppSection.TASKS
+                is WorkRoute.Task -> if (model.section == AppSection.HOME && stacks.of(AppSection.HOME).any { it is WorkRoute.Reminders }) AppSection.HOME else AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
                 is WorkRoute.File -> if (model.section == AppSection.DOCS) AppSection.DOCS else AppSection.FILES
                 is WorkRoute.Thread, is WorkRoute.Channel -> chatEntrySection(model.section, overlay = notifications || search || settings || management != null)
@@ -258,12 +258,12 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                     services.open(if (name == "goals") WorkRoute.Goals(entry.workspace.id) else WorkRoute.Loops(entry.workspace.id))
                     sidebar = false
                 }
-                "reminders" -> model.act {
-                    val board = model.personalReminderBoard(entry)
-                    if (model.activeEntry?.id == entry.id) {
-                        stacks.resetContextBound(); model.selectContext(board.scopeId, board.id)
-                        model.section = AppSection.TASKS; sidebar = false
-                    }
+                "reminders" -> {
+                    stacks.resetContextBound(); model.selectContext(null, null)
+                    model.section = AppSection.HOME
+                    stacks.popToRoot(AppSection.HOME)
+                    services.open(WorkRoute.Reminders(entry.workspace.id))
+                    sidebar = false
                 }
             }
         }
@@ -350,6 +350,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 when (stacks.of(model.section).lastOrNull()) {
                     is WorkRoute.Goals, is WorkRoute.Goal -> "goals"
                     is WorkRoute.Loops -> "loops"
+                    is WorkRoute.Reminders -> "reminders"
                     else -> if (model.section == AppSection.HOME && model.context.isHome) "home" else if (model.section == AppSection.TASKS && model.context.channelId?.let { id -> model.channels.firstOrNull { it.id == id }?.let { studio.otherstuff.ambulando.core.transport.Reminders.isSelf(it, w?.id ?: "", c.signerNpub) } } == true) "reminders" else ""
                 }), object : SidebarActions {
                 override fun destination(workspaceId: String?, name: String) {
@@ -361,14 +362,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                         model.sidebarDestination = entry.id to name; model.openWorkspace(entry, null, null)
                     } else destinationHere(name)
                 }
-                override fun reminders() {
-                    val entry = model.activeEntry ?: return
-                    model.act {
-                        val board = model.personalReminderBoard(entry)
-                        stacks.resetContextBound(); model.selectContext(board.scopeId, board.id)
-                        model.section = AppSection.TASKS; sidebar = false
-                    }
-                }
+                override fun reminders() { destinationHere("reminders") }
                 override fun openChiefOfStaffDm() {
                     val entry = model.activeEntry ?: return
                     model.act {
@@ -427,6 +421,7 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 is WorkRoute.DailyMetrics -> DailyMetricsScreen(model)
                 is WorkRoute.Loops -> LoopsScreen()
                 is WorkRoute.Goals -> GoalsScreen(model)
+                is WorkRoute.Reminders -> ReminderListScreen(model, screen, intents)
                 is WorkRoute.Goal -> GoalScreen(model, route.fileId)
                 is WorkRoute.ChiefOfStaff -> ConnectedChiefOfStaffScreen(model)
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
