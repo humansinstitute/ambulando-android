@@ -458,7 +458,7 @@ internal fun ChiefOfStaffAdminPage(
         HorizontalDivider()
         Text("Autopilot schedule reconciliation", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         Text(
-            "Confirm your Autopilot HTTPS host to invoke the pinned reconciliation pipeline (POST /api/pipelines/definitions/<id>/runs) when saving or removing an assignment. Redirects are refused.",
+            "Confirm your Autopilot HTTPS host to invoke the pinned reconciliation pipeline in the workspace owner's Autopilot space when saving or removing an assignment. Redirects are refused.",
             style = MaterialTheme.typography.bodySmall,
             color = Amb.colors.mutedForeground,
         )

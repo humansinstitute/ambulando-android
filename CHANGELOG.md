@@ -1,3 +1,9 @@
+## 0.9.79 (107)
+
+- Chief of Staff schedule setup now runs in the workspace owner's Autopilot space when a delegated manager saves, changes or removes the assignment. The owner keeps using their own space.
+- Delegated-manager provenance uses only the verified workspace owner identity or the server's `can_manage_workspace` authority; role labels and group names never count.
+- Keep unknown fields in the Chief of Staff assignment when it is saved again, so newer clients' settings are not lost. Private cohort fields are refused in the shared assignment.
+
 ## 0.9.78 (106)
 
 - Put Home, Goals, Reminders and Loops together in each workspace sidebar. Goals combines accessible goals across the workspace; Reminders reuses your private Note to self board. Loops is a labelled preview of regular delegated work.

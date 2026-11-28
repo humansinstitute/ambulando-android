@@ -441,6 +441,8 @@ data class ChiefOfStaffAssignment(
     val updatedByNpub: String,
     val updatedAt: String,
     val runtimeBinding: ChiefOfStaffRuntimeBinding? = null,
+    /** Unknown/future compatible top-level fields preserved across round-trips and re-saves. */
+    val extra: Map<String, JsonElement> = emptyMap(),
 ) {
     val isAssigned: Boolean get() = assignedNpub != null && assignedActorId != null
 
@@ -448,6 +450,9 @@ data class ChiefOfStaffAssignment(
     val assignmentEpoch: Int get() = if (assignmentRevision >= 1) assignmentRevision else 1
 
     fun toJson(): JsonObject = buildJsonObject {
+        for ((k, v) in extra) {
+            if (k !in KNOWN_KEYS) put(k, v)
+        }
         put("schema", ChiefOfStaffContract.SCHEMA_ASSIGNMENT)
         put("schema_version", 1)
         put("workspace_id", workspaceId)
@@ -465,9 +470,21 @@ data class ChiefOfStaffAssignment(
     }
 
     companion object {
+        private val KNOWN_KEYS = setOf(
+            "schema", "schema_version", "workspace_id", "workspace_owner_npub", "app_npub", "assignment_revision",
+            "assigned_actor_id", "assigned_npub", "assigned_display_name", "previous_assigned_npub",
+            "updated_by_actor_id", "updated_by_npub", "updated_at", "runtime_binding",
+        )
+
+        /** Same refusal list as `scripts/chief-of-staff/model.mjs`: the shared assignment never carries private cohort content. */
+        private val FORBIDDEN_KEYS = listOf("topics", "evidence", "cohort_id", "cohort_channel_id", "job_status")
+
         fun parse(doc: JsonObject, expected: ExpectedWorkspaceContext? = null): ChiefOfStaffAssignment {
             require(doc.string("schema") == ChiefOfStaffContract.SCHEMA_ASSIGNMENT && flexibleInt(doc["schema_version"]) == 1) {
                 "Invalid Chief of Staff assignment schema."
+            }
+            for (forbidden in FORBIDDEN_KEYS) {
+                require(forbidden !in doc) { "Shared assignment must not contain private field: $forbidden" }
             }
             val workspaceId = lowerUUID(doc.string("workspace_id")) ?: throw IllegalArgumentException("Invalid assignment workspace_id.")
             val ownerNpub = doc.string("workspace_owner_npub")?.takeIf(ChiefOfStaffContract::isValidNpub)
@@ -520,6 +537,7 @@ data class ChiefOfStaffAssignment(
                 updatedByNpub = updatedByNpub,
                 updatedAt = updatedAt,
                 runtimeBinding = runtimeBinding,
+                extra = doc.filterKeys { it !in KNOWN_KEYS },
             )
         }
 

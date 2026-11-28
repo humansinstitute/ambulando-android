@@ -343,8 +343,10 @@ export async function setAssignment(
         ? { ...current.assignment.runtime_binding, agent_npub: assignedNpub }
         : null;
 
+  // Carry unknown/future top-level fields forward; known fields below always win.
   const next = M.validateAssignment(
     {
+      ...current.assignment,
       schema: M.SCHEMA_ASSIGNMENT,
       schema_version: 1,
       workspace_id: workspaceId,

@@ -72,6 +72,12 @@ class TowerOrigin(value: String) {
         val AUTOPILOT_ACTIVATION_PATHS = setOf("/api/wapps/activation-catalog", "/api/wapps/install-intents/process")
         /** Pinned generic Autopilot pipeline run invocation path (never a prefix or arbitrary shell route). */
         val AUTOPILOT_PIPELINE_RUN_PATH = Regex("^/api/pipelines/definitions/[A-Za-z0-9._-]{1,128}/runs$")
+        /**
+         * The same invocation in a named owner's pipeline space, for a delegated signer acting for that owner
+         * (`/api/owners/:ownerNpub/pipelines/definitions/:id/runs`). Exact shape only; callers pin the owner.
+         */
+        val AUTOPILOT_OWNER_PIPELINE_RUN_PATH =
+            Regex("^/api/owners/npub1[023456789acdefghjklmnpqrstuvwxyz]{58}/pipelines/definitions/[A-Za-z0-9._-]{1,128}/runs$")
     }
 
     /** Absolute URL for an exact API path plus optional query items (encoded once, here). */
@@ -79,7 +85,8 @@ class TowerOrigin(value: String) {
         val allowed = path.startsWith("/api/v4/") ||
             path == "/.well-known/nstack.json" ||
             path in AUTOPILOT_ACTIVATION_PATHS ||
-            AUTOPILOT_PIPELINE_RUN_PATH.matches(path)
+            AUTOPILOT_PIPELINE_RUN_PATH.matches(path) ||
+            AUTOPILOT_OWNER_PIPELINE_RUN_PATH.matches(path)
         if (!allowed || path.contains("..") || path.contains("?") ||
             path.contains("#")
         ) throw TowerError.UnsafePath

@@ -35,6 +35,8 @@ import studio.otherstuff.ambulando.core.transport.TowerAPI
 import studio.otherstuff.ambulando.core.transport.TowerClient
 import studio.otherstuff.ambulando.core.transport.TowerOrigin
 import studio.otherstuff.ambulando.core.transport.jsonObjectOf
+import studio.otherstuff.ambulando.core.transport.string
+import studio.otherstuff.ambulando.core.transport.parseJsonObjectOrNull
 import java.net.URI
 import java.nio.file.Files
 import java.time.Instant
@@ -668,6 +670,128 @@ class ChiefOfStaffTest {
         assertEquals("Android Launch", saved.corrections.single().name)
     }
 
+    @Test fun assignmentSaveThroughCasPreservesUnknownTopLevelAndBindingFields() = runBlocking {
+        val subscription = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        val initial = ChiefOfStaffAssignment(
+            workspaceId = wsA, workspaceOwnerNpub = ownerNpub, appNpub = appNpub,
+            assignmentRevision = 1, assignedActorId = agentActorId, assignedNpub = agentNpub,
+            assignedDisplayName = "Agent", previousAssignedNpub = null,
+            updatedByActorId = ownerActorId, updatedByNpub = ownerNpub, updatedAt = "2026-11-28T00:00:00Z",
+            runtimeBinding = ChiefOfStaffRuntimeBinding(
+                autopilotOrigin = "https://autopilot.invalid", reconcilePipelineId = "chief-of-staff-reconcile.v1",
+                ownerNpub = ownerNpub, workspaceId = wsA, subscriptionId = subscription, agentNpub = agentNpub,
+                extra = mapOf("future_option" to buildJsonObject { put("example", true) }),
+            ),
+            extra = mapOf("future_top" to buildJsonObject { put("x", 1) }),
+        )
+        var currentVer = ver1
+        var currentBytes = ChiefOfStaffEnvelope.encode(initial.toJson())
+        var uploadedBytes: ByteArray? = null
+        var uploadCompleted = false
+        var versionPosts = 0
+        fun assignmentFile() = fileJson(assignFileId, assignChannelId, ChiefOfStaffContract.MIME_ASSIGNMENT,
+            ChiefOfStaffContract.assignmentFileMetadata(wsA, appNpub), currentVer, currentBytes.size, Sha256Hex.of(currentBytes))
+
+        val transport = object : HttpTransport {
+            override suspend fun send(request: HttpRequest): HttpResponse {
+                val path = URI(request.url).path
+                return when {
+                    path.endsWith("/me") -> jsonResp(buildJsonObject {
+                        put("identity", buildJsonObject { put("workspace_id", wsA); put("workspace_owner_npub", ownerNpub); put("app_npub", appNpub) })
+                        put("actor", buildJsonObject { put("actor_id", ownerActorId); put("npub", ownerNpub) })
+                        put("permissions", buildJsonArray { add(JsonPrimitive("workspace.read")); add(JsonPrimitive("workspace.manage")) })
+                    })
+                    path.endsWith("/members") -> jsonResp(buildJsonObject {
+                        put("members", buildJsonArray {
+                            add(buildJsonObject {
+                                put("actor", buildJsonObject { put("actor_id", ownerActorId); put("npub", ownerNpub); put("kind", "human"); put("display_name", "Owner") })
+                                put("authority", buildJsonObject { put("can_manage_workspace", true) })
+                            })
+                            add(buildJsonObject {
+                                put("actor", buildJsonObject { put("actor_id", agentActorId); put("npub", agentNpub); put("kind", "agent"); put("display_name", "Agent") })
+                                put("authority", buildJsonObject { put("can_manage_workspace", false) })
+                            })
+                        })
+                    })
+                    path.endsWith("/groups") -> jsonResp(buildJsonObject { put("groups", buildJsonArray {}) })
+                    path.endsWith("/scopes") -> jsonResp(buildJsonObject {
+                        put("scopes", buildJsonArray { add(buildJsonObject { put("id", scopeId); put("workspace_id", wsA); put("name", "Home"); put("kind", "scope") }) })
+                    })
+                    path.endsWith("/scopes/$scopeId/channels") -> jsonResp(buildJsonObject {
+                        put("channels", buildJsonArray {
+                            add(buildJsonObject {
+                                put("id", assignChannelId); put("scope_id", scopeId); put("workspace_id", wsA)
+                                put("name", "Chief of Staff"); put("kind", "channel")
+                                put("metadata", ChiefOfStaffContract.assignmentChannelMetadata(wsA, appNpub))
+                            })
+                        })
+                    })
+                    path.endsWith("/channels/$assignChannelId/grants") -> jsonResp(buildJsonObject {
+                        put("complete", true)
+                        put("grants", buildJsonArray {
+                            add(grant("actor", ownerActorId, listOf("channel.read", "file.read", "file.write", "channel.manage", "channel.grants.manage")))
+                        })
+                    })
+                    path.endsWith("/channels/$assignChannelId/files") -> jsonResp(buildJsonObject { put("files", buildJsonArray { add(assignmentFile()) }) })
+                    path.endsWith("/files/$assignFileId") -> jsonResp(buildJsonObject { put("file", assignmentFile()) })
+                    path.endsWith("/files/$assignFileId/versions/$currentVer/object") -> HttpResponse(200, currentBytes)
+                    path.endsWith("/storage/prepare") -> {
+                        uploadCompleted = false
+                        jsonResp(buildJsonObject { put("object_id", obj1); put("upload_url", "https://upload.invalid/obj1") })
+                    }
+                    request.url == "https://upload.invalid/obj1" && request.method == "PUT" -> {
+                        uploadedBytes = request.body
+                        HttpResponse(200, ByteArray(0))
+                    }
+                    path.endsWith("/storage/$obj1/complete") -> {
+                        uploadCompleted = true
+                        jsonResp(buildJsonObject { put("completed_at", "2026-11-28T01:01:00Z") })
+                    }
+                    path.endsWith("/storage/$obj1") -> jsonResp(buildJsonObject {
+                        val b = uploadedBytes ?: ByteArray(0)
+                        if (uploadCompleted) put("completed_at", "2026-11-28T01:01:00Z")
+                        put("sha256_hex", Sha256Hex.of(b))
+                        put("size_bytes", b.size)
+                        put("is_public", false)
+                    })
+                    path.endsWith("/files/$assignFileId/versions") && request.method == "POST" -> {
+                        versionPosts++
+                        val base = parseJsonObjectOrNull(request.body!!)!!.string("base_version_id")
+                        if (base != currentVer) return HttpResponse(409, """{"code":"stale_base_version"}""".toByteArray())
+                        currentBytes = uploadedBytes!!
+                        currentVer = ver2
+                        HttpResponse(201, buildJsonObject {
+                            put("file", assignmentFile())
+                            put("version", buildJsonObject { put("id", ver2) })
+                        }.toString().toByteArray())
+                    }
+                    else -> HttpResponse(404, "{}".toByteArray())
+                }
+            }
+        }
+
+        val api = TowerAPI(TowerClient(TowerOrigin("https://tower.invalid"), transport, testIdentity(1)))
+        val saved = api.setChiefOfStaffAssignment(wsA, ownerNpub, appNpub, agentNpub, expectedRevision = 1)
+        assertEquals(1, versionPosts)
+        assertEquals(ver2, saved.versionId)
+        assertEquals(2, saved.assignment.assignmentRevision)
+
+        // The bytes actually written through CAS keep the unknown top-level and binding fields verbatim.
+        val written = ChiefOfStaffEnvelope.decode(currentBytes)
+        assertEquals(buildJsonObject { put("x", 1) }, written["future_top"])
+        val writtenBinding = written["runtime_binding"]!!.jsonObject
+        assertEquals(buildJsonObject { put("example", true) }, writtenBinding["future_option"])
+        assertEquals(subscription, writtenBinding.string("subscription_id"))
+        assertEquals(buildJsonObject { put("x", 1) }, saved.assignment.extra["future_top"])
+
+        // Removal drops the binding (never reused) but still carries the unknown top-level field.
+        val removed = api.setChiefOfStaffAssignment(wsA, ownerNpub, appNpub, agentNpub = null, expectedRevision = 2)
+        val removedDoc = ChiefOfStaffEnvelope.decode(currentBytes)
+        assertNull(removed.assignment.runtimeBinding)
+        assertFalse("runtime_binding" in removedDoc)
+        assertEquals(buildJsonObject { put("x", 1) }, removedDoc["future_top"])
+    }
+
     @Test fun applyCorrectionsReplaysRenameMergeRejectPinAndArchive() {
         val topics = listOf(
             ChiefOfStaffTopic("t1", "Alpha", "project", listOf("A"), "First"),
@@ -833,7 +957,9 @@ class ChiefOfStaffTest {
         assertTrue("Expected Completed, got $ok", ok is ChiefOfStaffReconcileOutcome.Completed)
         assertEquals("run-123", (ok as ChiefOfStaffReconcileOutcome.Completed).runId)
         assertEquals("POST", lastRequest?.method)
-        assertEquals("https://autopilot.invalid/api/pipelines/definitions/chief-of-staff-reconcile.v1/runs", lastRequest?.url)
+        // This signer is not the workspace owner, so the run addresses the owner's pipeline space exactly.
+        assertTrue(signerNpub != ownerNpub)
+        assertEquals("https://autopilot.invalid/api/owners/$ownerNpub/pipelines/definitions/chief-of-staff-reconcile.v1/runs", lastRequest?.url)
         assertTrue(lastRequest?.header("Authorization")?.startsWith("Nostr ") == true)
         assertNull(lastRequest?.header(TowerClient.APP_NPUB_HEADER))
 

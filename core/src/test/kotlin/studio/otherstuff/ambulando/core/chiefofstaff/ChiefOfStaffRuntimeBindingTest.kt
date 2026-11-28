@@ -25,6 +25,7 @@ import studio.otherstuff.ambulando.core.transport.HttpTransport
 import studio.otherstuff.ambulando.core.transport.parseJsonObjectOrNull
 import studio.otherstuff.ambulando.core.transport.string
 import studio.otherstuff.ambulando.core.workspaces.BoundaryGuardTransport
+import studio.otherstuff.ambulando.core.workspaces.BoundaryViolation
 import studio.otherstuff.ambulando.core.workspaces.WorkspaceBoundary
 import java.io.File
 import java.nio.file.Files
@@ -239,5 +240,75 @@ class ChiefOfStaffRuntimeBindingTest {
         assertFalse("subscription_id" in lastBody!!["input"]!!.jsonObject)
         call(200, envelope("ok", """{"reconciled":{"schedule_state":"pending"}}"""), subscription = "sub-1")
         assertFalse("subscription_id" in lastBody!!["input"]!!.jsonObject)
+    }
+
+    @Test fun topLevelUnknownFieldsArePreservedAndPrivateFieldsRefused() {
+        val withFuture = JsonObject(payload.toMutableMap().apply { put("future_top", buildJsonObject { put("x", 1) }) })
+        val parsed = ChiefOfStaffAssignment.parse(withFuture, context)
+        assertEquals(buildJsonObject { put("x", 1) }, parsed.extra["future_top"])
+        assertEquals(withFuture, parsed.toJson())
+        for (forbidden in listOf("topics", "evidence", "cohort_id", "cohort_channel_id", "job_status")) {
+            assertRejected("top-level $forbidden", JsonObject(payload.toMutableMap().apply { put(forbidden, JsonPrimitive("x")) }))
+        }
+    }
+
+    @Test fun reconcileAddressesOwnerSpaceForDelegatedSignerAndOwnSpaceForOwner() = runBlocking {
+        // Route selection.
+        assertEquals("/api/pipelines/definitions/chief-of-staff-reconcile.v1/runs", ChiefOfStaffPipelineContract.runPath("chief-of-staff-reconcile.v1"))
+        assertNull(ChiefOfStaffPipelineContract.ownerSpaceFor(owner, owner))
+        assertEquals(owner, ChiefOfStaffPipelineContract.ownerSpaceFor(agent, owner))
+        assertEquals("/api/owners/$owner/pipelines/definitions/chief-of-staff-reconcile.v1/runs", ChiefOfStaffPipelineContract.runPath("chief-of-staff-reconcile.v1", owner))
+        try {
+            ChiefOfStaffPipelineContract.runPath("chief-of-staff-reconcile.v1", "not-an-npub")
+            fail("invalid owner space must be refused")
+        } catch (_: IllegalArgumentException) {}
+
+        // A delegated signer (not the owner) posts to the exact owner-space route and nowhere else.
+        val identity = IdentityService(File(Files.createTempDirectory("cos-rb2").toFile(), "vault"), MemoryVault())
+        identity.importIdentity(Bech32.encode("nsec", ByteArray(32) { 8 }), "123456")
+        val delegate = (identity.state() as IdentityState.Unlocked).npub
+        assertTrue(delegate != owner)
+        var lastUrl: String? = null
+        var lastAuth: studio.otherstuff.ambulando.core.nostr.NostrEvent? = null
+        val inner = object : HttpTransport {
+            override suspend fun send(request: HttpRequest): HttpResponse {
+                lastUrl = request.url
+                lastAuth = studio.otherstuff.ambulando.core.support.decodeAuthorization(request)
+                return HttpResponse(200, """{"runId":"r","status":"ok","terminal":true,"result":{"reconciled":{"schedule_state":"scheduled"}},"error":null}""".toByteArray())
+            }
+        }
+        val guarded = BoundaryGuardTransport(inner, WorkspaceBoundary("https://tower.example.invalid", delegate, app, ws))
+        val outcome = ChiefOfStaffPipelineClient(identity, guarded).reconcile(
+            ConfirmedAutopilotOrigin.of("https://autopilot.example.invalid"), delegate, "chief-of-staff-reconcile.v1",
+            ChiefOfStaffReconcileRequest(ws, owner, app, agent, 7, 7, "https://tower.example.invalid", "44444444-4444-4444-8444-444444444444"),
+        )
+        assertTrue("$outcome", outcome is ChiefOfStaffReconcileOutcome.Completed)
+        assertEquals("https://autopilot.example.invalid/api/owners/$owner/pipelines/definitions/chief-of-staff-reconcile.v1/runs", lastUrl)
+        // The signed NIP-98 event binds exactly that owner-space URL and method, by the delegated signer.
+        val auth = lastAuth!!
+        assertTrue(studio.otherstuff.ambulando.core.nostr.SignatureVerifier.verify(auth))
+        assertEquals(lastUrl, auth.tags.first { it[0] == "u" }[1])
+        assertEquals("POST", auth.tags.first { it[0] == "method" }[1])
+        assertEquals(delegate, studio.otherstuff.ambulando.core.nostr.NostrKeys.npub(auth.pubkey))
+
+        // The Chief guard can never be pointed at any owner space other than the workspace owner's.
+        try {
+            ChiefOfStaffPipelineGuard(inner, studio.otherstuff.ambulando.core.transport.TowerOrigin("https://autopilot.example.invalid"),
+                "chief-of-staff-reconcile.v1", ws, owner, app, ownerSpaceNpub = otherAgent)
+            fail("foreign owner space must be refused")
+        } catch (_: IllegalArgumentException) {}
+
+        // The runtime boundary refuses every other /api/owners/ shape.
+        for ((method, url) in listOf(
+            "GET" to "https://autopilot.example.invalid/api/owners/$owner/pipelines/definitions/chief-of-staff-reconcile.v1/runs",
+            "POST" to "https://autopilot.example.invalid/api/owners/$owner/scheduler/jobs",
+            "POST" to "https://autopilot.example.invalid/api/owners/$owner/pipelines/definitions/chief-of-staff-reconcile.v1/runs?x=1",
+            "POST" to "http://autopilot.example.invalid/api/owners/$owner/pipelines/definitions/chief-of-staff-reconcile.v1/runs",
+        )) {
+            try {
+                guarded.check(url, null, method)
+                fail("must refuse $method $url")
+            } catch (_: BoundaryViolation) {}
+        }
     }
 }

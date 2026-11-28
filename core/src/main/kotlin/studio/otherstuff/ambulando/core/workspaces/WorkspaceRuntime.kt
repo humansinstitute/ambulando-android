@@ -89,8 +89,9 @@ class BoundaryGuardTransport(private val base: HttpTransport, private val bounda
         }
         // Generic pinned Autopilot pipeline invocation (e.g. Chief of Staff schedule reconciliation):
         // strictly POST /api/pipelines/definitions/<safe-id>/runs over HTTPS with no query, fragment, userinfo, or Tower app header.
-        if (path.startsWith("/api/pipelines/")) {
-            val exact = method == "POST" && PIPELINE_RUN_PATH.matches(path)
+        // A delegated signer may invoke the same pinned run in the workspace owner's space; every other /api/owners/ path is refused.
+        if (path.startsWith("/api/pipelines/") || path.startsWith("/api/owners/")) {
+            val exact = method == "POST" && (PIPELINE_RUN_PATH.matches(path) || OWNER_PIPELINE_RUN_PATH.matches(path))
             if (!exact || uri.rawQuery != null || uri.rawFragment != null || uri.scheme != "https" || uri.rawUserInfo != null || appHeader != null) {
                 throw BoundaryViolation("autopilot pipeline path")
             }
@@ -110,6 +111,7 @@ class BoundaryGuardTransport(private val base: HttpTransport, private val bounda
     private companion object {
         const val PREFIX = "/api/v4/flightdeck-pg/workspaces"
         val PIPELINE_RUN_PATH = Regex("^/api/pipelines/definitions/[A-Za-z0-9._-]{1,128}/runs$")
+        val OWNER_PIPELINE_RUN_PATH = TowerOrigin.AUTOPILOT_OWNER_PIPELINE_RUN_PATH
     }
 }
 

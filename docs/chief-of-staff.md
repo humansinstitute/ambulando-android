@@ -2,20 +2,18 @@
 
 Ambulando owns the Chief of Staff relationship, topic ontology, evidence links, durable corrections and job status formats. NStack supplies existing Flight Deck PG channel ACLs, private storage and immutable File versions with optimistic `base_version_id` CAS (`409 stale_base_version`). Autopilot owns agent runtime, capability broker signing and scheduled execution bound through `scheduler/session-context.ts`. No bespoke Chief of Staff NStack routes or client-held app keys are added.
 
-## Pluggable backend assessment and documented NStack gap
+## Pluggable backend assessment and NStack capabilities
 
 Live verification against NStack Flight Deck PG (Tower) established:
 
 - Generic `workspace_app_rows` (`/db/:collection/rows`) is unsuitable: `visibility="workspace"` allows any workspace member to mutate rows, has no CAS/revision check, and scopes by `workspace_owner_npub` rather than `workspace_id`.
 - Generic `native-v1` (`/db/native-v1/:workspaceId/...`) is already active with relational policies installed for existing app tables. Tower `src/services/app-db.ts` (`assertNoNativePolicy`) currently rejects all new schema migrations across an app namespace (`409 native_policy_required`) once any native policy exists, and `native-v1` queries still require channel-level `file.read` grants.
 
-**Reusable NStack capability gaps (future backend work, not required to ship v1 source):**
+**Workspace member authority (available):** every row of `GET /workspaces/:workspaceId/members` carries `authority: { can_manage_workspace: boolean }`, NStack's server-computed CURRENT effective `workspace.manage` for the listed actor (direct or nested-group grants, unrevoked, current members only). It discloses no roles, groups or grants, grants no capability and is not a historical write-time attestation; `membership` is still returned only to managers. Chief of Staff provenance accepts a writer only when it is the verified `workspace_owner_npub` identity or its row has `can_manage_workspace === true` (the caller may also count itself when its own `/me` effective permissions include `workspace.manage`). Membership role labels, group names and self-asserted permission arrays are never authority. An older server that omits `authority` fails closed for delegated managers; the owner is still recognized.
 
-1. **Safe non-sensitive effective-manager projection on `GET /workspaces/:id/members` (Gap A):**
-   - Today `flightdeck-pg.ts` (`GET /workspaces/:workspaceId/members`) intentionally returns `{ actor }` only to ordinary `workspace.read` viewers (hiding `membership`), while `GET /groups` and `GET /channels/:id/grants` require `workspace.manage` / `channel.grants.read`. As a result, ordinary members can verify `workspace_owner_npub` provenance on `file.created_by_actor_id` / `updated_by_actor_id` today, but cannot verify delegated `Admins`-group managers (e.g., an agent with `membership.role = "agent"` who holds `workspace.manage` via the `Admins` system group) without disclosing private group membership.
-   - **Proposed minimal reusable capability:** Add a single boolean `can_manage_workspace: boolean` (derived from effective `workspace.manage` permission, exposing zero group IDs/names/memberships) on each row of `GET /workspaces/:workspaceId/members`.
-   - **Independent consumers (>=2):** (a) Ambulando Chief of Staff ordinary-member assignment provenance verification, (b) Workspace directory pins / organization-wide settings / announcement banners authored by delegated workspace managers in independent WApps.
-   - **Required acceptance tests:** Ordinary member sees `can_manage_workspace: true` for owner + `Admins`-group managers and `false` for regular members; zero group IDs/names/membership arrays leaked; revoking `Admins` membership flips `can_manage_workspace` to `false`; forged record authored by `can_manage_workspace: false` actor is rejected.
+**Remaining reusable NStack capability gaps (future backend work, not required to ship v1 source):**
+
+1. Historical source-revision reads: evidence fetches return the current authorized record; indexed revisions show drift but cannot be re-read.
 2. **Additive schema evolution with existing native policies:** allow verified `CREATE TABLE` migrations for new unpolicied tables without disturbing frozen/active existing tables.
 3. **Workspace-readable, manager-writable native-v1 table policy:** allow `read_scope: "workspace_member"` with `manager_only_writes: true` so workspace settings do not require a synthetic channel.
 

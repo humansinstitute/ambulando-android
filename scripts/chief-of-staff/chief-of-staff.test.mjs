@@ -1319,6 +1319,11 @@ describe('Chief of Staff Engine — ACL, provenance, dual auth, bounded batch qu
       }).npub,
     ).toBe(G.assigned_npub);
 
+    // setAssignment-style rebuild keeps unknown top-level fields while known fields win.
+    const carried = M.validateAssignment({ ...{ ...goldenDecoded, future_top: { x: 1 } }, assignment_revision: goldenDecoded.assignment_revision + 1 }, goldenContext);
+    expect(carried.future_top).toEqual({ x: 1 });
+    expect(() => M.validateAssignment({ ...goldenDecoded, cohort_id: 'x' }, goldenContext)).toThrow(/private field/);
+
     // Validate reconcile pipeline JSON schema as well
     const reconcileRaw = readFileSync(path.join(import.meta.dir, 'chief-of-staff-reconcile.pipeline.json'), 'utf8');
     expect(reconcileRaw).not.toContain('{{');

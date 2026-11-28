@@ -453,6 +453,7 @@ suspend fun TowerAPI.setChiefOfStaffAssignment(
         updatedByNpub = manager.actorNpub,
         updatedAt = now.toString(),
         runtimeBinding = effectiveBinding,
+        extra = current.assignment.extra,
     )
     val bytes = ChiefOfStaffEnvelope.encode(next.toJson(), adapter)
     writeVerifiedChiefOfStaffVersion(

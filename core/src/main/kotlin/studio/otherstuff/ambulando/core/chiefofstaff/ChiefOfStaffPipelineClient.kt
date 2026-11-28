@@ -29,7 +29,8 @@ import java.net.URI
 
 /**
  * Narrow authenticated client for Autopilot's existing generic pipeline invocation route:
- * `POST /api/pipelines/definitions/:definitionId/runs` (NIP-98 signed, exact confirmed HTTPS host,
+ * `POST /api/pipelines/definitions/:definitionId/runs` when the signer is the workspace owner, or the exact owner-space form
+ * `POST /api/owners/:ownerNpub/pipelines/definitions/:definitionId/runs` for a delegated signer (NIP-98 signed, exact confirmed HTTPS host,
  * no redirects, no Tower `X-App-Npub` header, no exported credentials, no arbitrary shell endpoint).
  */
 object ChiefOfStaffPipelineContract {
@@ -38,10 +39,20 @@ object ChiefOfStaffPipelineContract {
 
     fun isValidDefinitionId(id: String): Boolean = SAFE_DEFINITION_ID.matches(id)
 
-    fun runPath(definitionId: String): String {
+    /**
+     * Unprefixed when the signer IS the workspace owner (Autopilot resolves the signer's own pipeline space); otherwise the
+     * exact owner-space route for [ownerSpaceNpub], so a delegated manager never runs a same-named definition in its own space.
+     */
+    fun runPath(definitionId: String, ownerSpaceNpub: String? = null): String {
         require(isValidDefinitionId(definitionId)) { "Invalid Autopilot pipeline definition ID." }
-        return "/api/pipelines/definitions/$definitionId/runs"
+        if (ownerSpaceNpub == null) return "/api/pipelines/definitions/$definitionId/runs"
+        require(ChiefOfStaffContract.isValidNpub(ownerSpaceNpub)) { "Invalid Autopilot owner space." }
+        return "/api/owners/$ownerSpaceNpub/pipelines/definitions/$definitionId/runs"
     }
+
+    /** The owner space to address: null when the signer is the owner, else the verified workspace owner. */
+    fun ownerSpaceFor(signerNpub: String, workspaceOwnerNpub: String): String? =
+        workspaceOwnerNpub.takeIf { it != signerNpub }
 }
 
 data class ChiefOfStaffReconcileRequest(
@@ -104,8 +115,13 @@ internal class ChiefOfStaffPipelineGuard(
     private val workspaceId: String,
     private val ownerNpub: String,
     private val appNpub: String,
+    ownerSpaceNpub: String? = null,
 ) : HttpTransport {
-    private val expectedPath = ChiefOfStaffPipelineContract.runPath(definitionId)
+    init {
+        // Only the workspace owner's own space may ever be addressed.
+        require(ownerSpaceNpub == null || ownerSpaceNpub == ownerNpub) { "pipeline: owner space must be the workspace owner." }
+    }
+    private val expectedPath = ChiefOfStaffPipelineContract.runPath(definitionId, ownerSpaceNpub)
 
     override suspend fun send(request: HttpRequest): HttpResponse {
         val uri = runCatching { URI(request.url) }.getOrNull() ?: throw BoundaryViolation("pipeline: unreadable URL")
@@ -153,6 +169,10 @@ class ChiefOfStaffPipelineClient(
             return ChiefOfStaffReconcileOutcome.Failed(null, "invalid_definition_id", "Invalid pipeline definition ID.")
         }
         identity.requireSigner(signerNpub)
+        if (!ChiefOfStaffContract.isValidNpub(request.ownerNpub)) {
+            return ChiefOfStaffReconcileOutcome.Failed(null, "invalid_owner", "Workspace owner npub is invalid.")
+        }
+        val ownerSpace = ChiefOfStaffPipelineContract.ownerSpaceFor(signerNpub, request.ownerNpub)
         val normalizedOrigin = TowerOrigin(origin.url)
         val guard = ChiefOfStaffPipelineGuard(
             base = transport,
@@ -161,8 +181,9 @@ class ChiefOfStaffPipelineClient(
             workspaceId = request.workspaceId,
             ownerNpub = request.ownerNpub,
             appNpub = request.appNpub,
+            ownerSpaceNpub = ownerSpace,
         )
-        val path = ChiefOfStaffPipelineContract.runPath(definitionId)
+        val path = ChiefOfStaffPipelineContract.runPath(definitionId, ownerSpace)
         val reply = try {
             TowerClient(normalizedOrigin, guard, identity).exchange(
                 method = "POST",
