@@ -70,11 +70,17 @@ class TowerOrigin(value: String) {
          * person typed and confirmed (catalog read, then processing of one saved install intent). Exact matches, never a prefix.
          */
         val AUTOPILOT_ACTIVATION_PATHS = setOf("/api/wapps/activation-catalog", "/api/wapps/install-intents/process")
+        /** Pinned generic Autopilot pipeline run invocation path (never a prefix or arbitrary shell route). */
+        val AUTOPILOT_PIPELINE_RUN_PATH = Regex("^/api/pipelines/definitions/[A-Za-z0-9._-]{1,128}/runs$")
     }
 
     /** Absolute URL for an exact API path plus optional query items (encoded once, here). */
     fun url(path: String, query: List<Pair<String, String>> = emptyList()): String {
-        if (!(path.startsWith("/api/v4/") || path == "/.well-known/nstack.json" || path in AUTOPILOT_ACTIVATION_PATHS) || path.contains("..") || path.contains("?") ||
+        val allowed = path.startsWith("/api/v4/") ||
+            path == "/.well-known/nstack.json" ||
+            path in AUTOPILOT_ACTIVATION_PATHS ||
+            AUTOPILOT_PIPELINE_RUN_PATH.matches(path)
+        if (!allowed || path.contains("..") || path.contains("?") ||
             path.contains("#")
         ) throw TowerError.UnsafePath
         val builder = HttpUrl.Builder().scheme(if (isFips) "http" else "https").host(host).port(port ?: 443)

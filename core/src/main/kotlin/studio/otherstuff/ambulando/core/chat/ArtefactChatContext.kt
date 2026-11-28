@@ -25,7 +25,9 @@ object ArtefactChatContext {
         require(o.keys == setOf("schemaVersion", "workspaceID", "channelID", "threadID", "workspaceVisible", "visibleRecordID", "open")) { FAILURE }
         fun text(key: String) = o[key]?.jsonPrimitive?.takeIf { it.isString }?.content
         require(o["schemaVersion"] == JsonPrimitive(1) && text("workspaceID") == target.workspaceId && text("channelID") == target.channelId && text("threadID") == target.threadId) { FAILURE }
-        require(listOf(target.workspaceId, target.channelId, target.threadId, text("visibleRecordID")).all { it != null && isUUID(it) }) { FAILURE }
+        require(listOf(target.workspaceId, target.channelId, text("visibleRecordID")).all { it != null && isUUID(it) }) { FAILURE }
+        // A first message has no server thread yet. Bind null explicitly; never accept a missing or foreign thread.
+        require(if (target.threadId == null) o["threadID"] == JsonNull else isUUID(target.threadId)) { FAILURE }
         require(o["workspaceVisible"] in listOf(JsonPrimitive(true), JsonPrimitive(false))) { FAILURE }
         val refs = o.getValue("open").jsonArray
         require(refs.size in 1..32) { FAILURE }

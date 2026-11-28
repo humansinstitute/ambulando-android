@@ -11,6 +11,29 @@ import java.util.UUID
 
 class ThreadArtefactsTest {
     private fun id() = UUID.randomUUID().toString()
+    @Test fun firstSendSeedsExactRevisionForMembershipPromotionWithoutForeignDestination() = runBlocking {
+        val target = ChatTarget(id(), id(), id())
+        val reference = ArtefactChatReference("file", id(), id(), true, "a".repeat(64))
+        val raw = ArtefactChatContext.encode(target, false, reference.recordID, listOf(reference))
+        val state = ThreadArtefacts()
+        state.seedFirstMessage(raw, target.copy(threadId = id()))
+        assertEquals(listOf(ThreadArtefactMember("file", reference.recordID)), state.legacyMigrationRefs)
+        assertEquals(reference.revision, state.tabs.single().pinnedRevision)
+        assertEquals(reference.recordID, state.selected)
+        assertTrue(state.discuss)
+        val foreign = ThreadArtefacts()
+        assertTrue(runCatching { foreign.seedFirstMessage(raw, target.copy(channelId = id(), threadId = id())) }.isFailure)
+        assertTrue(foreign.tabs.isEmpty())
+        val delayed = ThreadArtefacts().also { it.restore(null) }
+        delayed.seedFirstMessage(null, target.copy(threadId = id()))
+        assertTrue(delayed.tabs.isEmpty())
+        delayed.seedFirstMessage(raw, target.copy(threadId = id()))
+        assertEquals(reference.revision, delayed.tabs.single().pinnedRevision)
+        val removed = ThreadArtefacts()
+        removed.reconcile(ThreadArtefactMembershipSync.Row(1, ThreadArtefactMembership.metadata(kotlinx.serialization.json.JsonObject(emptyMap()), emptyList())))
+        removed.seedFirstMessage(raw, target.copy(threadId = id()))
+        assertTrue(removed.tabs.isEmpty())
+    }
     @Test fun reopeningSameRecordRetainsItsCallbacksAndPinnedRevision() {
         val state = ThreadArtefacts(); val id = id()
         state.open("file", id, "Board")

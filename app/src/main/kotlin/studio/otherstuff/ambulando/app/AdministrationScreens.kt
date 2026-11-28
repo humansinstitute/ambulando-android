@@ -35,7 +35,7 @@ import studio.otherstuff.ambulando.core.transport.obj
 import studio.otherstuff.ambulando.core.transport.string
 
 internal enum class AdminSection(val title: String) {
-    WORKSPACE("Workspace"), SCOPES("Scopes & Channels"), MEMBERS("Members"), GROUPS("Groups"), PERMISSIONS("Permissions"), APPS("Apps & Integrations");
+    WORKSPACE("Workspace"), CHIEF_OF_STAFF("Chief of Staff"), SCOPES("Scopes & Channels"), MEMBERS("Members"), GROUPS("Groups"), PERMISSIONS("Permissions"), APPS("Apps & Integrations");
     val tag: String get() = "admin.section.${name.lowercase()}"
 }
 
@@ -61,6 +61,7 @@ internal sealed interface AdminRoute {
 /** What a section refreshes when it opens (and every [pollMillis] while it stays open). */
 private fun listsFor(route: AdminRoute): List<AdministrationList> = when (route) {
     is AdminRoute.Section -> when (route.section) {
+        AdminSection.CHIEF_OF_STAFF -> listOf(AdministrationList.MEMBERS)
         AdminSection.MEMBERS -> listOf(AdministrationList.MEMBERS)
         AdminSection.GROUPS -> listOf(AdministrationList.MEMBERS, AdministrationList.GROUPS)
         AdminSection.PERMISSIONS -> listOf(AdministrationList.MEMBERS, AdministrationList.GROUPS)
@@ -86,6 +87,7 @@ internal fun AdministrationHost(
     scopes: List<ScopeRecord>,
     channels: List<ChannelRecord>,
     scopeChannelContent: @Composable (back: () -> Unit, openChannelAccess: (String) -> Unit, openScopeAccess: (String) -> Unit) -> Unit,
+    chiefOfStaffContent: @Composable (back: () -> Unit) -> Unit = { back -> AdminPage("Chief of Staff", session, back, "admin.chiefOfStaffPage") {} },
     done: () -> Unit,
     initial: AdminRoute = AdminRoute.Home,
     pollMillis: Long = 30_000,
@@ -121,6 +123,7 @@ internal fun AdministrationHost(
         AdminRoute.Home -> HomePage(session, workspace, ::push, done)
         is AdminRoute.Section -> when (route.section) {
             AdminSection.WORKSPACE -> WorkspacePage(session, workspace, ::push, ::pop)
+            AdminSection.CHIEF_OF_STAFF -> chiefOfStaffContent(::pop)
             AdminSection.SCOPES -> scopeChannelContent(::pop, { push(AdminRoute.ChannelAccess(it)) }, { push(AdminRoute.ScopeAccess(it)) })
             AdminSection.MEMBERS -> MembersPage(session, ::push, ::pop)
             AdminSection.GROUPS -> GroupsPage(session, ::push, ::pop)

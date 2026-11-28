@@ -241,6 +241,8 @@ class MultiWorkspaceRuntimeTests {
         a.offline = true
         ra.outbox.send("never to be resurrected", emptyList(), ChatTarget(ca.id, SampleIds.STUDIO, SampleIds.GENERAL), ca, studio(ca))
         runtimes.removeConnection(ca)
+        // An offline attempt before disconnect is legitimate; only a later attempt would resurrect retired work.
+        val postsAtDisconnect = posts.size
         a.offline = false
         assertTrue(runtimes.runtime(ra.boundary.id) == null)
         assertTrue(rb.canSend)
@@ -248,7 +250,7 @@ class MultiWorkspaceRuntimeTests {
         val ra2 = runtimes.enable(ca2, studio(ca2))
         waitFor(20_000) { ra2.canSend }; settle()
         assertTrue(ra2.store.reader.outbox(ca2.id, ca2.signerNpub).isEmpty())
-        assertTrue(posts.isEmpty())
+        assertEquals("Disconnected work must never post again", postsAtDisconnect, posts.size)
     }
 
     @Test fun aListingThatArrivesAfterDisconnectCannotReopenTheConnection() = test {

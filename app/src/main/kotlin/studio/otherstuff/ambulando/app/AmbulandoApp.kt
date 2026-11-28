@@ -166,7 +166,9 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             val target = when (route) {
                 is WorkRoute.WorkspaceReport -> AppSection.TOOLBOX
                 is WorkRoute.DailyMetrics -> AppSection.TOOLBOX
+                is WorkRoute.Loops -> AppSection.HOME
                 is WorkRoute.Goals, is WorkRoute.Goal -> if (model.section == AppSection.HOME) AppSection.HOME else AppSection.DECK
+                is WorkRoute.ChiefOfStaff -> if (model.section == AppSection.HOME) AppSection.HOME else AppSection.DECK
                 is WorkRoute.Task -> AppSection.TASKS
                 is WorkRoute.Doc -> AppSection.DOCS
                 is WorkRoute.File -> if (model.section == AppSection.DOCS) AppSection.DOCS else AppSection.FILES
@@ -223,7 +225,14 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
         viewingImage?.let { (id, title) -> StoredImageViewer(model, id, title, onShare = { shareStorage(id) }) { viewingImage = null } }
         if (chooser) { studio.otherstuff.ambulando.app.ui.workspaces.WorkspaceChooser(model) { chooser = false }; return@CompositionLocalProvider }
         if (settings) { NativeSettings(model, onManage = { settings = false; model.workspace?.let { ws -> management = ManagementTarget(AdminRoute.Home, model.activeBoundaryId) } }) { settings = false }; return@CompositionLocalProvider }
-        management?.let { target -> WorkspaceManagement(model, target) { management = null }; return@CompositionLocalProvider }
+        management?.let { target ->
+            WorkspaceManagement(
+                model,
+                target,
+                openChiefOfStaffTopics = { w?.let { ws -> services.open(WorkRoute.ChiefOfStaff(ws.id)) } },
+            ) { management = null }
+            return@CompositionLocalProvider
+        }
         if (search) { NativeSearch(model) { search = false }; return@CompositionLocalProvider }
         if (notifications) { NativeNotifications(model) { notifications = false }; return@CompositionLocalProvider }
         val notificationUnread by remember(model.activeBoundaryId, c.id, w?.id) { model.store.liveQuery({ it.table == StoreTable.NOTIFICATIONS || it.table == StoreTable.APP_STATE }) { w?.let { ws -> val types = model.store.reader.attentionPreference(c.id, ws.id).types; model.store.reader.notificationRows(c.id, ws.id, studio.otherstuff.ambulando.core.transport.NotificationView.ALL, limit = Int.MAX_VALUE).count { it.unread && types.includes(studio.otherstuff.ambulando.core.preferences.AttentionTypes.notificationType(it.item.target?.kind)) } } ?: 0 } }.collectAsState(0)
@@ -238,7 +247,32 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
             model.channels.filter { it.scopeId == scope.id }.map { studio.otherstuff.ambulando.core.context.NavChannel(it.id, it.scopeId, it.name, it.kind) }, studio.otherstuff.ambulando.core.context.SidebarNavigation.isDirectMessageScope(studio.otherstuff.ambulando.core.context.NavScope(scope.id, scope.name, scope.kind))) }
         fun choose(scopeId: String?, channelId: String?) { if (!model.viewLocked) { stacks.resetContextBound(); model.section = AppSection.DECK; model.selectContext(scopeId, channelId) }; sidebar = false }
         // Home is its own surface (goals, briefing, latest chats) showing everything, as the unfiltered Deck did; Deck stays one tap away.
-        fun goHome() { if (!model.viewLocked) { stacks.resetContextBound(); model.section = AppSection.HOME; model.selectContext(null, null); model.refresh() }; sidebar = false }
+        fun goHome() { if (!model.viewLocked) { stacks.popToRoot(AppSection.HOME); stacks.resetContextBound(); model.section = AppSection.HOME; model.selectContext(null, null); model.refresh() }; sidebar = false }
+        fun destinationHere(name: String) {
+            val entry = model.activeEntry ?: return
+            when (name) {
+                "home" -> goHome()
+                "goals", "loops" -> {
+                    model.selectContext(null, null); model.section = AppSection.HOME
+                    stacks.popToRoot(AppSection.HOME)
+                    services.open(if (name == "goals") WorkRoute.Goals(entry.workspace.id) else WorkRoute.Loops(entry.workspace.id))
+                    sidebar = false
+                }
+                "reminders" -> model.act {
+                    val board = model.personalReminderBoard(entry)
+                    if (model.activeEntry?.id == entry.id) {
+                        stacks.resetContextBound(); model.selectContext(board.scopeId, board.id)
+                        model.section = AppSection.TASKS; sidebar = false
+                    }
+                }
+            }
+        }
+        LaunchedEffect(model.activeBoundaryId, model.sidebarDestination, navRestored) {
+            if (!navRestored) return@LaunchedEffect
+            model.sidebarDestination?.takeIf { it.first == model.activeBoundaryId }?.let {
+                model.sidebarDestination = null; destinationHere(it.second)
+            }
+        }
         val actions = object : ShellActions {
             override fun select(section: AppSection) { focusManager.clearFocus(force = true); keyboard?.hide(); model.section = section; model.refresh() }
             override fun reselect(section: AppSection) { stacks.popToRoot(section) }
@@ -304,9 +338,29 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 SidebarWorkspace(e.id, e.workspace.label, e.connection.origin.removePrefix("https://"), e.colour, e.collapsed, e.id == model.activeBoundaryId,
                     e.workspace.accessRemoved, e.nav.groups, e.nav.collapsed, e.nav.unread, e.nav.labels, e.nav.loaded)
             } else emptyList()
+            val cosLabel = model.chiefOfStaffAssignment?.takeIf { it.isAssigned && it.workspaceId == w?.id && it.appNpub == w.appNpub }?.let { a ->
+                val npub = a.assignedNpub!!
+                a.assignedDisplayName?.takeIf { it.isNotBlank() }
+                    ?: people?.name(npub)
+                    ?: studio.otherstuff.ambulando.core.transport.shortLabel(npub)
+            }
             SidebarContent(SidebarState(w?.label ?: "Workspaces", w?.id, model.workspaces.map { it.id to it.label }, true, groups, unread, model.activeEntry?.nav?.collapsed ?: emptySet(), model.context,
                 labels, model.scopes.filter { !it.accessRemoved }.map { it.id }.toSet(),
-                if (w == null) studio.otherstuff.ambulando.core.context.NavigationLoadState.FindingWorkspaces else studio.otherstuff.ambulando.core.context.NavigationLoadState.Ready(model.notice), false, stacked), object : SidebarActions {
+                if (w == null) studio.otherstuff.ambulando.core.context.NavigationLoadState.FindingWorkspaces else studio.otherstuff.ambulando.core.context.NavigationLoadState.Ready(model.notice), false, stacked, cosLabel,
+                when (stacks.of(model.section).lastOrNull()) {
+                    is WorkRoute.Goals, is WorkRoute.Goal -> "goals"
+                    is WorkRoute.Loops -> "loops"
+                    else -> if (model.section == AppSection.HOME && model.context.isHome) "home" else if (model.section == AppSection.TASKS && model.context.channelId?.let { id -> model.channels.firstOrNull { it.id == id }?.let { studio.otherstuff.ambulando.core.transport.Reminders.isSelf(it, w?.id ?: "", c.signerNpub) } } == true) "reminders" else ""
+                }), object : SidebarActions {
+                override fun destination(workspaceId: String?, name: String) {
+                    if (model.viewLocked) return
+                    val entry = model.entries.firstOrNull { it.id == workspaceId } ?: model.activeEntry ?: return
+                    if (entry.workspace.accessRemoved) return
+                    model.sidebarDestination = null
+                    if (model.activeEntry?.id != entry.id) {
+                        model.sidebarDestination = entry.id to name; model.openWorkspace(entry, null, null)
+                    } else destinationHere(name)
+                }
                 override fun reminders() {
                     val entry = model.activeEntry ?: return
                     model.act {
@@ -314,6 +368,21 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                         stacks.resetContextBound(); model.selectContext(board.scopeId, board.id)
                         model.section = AppSection.TASKS; sidebar = false
                     }
+                }
+                override fun openChiefOfStaffDm() {
+                    val entry = model.activeEntry ?: return
+                    model.act {
+                        val dm = model.openChiefOfStaffDirectMessage(entry)
+                        stacks.resetContextBound()
+                        model.selectContext(dm.scopeId, dm.id)
+                        model.section = AppSection.CHAT
+                        sidebar = false
+                    }
+                }
+                override fun openChiefOfStaffTopics() {
+                    val ws = w ?: return
+                    sidebar = false
+                    services.open(WorkRoute.ChiefOfStaff(ws.id))
                 }
                 override fun chooseHome() { goHome() }
                 override fun chooseScope(scopeId: String) { choose(scopeId, null) }
@@ -356,8 +425,10 @@ import studio.otherstuff.ambulando.core.docs.DocumentRender
                 is WorkRoute.Task -> Column { Box(Modifier.weight(1f)) { TaskDetailScreen(remember(screen, route.taskId) { TaskDetailState(model.store, screen, route.taskId, coroutineScope) }, screen, intents) }; AddToGoalButton(model, studio.otherstuff.ambulando.core.goals.GoalLinkType.TASK, route.taskId) }
                 is WorkRoute.WorkspaceReport -> WorkspaceReportScreen(model)
                 is WorkRoute.DailyMetrics -> DailyMetricsScreen(model)
+                is WorkRoute.Loops -> LoopsScreen()
                 is WorkRoute.Goals -> GoalsScreen(model)
                 is WorkRoute.Goal -> GoalScreen(model, route.fileId)
+                is WorkRoute.ChiefOfStaff -> ConnectedChiefOfStaffScreen(model)
                 is WorkRoute.File -> NativeFiles(model, route.fileId)
                 is WorkRoute.Doc -> ConnectedDocuments(model, route.docId)
                 is WorkRoute.Thread -> ConnectedChat(model, route.threadId, channelOverride = route.channelId, hitMessageId = route.messageId)

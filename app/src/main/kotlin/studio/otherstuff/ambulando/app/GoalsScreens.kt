@@ -41,7 +41,7 @@ import java.util.UUID
 /** Personal goals: a list of goals, each a named aim with a checkpoint timeline and links to existing work. */
 @Composable internal fun GoalsScreen(model: AppModel) {
     val w = model.workspace ?: return
-    val goals = rememberGoals(model) ?: return
+    val goals = rememberGoals(model, allAccessible = true) ?: return
     val services = LocalAppServices.current
     val state by goals.state.collectAsState()
     var creating by remember(goals) { mutableStateOf(false) }
@@ -54,7 +54,7 @@ import java.util.UUID
     Column(Modifier.fillMaxSize().background(Amb.colors.canvas)) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("PERSONAL", fontSize = AmbType.caption2, letterSpacing = 1.5.sp, color = Amb.colors.mutedForeground)
+                Text("WORKSPACE", fontSize = AmbType.caption2, letterSpacing = 1.5.sp, color = Amb.colors.mutedForeground)
                 Text("Goals", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = Amb.colors.foreground, modifier = Modifier.testTag("goals.title"))
             }
             val ready = state.space as? GoalsSpaceState.Ready
@@ -73,12 +73,12 @@ import java.util.UUID
                 is GoalsSpaceState.NeedsSetup -> item("setup") { GoalsSetupCard(goals, space) }
                 is GoalsSpaceState.Unsafe -> item("unsafe") { Text(space.reason, color = Amb.colors.destructive, modifier = Modifier.testTag("goals.unsafe")) }
                 is GoalsSpaceState.Ready -> if (space.ownerOnly) item("owneronly") {
-                    Text("Owner-only space: only you can see these goals. Agents cannot be given access here.", fontSize = AmbType.caption, color = Amb.colors.mutedForeground, modifier = Modifier.testTag("goals.ownerOnly"))
+                    Text("Your personal goal creation channel is owner-only. Agents cannot be given access to that channel; other accessible workspace goals can still appear below.", fontSize = AmbType.caption, color = Amb.colors.mutedForeground, modifier = Modifier.testTag("goals.ownerOnly"))
                 }
                 null -> {}
             }
-            if (state.space is GoalsSpaceState.Ready && state.loaded && state.goals.isEmpty() && state.unreadable.isEmpty()) item("empty") {
-                EmptyNote("No goals yet", Icons.Outlined.Flag, "A goal is something you are working toward, with checkpoints along the way and the chats, tasks and documents that help. Only you and agents you allow can see your goals.")
+            if (state.loaded && state.goals.isEmpty() && state.unreadable.isEmpty()) item("empty") {
+                EmptyNote("No goals yet", Icons.Outlined.Flag, "A goal is something you are working toward, with checkpoints along the way and the chats, tasks and documents that help. This view combines goals you can access across this workspace.")
             }
             items(active, key = { it.id }) { GoalCard(it) { services.open(WorkRoute.Goal(w.id, it.id)) } }
             if (closed.isNotEmpty()) {
@@ -161,7 +161,7 @@ import java.util.UUID
     val stored by remember(w.id, fileId) { model.store.liveQuery({ it.workspaceId == w.id && it.table in setOf(StoreTable.FILES,StoreTable.CHANNELS,StoreTable.ACCESS,StoreTable.WORKSPACES) }) { model.store.reader.file(w.id, fileId) } }.collectAsState(null)
     val record = stored
     if (record != null && (record.accessRemoved || !GoalFiles.isGoal(record))) return file()
-    val goals = rememberGoals(model) ?: return file()
+    val goals = rememberGoals(model, allAccessible = true) ?: return file()
     val state by goals.state.collectAsState()
     var resolving by remember(goals,fileId) { mutableStateOf(true) }
     LaunchedEffect(goals,fileId) { try { goals.refresh() } finally { resolving=false } }
@@ -178,7 +178,7 @@ import java.util.UUID
 @Composable internal fun GoalScreen(model: AppModel, fileId: String) {
     val w = model.workspace ?: return
     val c = model.connection ?: return
-    val goals = rememberGoals(model) ?: return
+    val goals = rememberGoals(model, allAccessible = true) ?: return
     val services = LocalAppServices.current
     val state by goals.state.collectAsState()
     val doc = state.goals.firstOrNull { it.id == fileId }
@@ -227,7 +227,7 @@ import java.util.UUID
         item("head") {
             Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
-                    Text(if (goal.status == GoalStatus.ACTIVE) "PERSONAL GOAL" else "PERSONAL GOAL · ${goal.status.wire.uppercase()}", fontSize = AmbType.caption2, color = Amb.colors.mutedForeground)
+                    Text(if (goal.status == GoalStatus.ACTIVE) "GOAL" else "GOAL · ${goal.status.wire.uppercase()}", fontSize = AmbType.caption2, color = Amb.colors.mutedForeground)
                     Text(goal.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = Amb.colors.foreground, modifier = Modifier.padding(top = 4.dp).testTag("goal.name"))
                 }
                 OutlinedButton(onClick = { editing = true }, enabled = !readOnly, modifier = Modifier.padding(start = 8.dp).testTag("goal.edit")) { Text("Edit goal") }

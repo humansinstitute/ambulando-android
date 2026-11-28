@@ -1,3 +1,10 @@
+## 0.9.78 (106)
+
+- Put Home, Goals, Reminders and Loops together in each workspace sidebar. Goals combines accessible goals across the workspace; Reminders reuses your private Note to self board. Loops is a labelled preview of regular delegated work.
+- Find whiteboards and other File artefacts from chat @ autocomplete without first visiting Files, including files beyond the first page. Keep native File references through selection, sending and opening.
+- Select an artefact before the first chat message, keep the chosen revision and draft while switching views, and insert its native reference with Tag. Exact artefact context is saved with Send; agent receipt requires compatible server support.
+- Add native Chief of Staff assignment controls and a topic reader with explicit restricted, setup and unsupported-server states. These screens require configured server capabilities; source inclusion does not activate a running agent loop.
+
 ## 0.9.77 (105)
 
 - Save a chat or selected message with **Remind me** as a Ready task assigned to you on your existing private Note to self board. Keep the chat title, message formatting and a link back to the source.

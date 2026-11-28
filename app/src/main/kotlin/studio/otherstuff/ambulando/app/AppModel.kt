@@ -324,6 +324,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     val workspaces: List<WorkspaceRecord> get() = connection?.let { c -> entries.filter { it.connection.id == c.id }.map { it.workspace } } ?: emptyList()
     var scopes by mutableStateOf(emptyList<ScopeRecord>()); private set
     var channels by mutableStateOf(emptyList<ChannelRecord>()); private set
+    /** Active workspace's Chief of Staff assignment (local-first, cleared on every workspace switch). */
+    var chiefOfStaffAssignment by mutableStateOf<studio.otherstuff.ambulando.core.chiefofstaff.ChiefOfStaffAssignment?>(null); internal set
     internal val artefactFilters = mutableStateMapOf<String, Pair<String, String>>()
     var context by mutableStateOf(WorkContext.HOME); private set
     var section by mutableStateOf(AppSection.HOME)
@@ -335,6 +337,8 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var editorDoc by mutableStateOf<String?>(null)
     /** A record the document editor asked to open on leaving (kind, id), consumed by the connected screen. */
     var pendingRecordOpen by mutableStateOf<Pair<String, String>?>(null)
+    /** Sidebar intent survives the workspace-keyed shell being recreated. Bound to one exact runtime. */
+    internal var sidebarDestination by mutableStateOf<Pair<String, String>?>(null)
     var showChat by mutableStateOf(true)
     var showAgents by mutableStateOf(false)
     /** Set by the Activity at each start: whether the saved open section and record stacks are put back (see [AppEnvironment.restoresNavigation]). */
@@ -347,6 +351,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     var viewLocked by mutableStateOf(false)
     var appearance by mutableStateOf(studio.otherstuff.ambulando.app.ui.theme.AppearancePreference.SYSTEM)
     private var observation: Job? = null
+    private var chiefOfStaffObservation: Job? = null
     // Draft persistence and enqueue are ordered, so a late draft cannot resurrect already-sent text.
     internal val threadArtefacts = mutableMapOf<String, ThreadArtefacts>()
 
@@ -567,7 +572,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
     }
     suspend fun unlock(pin: String) { identityState = identity.unlock(pin); restore(); resumeEnabled(force = true); refresh(); androidPush?.launch { reconcile(this@AppModel) }; resolvePushTap() }
     /** Locking pauses every runtime (jobs, streams, leases); the enabled set is kept, so unlocking resumes exactly it. */
-    fun lock() = act { sharedFips.releaseAll(); clearTowerDiscovery(); browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }
+    fun lock() = act { sidebarDestination = null; sharedFips.releaseAll(); clearTowerDiscovery(); browser.updateLocked(true); browser.hide(); runtimes.pauseAll(); sharedEngine.cancelAll(); wikiContextEpoch++; identityState = identity.lock() }
     suspend fun connectWorkspaceQr(envelope: String, mode: String) {
         val qr = studio.otherstuff.ambulando.core.transport.WorkspaceConnection.parse(envelope)
         val signer = (identity.state() as? IdentityState.Unlocked)?.npub ?: throw IdentityError.Locked
@@ -652,7 +657,7 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         }
         catalog.writer.setState(WorkspacePreferences.STATE_KEY, null); catalog.writer.setState(WorkspaceCatalog.SELECTED_KEY, null)
         if (!environment.isSample) androidPush?.removeIdentity()
-        pendingPushTap = null; pushDestination = null
+        pendingPushTap = null; pushDestination = null; sidebarDestination = null
         withContext(Dispatchers.IO) { onboarding.wipe() }
         identityState = identity.remove()
         stopAllEntries(); entries = emptyList(); connections = emptyList(); activeBoundaryId = null; preferences = WorkspacePreferences()
@@ -945,6 +950,17 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         // The new workspace's own scopes and channels are in place before it is in front, so nothing of the previous one (even
         // under identical ids) is drawn for it.
         loadNavigation(runtime).let { (s, c) -> scopes = s; channels = c }
+        // Clear old Chief of Staff assignment before switching workspaces, then load this boundary's cached value.
+        chiefOfStaffAssignment = if (runtime.workspace.accessRemoved) {
+            studio.otherstuff.ambulando.core.chiefofstaff.ChiefOfStaffStore.clearAssignment(
+                runtime.store, runtime.connection.id, runtime.workspace.id, runtime.workspace.appNpub,
+            )
+            null
+        } else {
+            studio.otherstuff.ambulando.core.chiefofstaff.ChiefOfStaffStore.loadAssignment(
+                runtime.store, runtime.connection.id, runtime.workspace.id, runtime.workspace.ownerNpub, runtime.workspace.appNpub,
+            )
+        }
         context = WorkContext.decode(runtime.store.reader.state(WorkContext.stateKey(runtime.connection.id, runtime.workspace.id))) ?: WorkContext.HOME
         activeBoundaryId = entry.id
         editorDoc = null; editorBoard = null; autoEditedDoc = null
@@ -965,6 +981,27 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
         observation = viewModelScope.launch {
             runtime.store.liveQuery(matches = { true }) { loadNavigation(runtime) }
                 .collect { (s, c) -> if (activeBoundaryId == runtime.boundary.id) { scopes = s; channels = c } }
+        }
+        chiefOfStaffObservation?.cancel()
+        chiefOfStaffObservation = viewModelScope.launch {
+            runtime.store.changes.stream().collect { changes ->
+                if (activeBoundaryId != runtime.boundary.id) return@collect
+                val wsId = runtime.workspace.id
+                val relevant = changes.filter { it.workspaceId == null || it.workspaceId == wsId }
+                if (relevant.any { it.table in setOf(StoreTable.ACCESS, StoreTable.WORKSPACES, StoreTable.FILES, StoreTable.CHANNELS) }) {
+                    kotlinx.coroutines.delay(1200)
+                    if (activeBoundaryId == runtime.boundary.id) {
+                        val currentWs = workspace ?: runtime.workspace
+                        try {
+                            refreshChiefOfStaffAssignment(runtime, currentWs, SyncPriority.BACKGROUND)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            // Next refresh or sync event retries.
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -998,6 +1035,13 @@ class AppModel(val environment: AppEnvironment, private val androidContext: andr
             rt.sync.refreshFiles(c, w, ctx.scopeId, force = force); rt.sync.refreshInbox(c, w, force = force)
             rt.sync.refreshNotifications(c, w, force = force)
             if (!environment.isSample) rt.profileSync?.refresh(c, w.id)
+            try {
+                refreshChiefOfStaffAssignment(rt, w, SyncPriority.BACKGROUND)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Non-fatal during general workspace refresh; explicit screens surface errors.
+            }
             if (activeBoundaryId == boundary.id) { rt.kickSenders() }
             runCatching { resumeTextEdits(c) }.onFailure { if (it is CancellationException) throw it }
         }

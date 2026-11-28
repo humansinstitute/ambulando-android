@@ -34,8 +34,11 @@ sealed interface WorkRoute {
     data class WorkspaceReport(override val workspaceId: String) : WorkRoute
     data class DailyMetrics(override val workspaceId: String) : WorkRoute
     /** The viewer's personal goals, and one goal (the File that holds it). */
+    data class Loops(override val workspaceId: String) : WorkRoute
     data class Goals(override val workspaceId: String) : WorkRoute
     data class Goal(override val workspaceId: String, val fileId: String) : WorkRoute
+    /** Workspace Chief of Staff searchable topic reference and durable corrections. */
+    data class ChiefOfStaff(override val workspaceId: String) : WorkRoute
     data class Task(override val workspaceId: String, val taskId: String) : WorkRoute
     data class Doc(override val workspaceId: String, val docId: String) : WorkRoute
     data class File(override val workspaceId: String, val fileId: String) : WorkRoute

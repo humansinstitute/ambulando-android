@@ -20,6 +20,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -83,6 +86,9 @@ data class SidebarState(
     val identityUnavailable: Boolean,
     /** Every enabled workspace, in the saved order, when more than one is enabled (the column then stacks them). */
     val stacked: List<SidebarWorkspace> = emptyList(),
+    /** Display label of the active workspace's assigned Chief of Staff agent, or null when unassigned. */
+    val chiefOfStaffLabel: String? = null,
+    val destination: String = "home",
 )
 
 /** One enabled workspace in the stacked column; actions carry its [id] (the full-boundary id), never "the current workspace". */
@@ -105,6 +111,11 @@ data class SidebarWorkspace(
 
 interface SidebarActions {
     fun reminders() {}
+    fun destination(workspaceId: String?, name: String) { when (name) { "home" -> chooseHome(); "reminders" -> reminders() } }
+    /** Opens the viewer's own authorized DM with the workspace's assigned Chief of Staff. */
+    fun openChiefOfStaffDm() {}
+    /** Opens the native Chief of Staff searchable topic reference and status screen. */
+    fun openChiefOfStaffTopics() {}
     fun chooseHome()
     fun chooseScope(scopeId: String)
     fun chooseChannel(scopeId: String, channelId: String)
@@ -135,23 +146,16 @@ fun SidebarContent(state: SidebarState, actions: SidebarActions, modifier: Modif
     Column(modifier.fillMaxHeight().widthIn(max = 340.dp).background(amb.card).testTag("sidebar")) {
         LazyColumn(Modifier.weight(1f).padding(horizontal = 12.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp)) {
             if (state.stacked.size > 1) { stackedItems(state, actions); return@LazyColumn }
-            item {
-                Row(
-                    Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                        .background(if (context.isHome) amb.selectedFill else Color.Transparent, RoundedCornerShape(Amb.radiusPanel))
-                        .border(1.dp, amb.border, RoundedCornerShape(Amb.radiusPanel))
-                        .clickable { actions.chooseHome() }
-                        .semantics { contentDescription = "All workspace activity"; selected = context.isHome }
-                        .testTag("sidebar.home")
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    WorkspaceAvatar(state.workspaceLabel, 24.dp)
-                    Text("Home", fontWeight = if (context.isHome) FontWeight.Bold else FontWeight.SemiBold,
-                        color = if (context.isHome) amb.selectedForeground else amb.foreground, style = MaterialTheme.typography.bodyMedium)
+            item { WorkspaceDestinations(state, state.selectedWorkspaceId, state.workspaceLabel, true, actions) }
+            state.chiefOfStaffLabel?.let { label ->
+                item {
+                    ChiefOfStaffShortcut(
+                        label = label,
+                        onOpenDm = { actions.openChiefOfStaffDm() },
+                        onOpenTopics = { actions.openChiefOfStaffTopics() },
+                    )
                 }
             }
-            item { ReminderShortcut { actions.reminders() } }
             item { NavigationStatus(state.loadState, compact = true, identityUnavailable = state.identityUnavailable, onRetry = actions::retry) }
             val unread = SidebarNavigation.unreadChannels(state.groups, state.unread)
             if (unread.isNotEmpty()) {
@@ -303,7 +307,15 @@ private fun WorkspaceFooter(state: SidebarState, actions: SidebarActions) {
  * and accessibility description), then one collapsible group per workspace. Every tap names its workspace.
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.stackedItems(state: SidebarState, actions: SidebarActions) {
-    item { ReminderShortcut { actions.reminders() } }
+    state.chiefOfStaffLabel?.let { label ->
+        item {
+            ChiefOfStaffShortcut(
+                label = label,
+                onOpenDm = { actions.openChiefOfStaffDm() },
+                onOpenTopics = { actions.openChiefOfStaffTopics() },
+            )
+        }
+    }
     val unreadRows = state.stacked.flatMap { w -> SidebarNavigation.unreadChannels(w.groups, w.unread).map { w to it } }
     if (unreadRows.isNotEmpty()) {
         item { SidebarHeading("Unread & Active") }
@@ -317,15 +329,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.stackedItems(state: S
         item(key = "workspace:" + w.id) { WorkspaceGroupHeader(w, actions) }
         if (w.collapsed) continue
         item(key = "workspace-home:" + w.id) {
-            val amb = Amb.colors
-            val active = w.active && state.context.isHome
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 34.dp).background(if (active) amb.selectedFill else Color.Transparent, RoundedCornerShape(Amb.radiusControl))
-                    .clickable { actions.openIn(w.id, null, null); actions.close() }
-                    .semantics { contentDescription = "Home in ${w.label}"; selected = active }
-                    .testTag("workspace.home.${w.label}").padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) { WorkspaceAvatar(w.label, 20.dp); Text("Home", fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold, color = amb.foreground, style = MaterialTheme.typography.bodyMedium) }
+            WorkspaceDestinations(state, w.id, w.label, w.active, actions)
         }
         if (w.accessRemoved) item(key = "workspace-lost:" + w.id) {
             Text("No longer available to you. Saved content stays readable; nothing more is sent.", style = MaterialTheme.typography.labelSmall,
@@ -439,7 +443,60 @@ private fun StatusMessage(fg: Color, bg: Color, text: String, tag: String, retry
     }
 }
 
-@Composable private fun ReminderShortcut(open: () -> Unit) {
-    Text("Reminders", color = Amb.colors.foreground, style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = open).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar.reminders"))
+@Composable private fun WorkspaceDestinations(state: SidebarState, id: String?, label: String, active: Boolean, actions: SidebarActions) {
+    val amb = Amb.colors
+    Column {
+        for (name in listOf("home", "goals", "reminders", "loops")) {
+            val chosen = active && state.destination == name
+            val title = name.replaceFirstChar { it.uppercase() }
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .background(if (chosen) amb.selectedFill else Color.Transparent, RoundedCornerShape(Amb.radiusControl))
+                .clickable { actions.destination(id, name) }
+                .semantics { contentDescription = "$title in $label"; selected = chosen }
+                .testTag(if (state.stacked.size > 1) "workspace.$name.$label" else "sidebar.$name")
+                .padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(when (name) { "home" -> Icons.Outlined.Home; "goals" -> Icons.Outlined.Flag; "reminders" -> Icons.Outlined.Notifications; else -> Icons.Outlined.Refresh }, null, Modifier.size(20.dp), tint = amb.mutedForeground)
+                Text(title, fontWeight = if (chosen) FontWeight.Bold else FontWeight.SemiBold,
+                    color = if (chosen) amb.selectedForeground else amb.foreground, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+@Composable private fun ChiefOfStaffShortcut(label: String, onOpenDm: () -> Unit, onOpenTopics: () -> Unit) {
+    val amb = Amb.colors
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 6.dp)
+            .background(amb.muted.copy(alpha = 0.45f), RoundedCornerShape(Amb.radiusControl))
+            .border(1.dp, amb.border, RoundedCornerShape(Amb.radiusControl))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            Modifier.weight(1f).heightIn(min = 36.dp).clickable(onClick = onOpenDm)
+                .semantics { contentDescription = "Message Chief of Staff $label" }
+                .testTag("sidebar.chiefOfStaff.dm"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(Icons.Outlined.People, null, tint = amb.primary, modifier = Modifier.size(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Chief of Staff", style = MaterialTheme.typography.labelSmall, color = amb.mutedForeground)
+                Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = amb.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Text(
+            "Topics",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = amb.primary,
+            modifier = Modifier
+                .clickable(onClick = onOpenTopics)
+                .semantics { contentDescription = "Open Chief of Staff topics" }
+                .testTag("sidebar.chiefOfStaff.topics")
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        )
+    }
 }

@@ -35,8 +35,10 @@ object RouteState {
         when (route) {
             is WorkRoute.WorkspaceReport -> { put("t", "workspace-report") }
             is WorkRoute.DailyMetrics -> { put("t", "daily-tracker") }
+            is WorkRoute.Loops -> { put("t", "loops") }
             is WorkRoute.Goals -> { put("t", "goals") }
             is WorkRoute.Goal -> { put("t", "goal"); put("a", route.fileId) }
+            is WorkRoute.ChiefOfStaff -> { put("t", "chief-of-staff") }
             is WorkRoute.Task -> { put("t", "task"); put("a", route.taskId) }
             is WorkRoute.Doc -> { put("t", "doc"); put("a", route.docId) }
             is WorkRoute.File -> { put("t", "file"); put("a", route.fileId) }
@@ -57,8 +59,10 @@ object RouteState {
         return when (s("t")) {
             "workspace-report" -> WorkRoute.WorkspaceReport(w)
             "daily-tracker" -> WorkRoute.DailyMetrics(w)
+            "loops" -> WorkRoute.Loops(w)
             "goals" -> WorkRoute.Goals(w)
             "goal" -> a?.let { WorkRoute.Goal(w, it) }
+            "chief-of-staff" -> WorkRoute.ChiefOfStaff(w)
             "task" -> a?.let { WorkRoute.Task(w, it) }
             "doc" -> a?.let { WorkRoute.Doc(w, it) }
             "file" -> a?.let { WorkRoute.File(w, it) }

@@ -23,14 +23,24 @@ internal data class ManagementTarget(val route: AdminRoute, val boundaryId: Stri
  * signer, application and workspace): it is closed when this screen leaves, and a screen opened for one workspace never
  * reports into another.
  */
-@Composable internal fun WorkspaceManagement(model: AppModel, target: ManagementTarget = ManagementTarget(AdminRoute.Home), done: () -> Unit) {
+@Composable internal fun WorkspaceManagement(
+    model: AppModel,
+    target: ManagementTarget = ManagementTarget(AdminRoute.Home),
+    openChiefOfStaffTopics: () -> Unit = {},
+    done: () -> Unit,
+) {
     // This route replaces the shell. Own and consume safe/IME insets once for every management page.
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-        WorkspaceManagementContent(model, target, done)
+        WorkspaceManagementContent(model, target, openChiefOfStaffTopics, done)
     }
 }
 
-@Composable private fun WorkspaceManagementContent(model: AppModel, target: ManagementTarget, done: () -> Unit) {
+@Composable private fun WorkspaceManagementContent(
+    model: AppModel,
+    target: ManagementTarget,
+    openChiefOfStaffTopics: () -> Unit,
+    done: () -> Unit,
+) {
     val initial = target.route
     // Opened for a named workspace that is still being brought to the front: nothing is bound until it is the one in front.
     if (target.boundaryId != null && model.activeBoundaryId != target.boundaryId) {
@@ -53,6 +63,7 @@ internal data class ManagementTarget(val route: AdminRoute, val boundaryId: Stri
         AdministrationHost(
             session = session, workspace = w, scopes = model.scopes, channels = model.channels, done = done, initial = initial,
             scopeChannelContent = { back, openChannelAccess, openScopeAccess -> ScopeChannelManagement(model, back, openChannelAccess, openScopeAccess) },
+            chiefOfStaffContent = { back -> ChiefOfStaffAdminPage(model, session, w, openTopics = { done(); openChiefOfStaffTopics() }, back = back) },
         )
     }
 }

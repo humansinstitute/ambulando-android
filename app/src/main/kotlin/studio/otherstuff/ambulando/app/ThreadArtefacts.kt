@@ -180,6 +180,21 @@ internal class ThreadArtefacts {
             .onFailure { failure = "Saved attachments could not be read. Refresh from the server." }
         restored = true
     }
+    /** Restore only the acknowledged first message's descriptive snapshot, never another destination's state. */
+    fun seedFirstMessage(raw: String?, target: ChatTarget) {
+        if (raw == null || tabs.isNotEmpty() || membershipObserved) return
+        val context = ArtefactChatContext.validate(raw, target.copy(threadId = null))
+        context.getValue("open").jsonArray.forEach { value ->
+            val ref = value.jsonObject
+            tabs.add(ThreadArtefactTab(ref.getValue("kind").jsonPrimitive.content,
+                ref.getValue("recordID").jsonPrimitive.content, "Artefact").also {
+                it.pinnedRevision = ref.getValue("revision").jsonPrimitive.content
+                it.selectedRevision = it.pinnedRevision
+            })
+        }
+        selected = context.getValue("visibleRecordID").jsonPrimitive.content
+        shown = false; discuss = true
+    }
     suspend fun prepare(target: ChatTarget): String? {
         check(!busy) { "An artefact operation is already running." }
         notice = omittedTabs.takeIf { it.isNotEmpty() }?.let { omitted -> "Sent without ${omitted.joinToString { it.title }}: unavailable on this device." }
@@ -234,12 +249,38 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     val key = "thread.artefacts.${target.draftKey}"
     LaunchedEffect(target, state) { if (!state.restored) {
         val raw = runtime.store.reader.state(key)
-        val cached = runtime.store.reader.thread(target.workspaceId, requireNotNull(target.threadId))
+        val cached = target.threadId?.let { runtime.store.reader.thread(target.workspaceId, it) }
         val metadata = cached?.raw?.get("metadata") as? JsonObject
+        // Read before publishing restored=true, so membership initialization cannot race an empty seed.
+        val initialContext = if (raw == null && target.threadId != null && metadata?.containsKey(ThreadArtefactMembership.KEY) != true) {
+            val root = cached?.sourceMessageId?.let { runtime.store.reader.message(target.workspaceId, it) }
+                ?: runtime.store.reader.threadMessages(target.workspaceId, requireNotNull(target.threadId), 300).firstOrNull { it.threadSourceId == it.id }
+            if (root?.channelId == target.channelId) (root.raw["metadata"] as? JsonObject)?.get(ArtefactChatContext.KEY)?.toString() else null
+        } else null
         state.restore(raw, if (cached != null && metadata != null && ThreadArtefactMembership.KEY in metadata)
             ThreadArtefactMembershipSync.Row(cached.rowVersion, metadata) else null)
+        try { state.seedFirstMessage(initialContext, target) }
+        catch (e: Exception) { state.failure = "First-message context could not be restored: ${e.message}" }
     } }
     if (!state.restored) { Text("Restoring thread workspace…"); return }
+    // The acknowledged root may enter the cache after the route. Retry seeding on store changes;
+    // an explicitly initialized membership (including empty) always wins over descriptive message context.
+    val rootContext by remember(runtime, target) {
+        runtime.store.liveQuery({ it.workspaceId == target.workspaceId && it.table in setOf(StoreTable.MESSAGES, StoreTable.THREADS) }) {
+            target.threadId?.let { threadId ->
+                val row = runtime.store.reader.thread(target.workspaceId, threadId)
+                val root = row?.sourceMessageId?.let { runtime.store.reader.message(target.workspaceId, it) }
+                    ?: runtime.store.reader.threadMessages(target.workspaceId, threadId, 300).firstOrNull { it.threadSourceId == it.id }
+                if (root?.channelId == target.channelId) (root.raw["metadata"] as? JsonObject)?.get(ArtefactChatContext.KEY)?.toString() else null
+            }
+        }
+    }.collectAsState(null)
+    LaunchedEffect(rootContext, state.membershipObserved) {
+        if (target.threadId != null && rootContext != null) {
+            try { state.seedFirstMessage(rootContext, target) }
+            catch (e: Exception) { state.failure = "First-message context could not be restored: ${e.message}" }
+        }
+    }
     val membership = remember(runtime, target, state) {
         ThreadArtefactMembershipSync(object : ThreadArtefactMembershipSync.Transport {
             fun boundary() { check(model.active === runtime && model.identityState is studio.otherstuff.ambulando.core.crypto.IdentityState.Unlocked && !runtime.workspace.accessRemoved) { "Unlock the original workspace and retry." } }
@@ -288,47 +329,71 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
             if (title != null) tab.title = title
         }
     }
-    SideEffect {
-        state.refreshMembership = { refreshMembership() }
-        state.requestOpen = { kind, id, title -> scope.launch {
-            if (!state.busy) {
-                state.busy = true; state.failure = null
-                try {
-                    val member = ThreadArtefactMember(if (kind == "document") "doc" else kind, id.lowercase())
-                    check(state.tabs.count { it.open } < 32 || state.tabs.any { it.id == member.id && it.open }) { "Close a local view before opening another (32 maximum)." }
-                    reconcileMembership(membership.add(member)); state.focus(member.kind, member.id, title)
-                } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { if (e is ThreadArtefactMembershipSync.Uncertain) reconcileMembership(e.observed); state.failure = "Attachment not confirmed: ${e.message}. Your work is retained; retry when connected." }
-                finally { state.busy = false }
+    if (target.threadId != null) {
+        SideEffect {
+            state.refreshMembership = { refreshMembership() }
+            state.requestOpen = { kind, id, title -> scope.launch {
+                if (!state.busy) {
+                    state.busy = true; state.failure = null
+                    try {
+                        val member = ThreadArtefactMember(if (kind == "document") "doc" else kind, id.lowercase())
+                        check(state.tabs.count { it.open } < 32 || state.tabs.any { it.id == member.id && it.open }) { "Close a local view before opening another (32 maximum)." }
+                        reconcileMembership(membership.add(member)); state.focus(member.kind, member.id, title)
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { if (e is ThreadArtefactMembershipSync.Uncertain) reconcileMembership(e.observed); state.failure = "Attachment not confirmed: ${e.message}. Your work is retained; retry when connected." }
+                    finally { state.busy = false }
+                }
+            } }
+            state.removeMember = { tab -> scope.launch {
+                if (!state.busy) {
+                    state.busy = true; state.failure = null
+                    try {
+                        check(!tab.open || tab.preserve()) { "Preserve editor changes before removing this attachment." }
+                        reconcileMembership(membership.remove(ThreadArtefactMember(tab.kind, tab.id)))
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { if (e is ThreadArtefactMembershipSync.Uncertain) reconcileMembership(e.observed); state.failure = "Remove not confirmed: ${e.message}. Existing attachments and drafts are retained; retry." }
+                    finally { state.busy = false }
+                }
+            } }
+        }
+        DisposableEffect(state) { onDispose { state.requestOpen = null; state.refreshMembership = null; state.removeMember = null } }
+        LaunchedEffect(membership, state.legacyMigrationRefs) {
+            try {
+                val legacy = state.legacyMigrationRefs
+                reconcileMembership(membership.migrate(legacy))
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { state.failure = "Thread attachments could not be refreshed: ${e.message}. Retry from Artefacts." }
+        }
+    } else {
+        // Before Send there is no server thread. Selection is local, destination-bound draft state.
+        SideEffect {
+            state.membershipReady = true
+            state.refreshMembership = null
+            state.requestOpen = { kind, id, title ->
+                state.tabs.firstOrNull { it.id == id && it.kind == kind }?.attached = true
+                state.focus(kind, id, title)
             }
-        } }
-        state.removeMember = { tab -> scope.launch {
-            if (!state.busy) {
-                state.busy = true; state.failure = null
-                try {
-                    check(!tab.open || tab.preserve()) { "Preserve editor changes before removing this attachment." }
-                    reconcileMembership(membership.remove(ThreadArtefactMember(tab.kind, tab.id)))
-                } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { if (e is ThreadArtefactMembershipSync.Uncertain) reconcileMembership(e.observed); state.failure = "Remove not confirmed: ${e.message}. Existing attachments and drafts are retained; retry." }
-                finally { state.busy = false }
-            }
-        } }
-    }
-    DisposableEffect(state) { onDispose { state.requestOpen = null; state.refreshMembership = null; state.removeMember = null } }
-    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    LaunchedEffect(membership) {
-        try {
-            val legacy = state.legacyMigrationRefs
-            reconcileMembership(membership.migrate(legacy))
-        } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { state.failure = "Thread attachments could not be refreshed: ${e.message}. Retry from Artefacts." }
+            state.removeMember = { tab -> scope.launch {
+                if (!state.busy) {
+                    state.busy = true
+                    try {
+                        check(tab.preserve()) { "Preserve editor changes before removing this selection." }
+                        tab.attached = false; tab.open = false
+                        state.selected = state.tabs.firstOrNull { it.open && it.attached }?.id
+                        if (state.selected == null) { state.shown = false; state.discuss = false }
+                    } catch (e: Exception) { state.failure = "Selection retained: ${e.message}" }
+                    finally { state.busy = false }
+                }
+            } }
+        }
+        DisposableEffect(state) { onDispose { state.requestOpen = null; state.removeMember = null } }
     }
     state.chatPosition?.let { model.chatPositions.putIfAbsent(target.draftKey, it) }
     val canonicalThread by remember(runtime, target) {
-        runtime.store.liveQuery({ it.workspaceId == target.workspaceId }) { runtime.store.reader.thread(target.workspaceId, requireNotNull(target.threadId)) }
+        runtime.store.liveQuery({ it.workspaceId == target.workspaceId }) { target.threadId?.let { runtime.store.reader.thread(target.workspaceId, it) } }
     }.collectAsState(null)
     LaunchedEffect(canonicalThread?.rowVersion, state.membershipReady) {
-        canonicalThread?.takeIf { it.rowVersion > state.membershipVersion }?.let { record ->
+        canonicalThread?.takeIf { it.rowVersion > state.membershipVersion && (it.raw["metadata"] as? JsonObject)?.containsKey(ThreadArtefactMembership.KEY) == true }?.let { record ->
             try { reconcileMembership(ThreadArtefactMembershipSync.Row(record.rowVersion, record.raw["metadata"] as? JsonObject ?: JsonObject(emptyMap()))) }
             catch (e: Exception) { state.failure = "Attachments update could not be read: ${e.message}." }
         }
@@ -363,6 +428,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     androidx.activity.compose.BackHandler {
         if (state.shown) state.shown = false else scope.launch { if (checkpoint()) exit?.invoke() }
     }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycle, state) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_START) scope.launch { state.refreshTracked() }
@@ -394,7 +460,15 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
         studio.otherstuff.ambulando.app.ui.shell.LocalRouteExit provides { scope.launch { if (checkpoint()) exit?.invoke() }; Unit }) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                RetainedPane(!state.shown) { CompositionLocalProvider(LocalThreadPaneActive provides !state.shown) { chat() } }
+                RetainedPane(!state.shown) { CompositionLocalProvider(LocalThreadPaneActive provides !state.shown) {
+                    Column(Modifier.fillMaxSize()) {
+                        if (target.threadId == null) Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Text("Artefact context", Modifier.weight(1f).padding(start = 12.dp))
+                            TextButton(onClick = { state.listing = true }, enabled = !state.busy, modifier = Modifier.testTag("thread.artefacts.open")) { Text("Select artefact") }
+                        }
+                        Box(Modifier.weight(1f)) { chat() }
+                    }
+                } }
                 RetainedPane(state.shown) {
                     Column(Modifier.fillMaxSize().background(studio.otherstuff.ambulando.app.ui.theme.Amb.colors.background)) {
                         if (state.tabs.any { it.id == state.selected && (!it.attached || it.publicationHeld) }) Column {
@@ -448,12 +522,12 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
     if (state.listing) AlertDialog(onDismissRequest = { state.listing = false }, title = { Text("Thread artefacts") }, text = {
         Column {
             if (state.busy) Text("Updating thread attachments…")
-            CreateArtefact(model, sourceThread = target) { open, enabled ->
+            if (target.threadId != null) CreateArtefact(model, sourceThread = target) { open, enabled ->
                 TextButton(onClick = open, enabled = enabled && !state.busy, modifier = Modifier.testTag("thread.artefacts.create")) { Text("Create artefact in this discussion") }
             }
             state.failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!state.membershipReady) Text("Saved attachments shown; refresh to confirm the current server list.")
-            if (state.members.isEmpty()) Text("No attachments in this thread.")
+            if (state.members.isEmpty()) Text(if (target.threadId == null) "Select an artefact before sending your first message." else "No attachments in this thread.")
             TextButton(onClick = { scope.launch { state.refreshTracked() } }, enabled = !state.busy) { Text("Refresh attachments") }
             LazyColumn(Modifier.heightIn(max = 400.dp)) { items(state.tabs.filter { it.attached || it.open || it.publicationHeld }, key = { it.kind + it.id }) { tab -> Column {
             TextButton(onClick = { if (tab.attached) state.open(tab.kind, tab.id, tab.title) else state.focus(tab.kind, tab.id, tab.title); state.listing = false }, modifier = Modifier.fillMaxWidth().testTag("thread.artefacts.focus.${tab.id}")) { Text(tab.title + (if (!tab.attached) " · Detached recovery" else if (tab.publicationHeld) " · Recovery held" else if (tab.open && tab.unavailable != null) " · Unavailable" else if (tab.open) " · ${tab.versionLabel}" else "")) }
@@ -466,7 +540,7 @@ internal suspend fun routeThreadReference(kind: String, id: String, state: Threa
                 } catch (e: Exception) { state.failure = "Tab kept open: ${e.message}" }
                 finally { state.busy = false }
             } }, enabled = !state.busy && tab.open) { Text("Close view") }
-            if (tab.attached) TextButton(onClick = { state.removeMember?.invoke(tab) }, enabled = !state.busy, modifier = Modifier.testTag("thread.artefacts.remove.${tab.id}")) { Text("Remove from thread") }
+            if (tab.attached) TextButton(onClick = { state.removeMember?.invoke(tab) }, enabled = !state.busy, modifier = Modifier.testTag("thread.artefacts.remove.${tab.id}")) { Text(if (target.threadId == null) "Remove selection" else "Remove from thread") }
             else TextButton(onClick = { state.open(tab.kind, tab.id, tab.title) }, enabled = !state.busy) { Text("Add back to thread") }
         } } } } }
     }, confirmButton = { TextButton(onClick = { state.listing = false; state.browsing = true }) { Text("+ Browse") } }, dismissButton = { TextButton(onClick = { state.listing = false }) { Text("Done") } })

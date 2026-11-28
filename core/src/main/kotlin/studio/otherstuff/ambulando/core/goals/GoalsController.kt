@@ -18,9 +18,10 @@ class GoalsController(
     private val app: String,
     private val viewer: String,
     private val local: GoalsLocalContent? = null,
+    private val allAccessible: Boolean = false,
     private val current: () -> Boolean,
 ) {
-    constructor(api: TowerAPI, workspace: String, app: String, viewer: String, current: () -> Boolean) : this(api, workspace, app, viewer, null, current)
+    constructor(api: TowerAPI, workspace: String, app: String, viewer: String, current: () -> Boolean) : this(api, workspace, app, viewer, null, false, current)
 
     /** A goal file that exists but cannot be shown (newer app version, damaged content). It is never rewritten. */
     data class Unreadable(val fileId: String, val name: String, val reason: String)
@@ -61,7 +62,19 @@ class GoalsController(
         try {
             check(current()) { "Unlock an accessible workspace to open goals." }
             val space = api.goalsSpace(workspace, app, viewer, ownerOnly)
-            val files = (space as? GoalsSpaceState.Ready)?.let { api.goalFiles(workspace, app, it.channel.id) }.orEmpty()
+            val channels = linkedSetOf<String>()
+            (space as? GoalsSpaceState.Ready)?.let { channels += it.channel.id }
+            if (allAccessible) {
+                for (scope in api.scopes(workspace, app).onEach { require(it.workspaceId == workspace) }.filterNot { it.accessRemoved }) {
+                    check(current())
+                    channels += api.channels(workspace, scope.id, app).onEach { require(it.workspaceId == workspace && it.scopeId == scope.id) }.filterNot { it.accessRemoved }.map { it.id }
+                }
+            }
+            val files = channels.flatMap { channel ->
+                check(current())
+                try { api.goalFiles(workspace, app, channel) }
+                catch (e: TowerError.Http) { if (e.status in setOf(403, 404)) emptyList() else throw e }
+            }.distinctBy { it.id }
             val goals = ArrayList<GoalDocument>(); val unreadable = ArrayList<Unreadable>()
             for (file in files) {
                 check(current())

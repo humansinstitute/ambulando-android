@@ -87,6 +87,15 @@ class BoundaryGuardTransport(private val base: HttpTransport, private val bounda
             if (!exact || uri.rawQuery != null || uri.rawFragment != null || uri.scheme != "https" || uri.rawUserInfo != null || appHeader != null) throw BoundaryViolation("autopilot path")
             return
         }
+        // Generic pinned Autopilot pipeline invocation (e.g. Chief of Staff schedule reconciliation):
+        // strictly POST /api/pipelines/definitions/<safe-id>/runs over HTTPS with no query, fragment, userinfo, or Tower app header.
+        if (path.startsWith("/api/pipelines/")) {
+            val exact = method == "POST" && PIPELINE_RUN_PATH.matches(path)
+            if (!exact || uri.rawQuery != null || uri.rawFragment != null || uri.scheme != "https" || uri.rawUserInfo != null || appHeader != null) {
+                throw BoundaryViolation("autopilot pipeline path")
+            }
+            return
+        }
         if (!path.startsWith("/api/v4/")) return
         if (uri.host?.lowercase() != origin.host || (uri.port.takeIf { it >= 0 && it != 443 }) != origin.port) throw BoundaryViolation("origin")
         // Revalidating access is the one read of the whole list; it names no other boundary and writes nothing.
@@ -98,7 +107,10 @@ class BoundaryGuardTransport(private val base: HttpTransport, private val bounda
         if (appHeader != null && appHeader != boundary.appNpub) throw BoundaryViolation("application")
     }
 
-    private companion object { const val PREFIX = "/api/v4/flightdeck-pg/workspaces" }
+    private companion object {
+        const val PREFIX = "/api/v4/flightdeck-pg/workspaces"
+        val PIPELINE_RUN_PATH = Regex("^/api/pipelines/definitions/[A-Za-z0-9._-]{1,128}/runs$")
+    }
 }
 
 class BoundaryGuardEventTransport(private val base: EventStreamTransport, private val boundary: WorkspaceBoundary) : EventStreamTransport {

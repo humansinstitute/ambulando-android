@@ -37,7 +37,7 @@ internal fun activeFailureCategory(key: String): Stage = when {
     key.startsWith("docs:") -> Stage.ACTIVE_FAILED_DOCS
     key.startsWith("doc:") -> Stage.ACTIVE_FAILED_DOC
     key.startsWith("files:") -> Stage.ACTIVE_FAILED_FILES
-    key.startsWith("goals-read:") -> Stage.ACTIVE_FAILED_FILES
+    (key.startsWith("goals-read:") || key.startsWith("mention-files:")) -> Stage.ACTIVE_FAILED_FILES
     key.startsWith("inbox:") -> Stage.ACTIVE_FAILED_INBOX
     key.startsWith("events:") -> Stage.ACTIVE_FAILED_EVENTS
     key.startsWith("scope-order:") -> Stage.ACTIVE_FAILED_SCOPE_ORDER

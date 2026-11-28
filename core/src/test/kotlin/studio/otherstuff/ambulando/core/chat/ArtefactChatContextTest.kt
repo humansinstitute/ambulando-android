@@ -22,6 +22,15 @@ class ArtefactChatContextTest {
         assertTrue(runCatching { ArtefactChatContext.encode(target, true, ref.recordID, listOf(ref, ref)) }.isFailure)
         assertTrue(runCatching { ArtefactChatContext.encode(target, true, ref.recordID, listOf(ref.copy(kind = "doc", revision = "01"))) }.isFailure)
     }
+    @Test fun firstMessageContextBindsExplicitNullThreadAndDestination() {
+        val draft = target.copy(threadId = null)
+        val raw = ArtefactChatContext.encode(draft, false, ref.recordID, listOf(ref))
+        assertEquals(JsonNull, ArtefactChatContext.validate(raw, draft)["threadID"])
+        assertTrue(runCatching { ArtefactChatContext.validate(raw, target) }.isFailure)
+        assertTrue(runCatching { ArtefactChatContext.validate(raw, draft.copy(channelId = Fixtures.newId())) }.isFailure)
+        assertTrue(runCatching { ArtefactChatContext.validate(raw.replace("\"threadID\":null,", ""), draft) }.isFailure)
+        assertTrue(runCatching { ArtefactChatContext.validate(raw.replace("\"threadID\":null", "\"threadID\":\"${target.threadId}\""), draft) }.isFailure)
+    }
     @Test fun docContextHashesTheFullStoredEnvelopeAndChecksRouteOwnership() = runBlocking {
         val doc = Fixtures.newId()
         val bytes = "{\"future_node\":{\"unknown\":true},\"text\":\"Hello\"}"
@@ -44,7 +53,7 @@ class ArtefactChatContextTest {
         val store = StoreFixtures.store(dir)
         val c = StoreFixtures.connect(store)
         store.writer.replaceWorkspaces(c.id, listOf(StoreFixtures.workspace(target.workspaceId, "Fixture")))
-        val t = target.copy(connectionId = c.id)
+        val t = target.copy(connectionId = c.id, threadId = null)
         val raw = ArtefactChatContext.encode(t, false, ref.recordID, listOf(ref))
         store.writer.saveDraft(t, Draft("Discuss exactly this", emptyList()))
         val item = store.writer.enqueueSend(t, c.origin, c.signerNpub, Fixtures.APP_NPUB, "Discuss exactly this", emptyList(), artefactContext = raw)

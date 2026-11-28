@@ -16,7 +16,7 @@ See [Garmin recorder setup, protocol and build instructions](docs/garmin-recorde
 ## Workflows
 
 - Several workspaces (on one or more Towers) enabled at once, each with its own runtime and storage; workspace → scope → channel selection across chat, tasks, documents and files; independent section navigation per workspace.
-- Thread artefact workspace with bottom Chat / Artefacts navigation, retained editors, pinned history, a searchable + browser and exact saved-revision context in hidden Send metadata.
+- Thread artefact workspace with retained editors, pinned history, a searchable + browser and exact saved-revision context in hidden Send metadata. New thread exposes artefact selection before the first Send, with a visible revision target and native File/Doc tagging; selection stays local until the first message succeeds, then carries into the created thread.
 - Chat conversations, replies, mentions, reactions, signed edits/deletes, privacy-stripped image and file uploads,
   per-conversation drafts and a durable retrying outbox. Large pasted text becomes a `.txt` attachment with a paged
   editor, offline recovery and sent-file version history. [Public agent progress](docs/agent-progress.md) includes current

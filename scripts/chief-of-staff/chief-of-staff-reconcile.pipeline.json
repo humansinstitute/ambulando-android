@@ -1,0 +1,54 @@
+{
+  "name": "chief-of-staff-reconcile",
+  "version": 1,
+  "description": "Reconciles the Autopilot scheduled Chief of Staff ontology pipeline for a workspace after an assignment save, change, or removal. Enforces one schedule per (workspace_id, assigned_agent_npub), disables stale schedules on reassignment/removal, and publishes honest JobStatus to the active private cohort.",
+  "tags": ["ambulando", "chief-of-staff", "reconcile"],
+  "input": {
+    "workspace_id": "11111111-1111-4111-8111-111111111111",
+    "workspace_owner_npub": "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq02",
+    "app_npub": "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq03",
+    "assigned_agent_npub": "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq04",
+    "assignment_revision": 1,
+    "tower_url": "https://tower.example.invalid",
+    "subscription_id": "55555555-5555-4555-8555-555555555555",
+    "cron_expression": "0 * * * *",
+    "timezone": "Australia/Perth",
+    "cli_script_path": "/path/to/scripts/chief-of-staff/cli.mjs"
+  },
+  "steps": [
+    {
+      "id": "reconcile_schedule",
+      "name": "Reconcile Chief of Staff Schedule",
+      "type": "agent",
+      "description": "Reads authoritative workspace Chief of Staff assignment from NStack, reconciles the exact Autopilot scheduled pipeline (creating, updating, or disabling stale schedules), and publishes updated JobStatus.",
+      "input": {
+        "pick": {
+          "workspace_id": "$.workspace_id",
+          "workspace_owner_npub": "$.workspace_owner_npub",
+          "app_npub": "$.app_npub",
+          "assigned_agent_npub": "$.assigned_agent_npub",
+          "assignment_revision": "$.assignment_revision",
+          "tower_url": "$.tower_url",
+          "subscription_id": "$.subscription_id",
+          "cron_expression": "$.cron_expression",
+          "timezone": "$.timezone",
+          "cli_script_path": "$.cli_script_path"
+        }
+      },
+      "display": {
+        "in": [
+          { "label": "Workspace", "path": "$.workspace_id", "format": "text" },
+          { "label": "Assignment Revision", "path": "$.assignment_revision", "format": "text" },
+          { "label": "Assigned Agent", "path": "$.assigned_agent_npub", "format": "text", "empty": "Unassigned" }
+        ],
+        "out": [
+          { "label": "Schedule State", "path": "$.schedule_state", "format": "text" },
+          { "label": "Job ID", "path": "$.autopilot_job_id", "format": "text", "empty": "None" },
+          { "label": "Disabled Stale Jobs", "path": "$.disabled_job_ids", "format": "count" }
+        ]
+      },
+      "prompt": "Read the exact parameters from Selected input JSON (workspace_id, workspace_owner_npub, app_npub, tower_url, subscription_id, optional cron_expression defaulting to '0 * * * *', optional timezone defaulting to 'Australia/Perth', and optional cli_script_path defaulting to the repo's scripts/chief-of-staff/cli.mjs). Run: `bun <cli_script_path> reconcile-schedule --workspace <workspace_id> --owner <workspace_owner_npub> --app <app_npub> --tower <tower_url> --subscription <subscription_id> --cron '<cron_expression>' --timezone '<timezone>'`. Parse stdout as JSON and return that exact JSON object as your callback `result`.",
+      "assign": "$.reconciled"
+    }
+  ]
+}

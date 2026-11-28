@@ -80,7 +80,7 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         } }; return
     }
     val target = remember(c.id, w.id, channel, threadId) { ChatTarget(c.id, w.id, channel, threadId) }
-    if (threadId != null && !family) {
+    if ((threadId != null || composeOnly != null) && !family) {
         val artefacts = remember(target) { model.threadArtefacts.getOrPut(target.draftKey) { ThreadArtefacts() } }
         ThreadArtefactLayout(model, target, artefacts) { ConnectedConversation(model, target, composeOnly, family, writeAllowed, hitMessageId) }
     } else ConnectedConversation(model, target, composeOnly, family, writeAllowed, hitMessageId)
@@ -446,15 +446,26 @@ internal class ComposeOnly(val channelId: String, val onEnqueued: (String) -> Un
         Column(Modifier.fillMaxWidth().background(amb.card)) {
         if (artefacts?.discuss == true) {
             val tab = artefacts.tabs.firstOrNull { it.id == artefacts.selected && it.attached && !it.publicationHeld }
-            if (tab != null) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("thread.artefacts.target"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            if (tab != null) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("thread.artefacts.target")) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 TextButton(onClick = { artefacts.shown = true }, modifier = Modifier.weight(1f)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                         Text("Selected: ${tab.title}", Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         Text(tab.versionLabel, Modifier.padding(start = 6.dp), maxLines = 1, style = MaterialTheme.typography.labelSmall)
                     }
                 }
+                }
+                Row {
+                TextButton(onClick = {
+                    val mention = Mention(if (tab.kind == "doc") MentionType.DOC else MentionType.FILE, tab.id, tab.title)
+                    field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.at(field.value)
+                    field.value = studio.otherstuff.ambulando.app.ui.chat.ComposerInsert.mention(field.value, mention)
+                    mentions = mentions.filter { it.type != mention.type || it.id != mention.id } + mention
+                    persistComposer()
+                }, enabled = composing && !artefacts.busy, modifier = Modifier.testTag("thread.artefacts.tag")) { Text("Tag") }
                 TextButton(onClick = { artefacts.listing = true }) { Text("Switch") }
                 TextButton(onClick = { artefacts.discuss = false }) { Text("Clear Send target") }
+                }
             }
         }
         editing?.let { message -> Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("chat.edit.banner"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
